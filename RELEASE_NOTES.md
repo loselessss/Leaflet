@@ -1,4 +1,4 @@
-# sPDF 1.29.7 Release Notes
+# sPDF 1.30.0 Release Notes
 
 Release date: 2026-09-05
 
@@ -89,3 +89,8 @@ Release date: 2026-09-05
 - Rendering diagnostics now list CPU responsibilities alongside GPU scene contents, including tile rendering and scene/image preparation.
 
 - GPU-drawn gradients are no longer reported as CPU bitmap work. Diagnostics distinguish rasterized gradients and CPU-composited transparency regions.
+
+## 1.30.0 new features - 2026-09-05
+
+- A shared 100 MiB disk cache reuses GPU scenes on subsequent opens at the same rendering scale. Old entries are removed automatically; changed files, protected documents and edited content cannot reuse stale scenes.
+- Cache location: %LOCALAPPDATA%\sPDF\cache\gpu-scenes.sqlite3. Close sPDF before deleting this disposable cache.

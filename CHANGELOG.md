@@ -2,10 +2,9 @@
 
 English | [한국어](CHANGELOG.ko.md)
 
-## 1.29.7 - 2026-09-05
+## 1.30.0 - 2026-09-05
 
-### Improvements
+### New features
 
-- Rendering diagnostics now list CPU responsibilities alongside GPU scene contents, including tile rendering and scene/image preparation.
-
-- GPU-drawn gradients are no longer reported as CPU bitmap work. Diagnostics distinguish rasterized gradients and CPU-composited transparency regions.
+- GPU scenes are cached on disk within a shared 100 MiB budget and reused when reopening unchanged documents at the same rendering scale.
+- Least recently used scenes are removed automatically. Changed documents and renderer versions invalidate cached scenes; protected documents and edited content are excluded.

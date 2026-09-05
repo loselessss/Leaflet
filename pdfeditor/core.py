@@ -80,6 +80,13 @@ class Document:
         self._gpu_vector_cache_bytes = 0
         self._gpu_scene_probe_cache = {}
         self._render_generation = 0
+        self._disk_cache_source = None
+        try:
+            source = self._snapshot.path if self._snapshot else path
+            stat = os.stat(source)
+            self._disk_cache_source = (source, (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        except OSError:
+            pass
         sidecar_exists = os.path.exists(os.path.realpath(path) + ".spdf-annotations.json")
         if self.read_only and (self.annotation_mode or sidecar_exists):
             try:
@@ -237,10 +244,13 @@ class Document:
                     self._gpu_vector_cache.move_to_end(cached_key)
                     return candidate
         if scene is None:
+            scene = self._load_disk_gpu_scene(index, scale)
+        if scene is None:
             from .gpu_raster import vector_page_from_pymupdf
             scene = vector_page_from_pymupdf(
                 self._doc[index], scale, timeout_seconds=timeout_seconds,
                 aggressive_band_merge=aggressive_band_merge)
+            self._save_disk_gpu_scene(index, scene)
             cost = _gpu_scene_cost(scene)
             self._gpu_vector_cache[key] = scene
             self._gpu_vector_cache_bytes += cost
@@ -265,7 +275,26 @@ class Document:
                     "image-downsample" not in candidate.features:
                 self._gpu_vector_cache.move_to_end(cached_key)
                 return candidate
-        return None
+        return self._load_disk_gpu_scene(index, scale)
+
+    def _load_disk_gpu_scene(self, index, scale):
+        from . import scene_disk_cache as disk
+        cache_key = disk.key(self, index, scale, _aggressive_gpu_band_merge_enabled())
+        misses = getattr(self, "_disk_cache_misses", None)
+        if misses is None:
+            misses = self._disk_cache_misses = set()
+        if cache_key is None or cache_key in misses:
+            return None
+        scene = disk.load(cache_key)
+        if scene is None or scene.raster_scale != scale:
+            misses.add(cache_key)
+            return None
+        return self.install_gpu_vector_page(index, scene, persist=False)
+
+    def _save_disk_gpu_scene(self, index, scene):
+        from . import scene_disk_cache as disk
+        disk.save(disk.key(self, index, scene.raster_scale,
+                           _aggressive_gpu_band_merge_enabled()), scene)
 
     @property
     def render_generation(self):
@@ -288,7 +317,7 @@ class Document:
         finally:
             snapshot.close()
 
-    def install_gpu_vector_page(self, index, scene):
+    def install_gpu_vector_page(self, index, scene, *, persist=True):
         """Install a scene produced from the current page snapshot."""
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
         key = (index, float(scene.raster_scale), aggressive_band_merge)
@@ -301,6 +330,8 @@ class Document:
                len(self._gpu_vector_cache) > 1):
             _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
             self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
+        if persist:
+            self._save_disk_gpu_scene(index, scene)
         return scene
 
     def page_size(self, index):
