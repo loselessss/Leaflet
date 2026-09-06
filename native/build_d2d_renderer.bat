@@ -1,8 +1,13 @@
 @echo off
 setlocal
-set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+set "VCVARS="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+  for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+)
+if not defined VCVARS set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if not exist "%VCVARS%" (
-  echo Visual Studio 2022 C++ Build Tools not found.
+  echo Visual Studio C++ x64 build tools not found.
   exit /b 1
 )
 call "%VCVARS%" >nul
