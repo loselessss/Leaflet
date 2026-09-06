@@ -30,13 +30,15 @@ def include_source(name):
     path = PurePosixPath(name)
     return (bool(path.parts) and not path.is_absolute() and ".." not in path.parts
             and "\\" not in name and name not in COMPANION_FILES
+            and path.parts[:2] != ("native", "bin")
             and path.parts[0] not in {"paperorganizer", ".git", ".venv", "build", "dist", "Output", "test"})
 
 
 def clean_source_status(status):
     # build_exe regenerates these derived assets from the tagged make_icons.py.
     # Font/Pillow differences can change their bytes on the build server.
-    allowed = {b" M assets/spdf.ico", b" M assets/spdf_doc.ico"}
+    allowed = {b" M assets/spdf.ico", b" M assets/spdf_doc.ico",
+               b" M native/bin/spdf_d2d_renderer.dll"}
     return all(line in allowed for line in status.splitlines())
 
 

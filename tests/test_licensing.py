@@ -71,6 +71,10 @@ class LicensingTests(unittest.TestCase):
         self.assertFalse(clean_source_status(b" M make_icons.py\n"))
         self.assertFalse(clean_source_status(b"?? private.txt\n"))
         self.assertFalse(clean_source_status(b"M  assets/spdf.ico\n"))
+        self.assertTrue(clean_source_status(b" M native/bin/spdf_d2d_renderer.dll\n"))
+        self.assertFalse(clean_source_status(b" M native/d2d_renderer/spdf_d2d.cpp\n"))
+        self.assertFalse(include_source("native/bin/spdf_d2d_renderer.dll"))
+        self.assertTrue(include_source("native/d2d_renderer/spdf_d2d.cpp"))
 
     def test_wheel_only_projects_use_upstream_release_tags(self):
         for name, version, upstream in (("rapidocr", "3.9.2", "RapidAI/RapidOCR"),
