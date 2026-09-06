@@ -2,9 +2,12 @@
 
 English | [한국어](CHANGELOG.ko.md)
 
-## 1.30.0 - 2026-09-05
+## 1.30.1 - 2026-09-06
 
-### New features
+### Improvements
 
-- GPU scenes are cached on disk within a shared 100 MiB budget and reused when reopening unchanged documents at the same rendering scale.
-- Least recently used scenes are removed automatically. Changed documents and renderer versions invalidate cached scenes; protected documents and edited content are excluded.
+- Disk caches store ordinary images as references to the original PDF instead of decoded pixels; drawing commands and expensive composition bitmaps are retained.
+- Choose Off, 50, 100, 250 or 500 MB under rendering settings. Reducing the limit removes old entries immediately.
+
+- Faster image preparation preserves the exact color and alpha values. Repeated images share GPU uploads, and the scene memory budget now includes vector and glyph commands.
+- In automatic mode, higher-resolution image scenes are prepared in a separate process while the current view stays visible.

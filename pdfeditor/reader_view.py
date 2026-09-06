@@ -1,8 +1,8 @@
 """Viewport-sized GPU compositor with bounded, on-demand CPU PDF tiles.
 
-Direct2D or OpenGL only composites already-rasterized images. MuPDF remains on
-the GUI thread: it is not thread-safe. One small tile per timer tick yields
-between tiles without sharing documents with workers or delaying tab close.
+Direct2D draws supported PDF scenes; CPU tiles provide a fallback. Background
+scene workers own separate PDF snapshots and never share the GUI's MuPDF state.
+One CPU tile per timer tick yields between fallback rendering requests.
 """
 
 from collections import OrderedDict
@@ -309,7 +309,8 @@ class ReaderPageView(QGraphicsView):
                 key not in self._vector_refine_attempted)
             image_refine = (
                 scene.supported and "image-downsample" in scene.features and
-                scene.raster_scale < self._vector_refine_scale)
+                scene.raster_scale < self._vector_refine_scale and
+                key not in self._vector_refine_attempted)
             if not deferred and not image_refine:
                 continue
             candidates.append((not rect.intersects(exposed), page))
@@ -329,10 +330,12 @@ class ReaderPageView(QGraphicsView):
             return
         page = self._vector_refine_pages.pop(0)
         scene = self._vector_pages.get(page)
-        if self._render_mode == "auto" and scene is not None and \
-                not scene.supported and scene.reason in (
+        if self._render_mode == "auto" and scene is not None and (
+                (not scene.supported and scene.reason in (
                     "GPU scene deferred by complexity probe",
-                    "GPU scene time budget exceeded"):
+                    "GPU scene time budget exceeded")) or
+                (scene.supported and "image-downsample" in scene.features and
+                 scene.raster_scale < self._vector_refine_scale)):
             self._start_vector_refine_worker(page)
             return
         try:
@@ -460,8 +463,8 @@ class ReaderPageView(QGraphicsView):
     def rasterization_device(self, page):
         """Last completed page frame, not the device used to composite tiles.
 
-        Decoding embedded images is not PDF rasterization. Shadings, however,
-        are currently rasterized by MuPDF before GPU composition.
+        Decoding embedded images is not PDF rasterization. Only raster shading
+        and CPU composition islands require CPU page-content rasterization.
         """
         if self._d2d_surface is None or self.render_device != "gpu":
             return "CPU"
@@ -579,6 +582,7 @@ class ReaderPageView(QGraphicsView):
 
         items = scene.drawables
         unique = {}
+        bitmaps = {}
         stroke_styles = {}
         auxiliary = set()
         native_items = []
@@ -588,8 +592,13 @@ class ReaderPageView(QGraphicsView):
                 native_items.append(None)
                 continue
             if isinstance(item, VectorImage):
-                native_items.append(self._d2d_surface.create_bitmap_bgra(
-                    item.pixels, item.width, item.height, item.stride))
+                key = (id(item.pixels), item.width, item.height, item.stride)
+                bitmap = bitmaps.get(key)
+                if bitmap is None:
+                    bitmap = self._d2d_surface.create_bitmap_bgra(
+                        item.pixels, item.width, item.height, item.stride)
+                    bitmaps[key] = bitmap
+                native_items.append(bitmap)
                 continue
             if isinstance(item, (VectorLinearGradient, VectorRadialGradient)):
                 native_items.append(self._d2d_surface.create_path(

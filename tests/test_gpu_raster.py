@@ -1215,10 +1215,8 @@ class GpuRasterSceneTests(unittest.TestCase):
         self.assertNotIn((15, 2.0, False), self.document._gpu_vector_cache)
         self.assertIn((15, 4.0, False), self.document._gpu_vector_cache)
         self.assertIs(four, self.document.gpu_vector_page(15, 4.0))
-        self.assertLessEqual(
-            self.document._gpu_vector_cache_bytes,
-            sum(item.width * item.height * 4 for item in four.drawables
-                if hasattr(item, "pixels")))
+        from pdfeditor.core import _gpu_scene_cost
+        self.assertEqual(self.document._gpu_vector_cache_bytes, _gpu_scene_cost(four))
         self.assertTrue(one.supported and two.supported and four.supported)
 
     def test_original_quality_image_scene_satisfies_higher_zoom_cache(self):

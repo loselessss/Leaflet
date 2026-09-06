@@ -1904,6 +1904,17 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
                 "Show the actual rendering path and CPU fallback reason for the current page.",
                 "현재 페이지의 실제 렌더링 경로와 CPU 대체 사유를 표시합니다."))
             diagnostic.triggered.connect(self._set_render_diagnostics)
+            cache_menu = renderer.addMenu(localize("Disk cache limit", "디스크 캐시 최대 용량"))
+            cache_group = QActionGroup(cache_menu)
+            cache_group.setExclusive(True)
+            for size in settings.DISK_CACHE_SIZES:
+                label = localize("Off", "사용 안 함") if size == 0 else "%d MB" % size
+                action = cache_menu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(settings.disk_cache_mb() == size)
+                cache_group.addAction(action)
+                action.triggered.connect(
+                    lambda _checked=False, selected=size: self._set_disk_cache_size(selected))
         menu = parent_menu.addMenu(tr("언어"))
         menu.setIcon(fluent_icon("settings"))
         group = QActionGroup(menu)
@@ -1926,6 +1937,14 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
             settings.set_startup_workspace(mode)
         except OSError as error:
             self.statusBar().showMessage(str(error), 8000)
+
+    def _set_disk_cache_size(self, size):
+        try:
+            settings.set_disk_cache_mb(size)
+            from .scene_disk_cache import trim
+            trim()
+        except OSError as error:
+            self._show_shell_status(str(error), 8000)
 
     def _set_reader_resident(self, enabled):
         try:

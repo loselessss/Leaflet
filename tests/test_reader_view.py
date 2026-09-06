@@ -66,6 +66,34 @@ class ReaderViewTests(unittest.TestCase):
         self.assertEqual(info["mode"], "cpu")
         self.assertIn("ABI mismatch", info["reason"])
 
+    def test_auto_zoom_prepares_images_in_worker_and_retains_current_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=("image-downsample",), raster_scale=1)
+        self.view._vector_pages[0] = scene
+        self.view._render_mode = "auto"
+        self.view.zoom = 2
+        self.view._vector_refine_scale = self.view._vector_raster_scale()
+        self.view._vector_refine_document = self.doc
+        self.view._vector_refine_pages = [0]
+        with patch.object(self.view, "_start_vector_refine_worker") as worker, \
+                patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError):
+            self.view._refresh_next_vector_page()
+        worker.assert_called_once_with(0)
+        self.assertIs(self.view._vector_pages[0], scene)
+
+    def test_repeated_image_uploads_one_bitmap(self):
+        from pdfeditor.gpu_raster import VectorImage, VectorPage
+        pixels = bytes((0, 0, 255, 255)) * 4
+        scene = VectorPage(True, items=(
+            VectorImage(pixels, 2, 2, 8, (10, 0, 0, 10, 0, 0)),
+            VectorImage(pixels, 2, 2, 8, (10, 0, 0, 10, 20, 0))))
+        surface = Mock()
+        self.view._d2d_surface = surface
+        draws = self.view._native_vector_draws(0, scene)
+        surface.create_bitmap_bgra.assert_called_once()
+        self.assertEqual(len(draws), 2)
+        self.assertIs(draws[0][1], draws[1][1])
+
     def test_gradient_diagnostics_separate_gpu_drawing_from_cpu_bitmaps(self):
         from pdfeditor.app import _render_diagnostic_summary
         from pdfeditor.i18n import language, set_language
@@ -505,6 +533,7 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_vector_paths.clear()
 
     def test_gpu_image_scene_refreshes_for_zoom_quality(self):
+        self.view._render_mode = "gpu"
         from pdfeditor.gpu_raster import VectorImage, VectorPage
 
         low = VectorPage(
@@ -542,9 +571,9 @@ class ReaderViewTests(unittest.TestCase):
             self.view._refresh_next_vector_page()
             self.view._paint_d2d()
 
-        from pdfeditor.reader_view import GPU_SCENE_TIMEOUT_SECONDS
+        from pdfeditor.reader_view import FORCED_GPU_SCENE_TIMEOUT_SECONDS
         vector_page.assert_called_once_with(
-            0, 2.0, timeout_seconds=GPU_SCENE_TIMEOUT_SECONDS)
+            0, 2.0, timeout_seconds=FORCED_GPU_SCENE_TIMEOUT_SECONDS)
         self.assertIs(self.view._vector_pages[0], high)
         self.assertEqual(surface.create_bitmap_bgra.call_args.args[1:3], (4, 4))
         low_bitmap.close.assert_called_once_with()
@@ -554,6 +583,7 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_requested = False
 
     def test_zoom_keeps_existing_gpu_scene_when_refresh_times_out(self):
+        self.view._render_mode = "gpu"
         from pdfeditor.gpu_raster import VectorImage, VectorPage
 
         low = VectorPage(
@@ -587,9 +617,9 @@ class ReaderViewTests(unittest.TestCase):
             self.view._refresh_next_vector_page()
             self.view._paint_d2d()
 
-        from pdfeditor.reader_view import GPU_SCENE_TIMEOUT_SECONDS
+        from pdfeditor.reader_view import FORCED_GPU_SCENE_TIMEOUT_SECONDS
         vector_page.assert_called_once_with(
-            0, 2.0, timeout_seconds=GPU_SCENE_TIMEOUT_SECONDS)
+            0, 2.0, timeout_seconds=FORCED_GPU_SCENE_TIMEOUT_SECONDS)
         self.assertIs(self.view._vector_pages[0], low)
         bitmap.close.assert_not_called()
         self.assertEqual(self.view.rasterization_device(0), "GPU")

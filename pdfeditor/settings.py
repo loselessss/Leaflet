@@ -160,6 +160,22 @@ def render_diagnostics():
     return bool(_load().get("render_diagnostics", False))
 
 
+DISK_CACHE_SIZES = (0, 50, 100, 250, 500)
+
+
+def disk_cache_mb():
+    value = _load().get("disk_cache_mb", 100)
+    return value if type(value) is int and value in DISK_CACHE_SIZES else 100
+
+
+def set_disk_cache_mb(value):
+    if type(value) is not int or value not in DISK_CACHE_SIZES:
+        raise ValueError("Unsupported disk cache size")
+    data = _load()
+    data["disk_cache_mb"] = value
+    _save(data)
+
+
 def set_render_diagnostics(enabled):
     data = _load()
     data["render_diagnostics"] = bool(enabled)

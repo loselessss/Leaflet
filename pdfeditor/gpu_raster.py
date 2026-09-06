@@ -68,6 +68,7 @@ class VectorImage:
     transform: tuple
     opacity: float = 1.0
     interpolate: bool = True
+    source_index: int = None
 
 
 @dataclass(frozen=True)
@@ -629,13 +630,14 @@ def _rgba_to_premul_bgra(samples, width, height):
     if len(samples) < cost:
         raise ValueError("rasterized image data is incomplete")
     bgra = bytearray(cost)
-    for offset in range(0, cost, 4):
-        red, green, blue, opacity = samples[offset:offset + 4]
-        if opacity != 255:
-            red = (red * opacity + 127) // 255
-            green = (green * opacity + 127) // 255
-            blue = (blue * opacity + 127) // 255
-        bgra[offset:offset + 4] = blue, green, red, opacity
+    alpha = samples[3:cost:4]
+    opaque = alpha.count(255) == len(alpha)
+    for target, source in ((0, 2), (1, 1), (2, 0)):
+        channel = samples[source:cost:4]
+        bgra[target::4] = channel if opaque else bytes(
+            (value * opacity + 127) // 255
+            for value, opacity in zip(channel, alpha))
+    bgra[3::4] = alpha
     return bytes(bgra)
 
 
@@ -1398,6 +1400,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         self.failure = ""
         self._glyphs = {}
         self._images = {}
+        self._source_image_index = 0
         self._image_bytes = 0
         self._clip_depth = 0
         self._group_depth = 0
@@ -1809,6 +1812,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._set_failure(str(error))
 
     def fill_image(self, _context, image, ctm, alpha, _color_params):
+        source_index = self._source_image_index
+        self._source_image_index += 1
         try:
             self._features.add("image")
             source = _mupdf.FzImage(image)
@@ -1831,14 +1836,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 cost = pixmap.width * pixmap.height * 4
                 if pixmap.n != 4 or not pixmap.alpha or len(rgba) < cost:
                     raise ValueError("decoded image is not RGBA")
-                bgra = bytearray(cost)
-                for offset in range(0, cost, 4):
-                    red, green, blue, opacity = rgba[offset:offset + 4]
-                    if opacity != 255:
-                        red = (red * opacity + 127) // 255
-                        green = (green * opacity + 127) // 255
-                        blue = (blue * opacity + 127) // 255
-                    bgra[offset:offset + 4] = blue, green, red, opacity
+                bgra = _rgba_to_premul_bgra(rgba, pixmap.width, pixmap.height)
                 cached = self._store_image_bytes(
                     key, bytes(bgra), pixmap.width, pixmap.height,
                     pixmap.width * 4)
@@ -1846,7 +1844,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._append_item(VectorImage(
                 pixels, width, height, stride, _matrix(ctm),
                 max(0.0, min(1.0, float(alpha))),
-                bool(source.interpolate())))
+                bool(source.interpolate()), source_index))
         except Exception as error:
             self._set_failure(str(error))
 
@@ -2061,14 +2059,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             rgba = image.samples
             if len(rgba) < cost:
                 raise ValueError("rasterized shading data is incomplete")
-            bgra = bytearray(cost)
-            for offset in range(0, cost, 4):
-                red, green, blue, opacity = rgba[offset:offset + 4]
-                if opacity != 255:
-                    red = (red * opacity + 127) // 255
-                    green = (green * opacity + 127) // 255
-                    blue = (blue * opacity + 127) // 255
-                bgra[offset:offset + 4] = blue, green, red, opacity
+            bgra = _rgba_to_premul_bgra(rgba, width, height)
             self._append_item(VectorImage(
                 bytes(bgra), width, height, width * 4,
                 (width / scale, 0.0, 0.0, height / scale,

@@ -7,6 +7,8 @@ from collections import OrderedDict
 import os
 import shutil
 import tempfile
+import sys
+from dataclasses import fields, is_dataclass
 
 import fitz
 
@@ -24,11 +26,24 @@ def _aggressive_gpu_band_merge_enabled():
 
 
 def _gpu_scene_cost(scene):
-    return sum(
-        int(item.width) * int(item.height) * 4
-        for item in scene.drawables
-        if hasattr(item, "pixels") and hasattr(item, "width") and
-        hasattr(item, "height"))
+    cached = getattr(scene, "_memory_cost", None)
+    if cached is not None:
+        return cached
+    total, seen, pending = 0, set(), [scene]
+    while pending:
+        value = pending.pop()
+        identity = id(value)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += sys.getsizeof(value)
+        if is_dataclass(value):
+            total += sys.getsizeof(value.__dict__)
+            pending.extend(getattr(value, field.name) for field in fields(value))
+        elif isinstance(value, (tuple, list)):
+            pending.extend(value)
+    object.__setattr__(scene, "_memory_cost", total)
+    return total
 
 
 def configure_antialiasing(tools=None):
@@ -285,7 +300,7 @@ class Document:
             misses = self._disk_cache_misses = set()
         if cache_key is None or cache_key in misses:
             return None
-        scene = disk.load(cache_key)
+        scene = disk.load(cache_key, self._doc[index])
         if scene is None or scene.raster_scale != scale:
             misses.add(cache_key)
             return None

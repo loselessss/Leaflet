@@ -17,6 +17,8 @@ class SceneDiskCacheTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.redirect = patch("pdfeditor.paths.user_data_dir", return_value=str(self.root))
         self.redirect.start()
+        self.settings = patch("pdfeditor.settings.PATH", str(self.root / "settings.json"))
+        self.settings.start()
         self.path = self.root / "sample.pdf"
         with pymupdf.open() as pdf:
             page = pdf.new_page()
@@ -25,6 +27,7 @@ class SceneDiskCacheTests(unittest.TestCase):
 
     def tearDown(self):
         self.redirect.stop()
+        self.settings.stop()
         self.temp.cleanup()
 
     def test_reopen_uses_scene_without_extraction(self):
@@ -89,11 +92,45 @@ class SceneDiskCacheTests(unittest.TestCase):
     def test_budget_evicts_oldest_and_roundtrips_pixels(self):
         def scene():
             return VectorPage(True, items=(VectorImage(
-                os.urandom(4096), 32, 32, 128, (1, 0, 0, 1, 0, 0)),))
+                os.urandom(40960), 64, 160, 256, (1, 0, 0, 1, 0, 0)),))
         first, second = scene(), scene()
-        with patch.object(cache, "LIMIT", 7000):
+        with patch.object(cache, "_limit", return_value=70000):
             cache.save("first", first)
             self.assertEqual(cache.load("first"), first)
             cache.save("second", second)
         self.assertIsNone(cache.load("first"))
         self.assertEqual(cache.load("second"), second)
+
+    def test_image_reference_cache_restores_exact_pixels_and_transforms(self):
+        from pdfeditor.gpu_raster import vector_page_from_pymupdf
+        with pymupdf.open() as pdf:
+            page = pdf.new_page()
+            pixmap = pymupdf.Pixmap(pymupdf.csRGB, 256, 256, os.urandom(256*256*3), False)
+            xref = page.insert_image(pymupdf.Rect(0, 0, 256, 256), pixmap=pixmap)
+            page.insert_image(pymupdf.Rect(270, 0, 398, 128), xref=xref, rotate=90)
+            scene = vector_page_from_pymupdf(page)
+            cache.save("images", scene)
+            self.assertIsNone(cache.load("images"))
+            restored = cache.load("images", page)
+            self.assertEqual(restored, scene)
+            db = cache._connect()
+            size = db.execute("SELECT length(data) FROM scenes WHERE key='images'").fetchone()[0]
+            db.close()
+            self.assertLess(size, 5000)
+
+    def test_disabled_cache_clears_entries_and_skips_writes(self):
+        from pdfeditor import settings
+        cache.save("old", VectorPage(True))
+        settings.set_disk_cache_mb(0)
+        cache.trim()
+        cache.save("new", VectorPage(True))
+        settings.set_disk_cache_mb(100)
+        self.assertIsNone(cache.load("old"))
+        self.assertIsNone(cache.load("new"))
+
+    def test_size_setting_validation(self):
+        from pdfeditor import settings
+        settings.set_disk_cache_mb(250)
+        self.assertEqual(cache._limit(), 250*1024*1024)
+        with self.assertRaises(ValueError):
+            settings.set_disk_cache_mb(-1)
