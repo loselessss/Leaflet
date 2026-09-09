@@ -214,6 +214,49 @@ QToolBar::separator {
     margin: 7px 6px;
 }
 
+QToolBar#editorCommandBar {
+    background: #ffffff;
+    border-bottom: 1px solid #e3e7ed;
+    spacing: 3px;
+    padding: 9px 14px;
+}
+
+QToolBar#editorCommandBar QToolButton {
+    border-radius: 7px;
+    margin: 0 1px;
+}
+
+QToolBar#editorCommandBar QToolButton[editorLabeled="true"] {
+    min-width: 0;
+    max-width: 180px;
+    padding: 0 10px;
+    font-weight: 600;
+}
+
+QToolBar#editorCommandBar QToolButton:hover {
+    background: #f0f3f7;
+}
+
+QToolBar#editorCommandBar QToolButton:checked {
+    background: #e8efff;
+    color: #244b91;
+    border: 1px solid #cfddfa;
+}
+
+QPushButton#backToReaderButton {
+    background: #f5f7fa;
+    border: 1px solid #dce2ea;
+    border-radius: 8px;
+    padding: 0 13px;
+    color: #243247;
+    font-weight: 600;
+}
+
+QPushButton#backToReaderButton:hover {
+    background: #eaf0fa;
+    border-color: #b9cbe7;
+}
+
 QTabWidget::pane {
     border: 0;
     border-top: 1px solid #e5e5e5;

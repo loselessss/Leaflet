@@ -1,12 +1,57 @@
 """Standalone editing helpers shared with the separate page organizer."""
 
-from PyQt5.QtWidgets import QPushButton
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtWidgets import QPushButton, QToolBar
 
 from .i18n import localize
 from .icons import fluent_icon
 
 
 class EditorWorkspaceMixin:
+    def build_editor_command_bar(self):
+        """Compact, grouped editor commands using the existing document actions."""
+        bar = QToolBar(localize("Editor tools", "편집 도구"), self)
+        bar.setObjectName("editorCommandBar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setIconSize(QSize(18, 18))
+        bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._reader_mode_button = QPushButton(
+            localize("Back to reader", "리더로 돌아가기"))
+        self._reader_mode_button.setObjectName("backToReaderButton")
+        self._reader_mode_button.setIcon(fluent_icon("back"))
+        self._reader_mode_button.setMinimumHeight(34)
+        self._reader_mode_button.setToolTip(localize(
+            "Return to the reader; unsaved changes are checked before switching.",
+            "미저장 변경을 확인한 뒤 현재 문서를 리더로 전환합니다."))
+        self._reader_mode_button.clicked.connect(self._shell.open_reader)
+        bar.addWidget(self._reader_mode_button)
+        bar.addSeparator()
+        bar.addAction(self._open_act)
+        bar.addAction(self._save_act)
+        bar.addSeparator()
+        bar.addAction(self._undo_act)
+        bar.addAction(self._redo_act)
+        bar.addSeparator()
+        for action in (self._hand_tool_act, self._select_tool_act, self._edit_act):
+            bar.addAction(action)
+        bar.addSeparator()
+        bar.addAction(self._pages_act)
+        for action, label in (
+                (self._edit_act, localize("Edit text", "텍스트 편집")),
+                (self._pages_act, localize("Pages", "페이지 구성"))):
+            button = bar.widgetForAction(action)
+            button.setProperty("editorLabeled", True)
+            button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            button.setText(label)
+        bar.addAction(self._rotate_ccw_act)
+        bar.addAction(self._rotate_cw_act)
+        bar.addSeparator()
+        bar.addAction(self._search_act)
+        bar.addAction(self._fit_width_act)
+        bar.addAction(self._fit_page_act)
+        return bar
+
     def _init_editor_workspace(self, viewer):
         self._page_grid = None
         self._workspace_header = None

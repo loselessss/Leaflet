@@ -92,6 +92,19 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.assertEqual(tab.view.composition_backend, "cpu")
         self.assertTrue(tab.view.canvas._edit_boxes)
 
+    def test_reader_button_uses_existing_save_checked_handoff(self):
+        tab = self.open_editor()
+        with patch.object(tab, "maybe_save", return_value=False) as save, \
+                patch("pdfeditor.process_workspace.application_bridge") as bridge:
+            tab._reader_mode_button.click()
+        save.assert_called_once()
+        bridge.assert_not_called()
+        with patch.object(tab, "maybe_save", return_value=True), \
+                patch("pdfeditor.process_workspace.application_bridge") as bridge:
+            tab._reader_mode_button.click()
+        bridge.return_value.launch.assert_called_once_with(
+            self.window, tab, mode="reader", handoff_source=True)
+
     def test_editor_tiled_view_keeps_zoom_and_edit_interaction_bounded(self):
         from PyQt5.QtCore import QPointF
         tab = self.open_editor()
