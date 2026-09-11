@@ -7,6 +7,7 @@ be rasterized as a bounded image island.
 """
 
 from dataclasses import dataclass, replace
+from contextvars import ContextVar
 import ctypes
 import math
 import struct
@@ -14,6 +15,10 @@ import time
 
 import pymupdf
 from pymupdf import mupdf as _mupdf
+
+
+# Per-extraction work only: never retained between documents or zoom jobs.
+_extraction_work = ContextVar("spdf_extraction_work", default=None)
 
 
 MAX_GPU_IMAGE_BYTES = 64 * 1024 * 1024
@@ -69,6 +74,7 @@ class VectorImage:
     opacity: float = 1.0
     interpolate: bool = True
     source_index: int = None
+    refresh_key: tuple = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,7 @@ class ClipPush:
     commands: tuple
     even_odd: bool = False
     transform: tuple = None
+    refresh_key: tuple = None
 
 
 @dataclass(frozen=True)
@@ -541,6 +548,20 @@ def _convex_path_contains_bbox(commands, transform, box):
 
 
 def _item_bbox(item):
+    work = _extraction_work.get()
+    if work is None:
+        return _uncached_item_bbox(item)
+    cache = work[0]
+    identity = id(item)
+    if identity in cache:
+        return cache[identity][1]
+    result = _uncached_item_bbox(item)
+    if len(cache) < MAX_GPU_SCENE_ITEMS:
+        cache[identity] = (item, result)
+    return result
+
+
+def _uncached_item_bbox(item):
     if isinstance(item, VectorPath):
         box = _commands_bbox(item.commands, item.transform)
         if box is not None and item.stroke_argb is not None:
@@ -699,6 +720,16 @@ def _gradient_stops(shade, alpha, color_params):
     stride = int(shade.function_stride)
     if stride < channels:
         raise ValueError("invalid shading function")
+    work = _extraction_work.get()
+    key = None
+    if work is not None and stride <= 32:
+        key = (source.m_internal_value(), stride,
+               ctypes.string_at(int(shade.function), (255 * stride + channels) * 4),
+               float(alpha), color_params.ri, color_params.bp,
+               color_params.op, color_params.opm)
+        cached = work[1].get(key)
+        if cached is not None:
+            return cached[1]
     stops = []
     opacity = max(0.0, min(1.0, float(alpha)))
     for index in range(LINEAR_SHADE_STEPS + 1):
@@ -707,7 +738,11 @@ def _gradient_stops(shade, alpha, color_params):
         color = _float_pointer_items(shade.function, color_index * stride, channels)
         stops.append((position, _device_color_values(
             source, color, opacity, color_params)))
-    return tuple(stops)
+    result = tuple(stops)
+    if key is not None and len(work[1]) < 512:
+        # Copy the owning C++ wrapper to keep the colorspace identity alive.
+        work[1][key] = (_mupdf.FzColorspace(source), result)
+    return result
 
 
 def _argb(color, opacity):
@@ -1019,6 +1054,7 @@ def _compact_gradient_clip_triplets(items):
     while index < len(items):
         if index + 2 < len(items) and \
                 isinstance(items[index], ClipPush) and \
+                items[index].refresh_key is None and \
                 isinstance(items[index + 1],
                            (VectorLinearGradient, VectorRadialGradient)) and \
                 isinstance(items[index + 2], ClipPop):
@@ -1250,6 +1286,7 @@ def _enclosing_scopes(items, group_start):
 
 
 def _cpu_island_from_page(page, box, scale, image_bytes):
+    original_box = tuple(box)
     box = _padded_page_bbox(box, page.rect, scale)
     if box is None:
         raise ValueError("CPU island has empty bounds")
@@ -1275,7 +1312,8 @@ def _cpu_island_from_page(page, box, scale, image_bytes):
     return VectorImage(
         pixels, width, height, width * 4,
         (width / scale, 0.0, 0.0, height / scale,
-         float(pixmap.x) / scale, float(pixmap.y) / scale)), cost
+         float(pixmap.x) / scale, float(pixmap.y) / scale),
+        refresh_key=("island", original_box)), cost
 
 
 def _approximate_island_absorbed_indexes(items, start, end, box, page):
@@ -1401,6 +1439,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         self._glyphs = {}
         self._images = {}
         self._source_image_index = 0
+        self._mask_source_index = 0
+        self._stencil_source_index = 0
         self._image_bytes = 0
         self._clip_depth = 0
         self._group_depth = 0
@@ -1824,8 +1864,18 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._reserve_image_bytes(source, key, ctm)
             cached = self._images.get(key) if key is not None else None
             if cached is None:
-                pixmap = pymupdf.Pixmap(
-                    source.fz_get_unscaled_pixmap_from_image())
+                decoded = source.fz_get_unscaled_pixmap_from_image()
+                # The one-argument constructor adds alpha even to opaque images.
+                # Preserve the decoded alpha flag and take an owned copy.
+                pixmap = pymupdf.Pixmap(decoded, decoded.alpha())
+                if (factor and not pixmap.alpha and
+                        pixmap.colorspace is not None and
+                        pixmap.colorspace.n in (1, 4)):
+                    # Color conversion is expensive at the original image size.
+                    # Work on an owned copy: MuPDF may lend its cached pixmap.
+                    # Keep alpha-bearing images on the original conversion path.
+                    pixmap = self._downsample_pixmap(pixmap, ctm)
+                    self._features.add("image-early-downsample")
                 if pixmap.n - pixmap.alpha != 3:
                     # PDF images may be Gray/CMYK/ICC-based; Direct2D receives BGRA.
                     pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
@@ -1844,7 +1894,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._append_item(VectorImage(
                 pixels, width, height, stride, _matrix(ctm),
                 max(0.0, min(1.0, float(alpha))),
-                bool(source.interpolate()), source_index))
+                bool(source.interpolate()), source_index,
+                ("image", source_index)))
         except Exception as error:
             self._set_failure(str(error))
 
@@ -1904,6 +1955,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
 
     def fill_image_mask(self, _context, image, ctm, colorspace, color,
                         alpha, color_params):
+        source_index = self._stencil_source_index
+        self._stencil_source_index += 1
         try:
             self._features.add("stencil")
             source = _mupdf.FzImage(image)
@@ -1939,11 +1992,13 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._append_item(VectorImage(
                 pixels, width, height, stride, _matrix(ctm),
                 max(0.0, min(1.0, float(alpha))),
-                bool(source.interpolate())))
+                bool(source.interpolate()), refresh_key=("stencil", source_index)))
         except Exception as error:
             self._set_failure(str(error))
 
     def clip_image_mask(self, _context, image, ctm, _scissor):
+        source_index = self._mask_source_index
+        self._mask_source_index += 1
         try:
             source = _mupdf.FzImage(image)
             source.thisown = False
@@ -1960,8 +2015,10 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                     raise ValueError("decoded clip mask is not an alpha mask")
                 pixmap = self._downsample_pixmap(pixmap, ctm)
                 if pixmap.samples and min(pixmap.samples) == 255:
+                    self._features.add("opaque-image-mask")
                     self._append_item(ClipPush(
-                        UNIT_RECT_COMMANDS, transform=transform))
+                        UNIT_RECT_COMMANDS, transform=transform,
+                        refresh_key=("mask", source_index)))
                     self._clip_depth += 1
                     self._features.add("clip-mask")
                     self._features.add("vector-clip")
@@ -1982,7 +2039,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 MaskBegin(mask_area, False, 0),
                 VectorImage(
                     pixels, width, height, stride, transform,
-                    interpolate=bool(source.interpolate())),
+                    interpolate=bool(source.interpolate()),
+                    refresh_key=("mask", source_index)),
                 MaskEnd()))
             self._clip_depth += 1
             self._features.add("clip-mask")
@@ -2208,7 +2266,128 @@ def _validate_composite_context(items):
     return "unbalanced composite scope stack" if scopes else ""
 
 
+def can_refine_images(scene):
+    """Only replay raster sources whose original identity was recorded."""
+    return (scene is not None and scene.supported and bool(scene.items) and
+            not {"tile-pattern", "vector-tile-pattern",
+                 "raster-shading"}.intersection(scene.features) and
+            all(_valid_refresh_key(item.refresh_key) for item in scene.items
+                if isinstance(item, VectorImage)) and
+            all(_valid_refresh_key(item.refresh_key) for item in scene.items
+                if isinstance(item, ClipPush) and item.refresh_key is not None))
+
+
+def _valid_refresh_key(key):
+    if not isinstance(key, tuple) or len(key) != 2:
+        return False
+    if key[0] in ("image", "mask", "stencil"):
+        return isinstance(key[1], int) and key[1] >= 0
+    return (key[0] == "island" and isinstance(key[1], tuple) and len(key[1]) == 4
+            and all(isinstance(v, (float, int)) and math.isfinite(v) for v in key[1]))
+
+
+def refine_page_images(page, scene, raster_scale, timeout_seconds=None):
+    """Same-page/same-generation refinement; None asks for full extraction.
+
+Only image callbacks are subscribed. Paths, glyphs, gradients and composite
+structure are reused. Callers must reject stale document generations.
+"""
+    if not can_refine_images(scene):
+        return None
+    scale = max(1.0, float(raster_scale))
+    if scale <= scene.raster_scale:
+        return scene
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    cookie = _mupdf.FzCookie()
+    recorder = _DisplayListDevice(tuple(page.rect), scale, cookie, deadline)
+    required = {item.refresh_key for item in scene.items
+                if isinstance(item, (VectorImage, ClipPush)) and item.refresh_key}
+    class ImagesOnly(_mupdf.FzDevice2):
+        def __init__(self):
+            super().__init__()
+            self.use_virtual_fill_image()
+            self.use_virtual_fill_image_mask()
+            self.use_virtual_clip_image_mask()
+
+        def fill_image(self, *args):
+            if ("image", recorder._source_image_index) in required:
+                recorder.fill_image(*args)
+            else:
+                recorder._source_image_index += 1
+
+        def fill_image_mask(self, *args):
+            if ("stencil", recorder._stencil_source_index) in required:
+                recorder.fill_image_mask(*args)
+            else:
+                recorder._stencil_source_index += 1
+
+        def clip_image_mask(self, *args):
+            if ("mask", recorder._mask_source_index) in required:
+                recorder.clip_image_mask(*args)
+            else:
+                recorder._mask_source_index += 1
+
+    device = ImagesOnly()
+    try:
+        _mupdf.fz_run_page(page.this, device, _mupdf.FzMatrix(), cookie)
+        if recorder.failure:
+            return None
+        replacements = {item.refresh_key: item for item in recorder.items
+                        if isinstance(item, (VectorImage, ClipPush)) and item.refresh_key}
+        items = []
+        byte_count = 0
+        seen_pixels = set()
+        for item in scene.items:
+            if deadline is not None and time.monotonic() >= deadline:
+                return None
+            if isinstance(item, ClipPush) and item.refresh_key:
+                if replacements.get(item.refresh_key) != item:
+                    return None
+            if isinstance(item, VectorImage):
+                key = item.refresh_key
+                if key[0] == "island":
+                    fresh, _cost = _cpu_island_from_page(page, key[1], scale, byte_count)
+                    item = replace(fresh, opacity=item.opacity)
+                else:
+                    fresh = replacements.get(key)
+                    if not isinstance(fresh, VectorImage) or fresh.transform != item.transform:
+                        return None
+                    item = replace(item, pixels=fresh.pixels, width=fresh.width,
+                                   height=fresh.height, stride=fresh.stride)
+                identity = id(item.pixels)
+                if identity not in seen_pixels:
+                    byte_count += len(item.pixels)
+                    seen_pixels.add(identity)
+                if byte_count > MAX_GPU_IMAGE_BYTES:
+                    return None
+            items.append(item)
+        features = set(scene.features) - {"image-downsample", "image-early-downsample"}
+        features.update(set(recorder._features) & {"image-downsample", "image-early-downsample"})
+        if "cpu-island" in features:
+            features.add("image-downsample")  # Baked regions also need higher zoom quality.
+        return replace(scene, items=tuple(items), features=tuple(sorted(features)),
+                       raster_scale=scale)
+    except (ValueError, RuntimeError, TypeError):
+        return None
+    finally:
+        _mupdf.fz_close_device(device)
+        _mupdf.fz_close_device(recorder)
+
+
 def vector_page_from_pymupdf(
+        page, raster_scale=1.0, timeout_seconds=None,
+        *, aggressive_band_merge=False):
+    """Extract with bounded, job-local reuse of geometry and color calculations."""
+    token = _extraction_work.set(({}, {}))
+    try:
+        return _vector_page_from_pymupdf(
+            page, raster_scale, timeout_seconds,
+            aggressive_band_merge=aggressive_band_merge)
+    finally:
+        _extraction_work.reset(token)
+
+
+def _vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
         *, aggressive_band_merge=False):
     """Return a complete GPU scene only when every operation is supported."""
@@ -2239,6 +2418,7 @@ def vector_page_from_pymupdf(
                 device._image_bytes = image_bytes
                 if islanded:
                     device._features.add("cpu-island")
+                    device._features.add("image-downsample")
                     if islanded == "approximate":
                         device._features.add("cpu-island-approximate")
                 compacted, fill_merged, text_merged, aggressive_merged = \

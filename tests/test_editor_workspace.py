@@ -69,6 +69,76 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.settle()
         return dialog, dialog.panel
 
+    def test_object_property_and_mixed_history(self):
+        from pdfeditor import editor_objects
+        tab = self.open_editor()
+        controller = tab._object_controller
+        controller.add("rectangle")
+        self.assertEqual(len(editor_objects.objects(tab.doc, 0)), 1)
+        identity = controller.selected
+        controller.fields[0].setValue(20)
+        controller.apply()
+        moved = editor_objects.objects(tab.doc, 0)[0]["rect"]
+        self.assertAlmostEqual(moved[0], 20 * 72 / 25.4)
+        tab._perform_text_edit(lambda: tab.doc._doc[0].insert_text((20, 50), "New text"))
+        tab.undo()
+        self.assertNotIn("New text", tab.doc._doc[0].get_text())
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], moved)
+        tab.undo()
+        self.assertNotEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], moved)
+        tab.undo()
+        self.assertEqual(editor_objects.objects(tab.doc, 0), [])
+        tab.redo()
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["id"], identity)
+        tab.redo()
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], moved)
+        controller.selected = identity
+        controller.refresh()
+        count = len(tab._undo_stack)
+        controller.apply()
+        self.assertEqual(len(tab._undo_stack), count)
+
+    def test_object_drag_preview_cancel_and_commit(self):
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        from pdfeditor import editor_objects
+        tab = self.open_editor()
+        controller = tab._object_controller
+        controller.add("rectangle")
+        self.settle()
+        item = controller.current()
+        x0, y0, x1, y1 = item["rect"]
+        view = tab.view
+        def event(kind, dx=0):
+            point = view.mapFromScene(view._page_transforms[0].map(QPointF((x0+x1)/2+dx, (y0+y1)/2)))
+            return QMouseEvent(kind, QPointF(point), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        count = len(tab._undo_stack)
+        controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress))
+        controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, 20))
+        self.assertIsNotNone(controller.preview)
+        self.assertEqual(len(tab._undo_stack), count)
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], item["rect"])
+        controller.cancel()
+        self.assertIsNone(controller.preview)
+        controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress))
+        controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, 20))
+        controller.mouse("mouseReleaseEvent", event(QEvent.MouseButtonRelease, 20))
+        self.assertEqual(len(tab._undo_stack), count + 1)
+        self.assertNotEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], item["rect"])
+        tab.set_interaction_mode("hand")
+        self.assertFalse(controller.active)
+
+    def test_object_failed_edit_rolls_back(self):
+        from pdfeditor import editor_objects
+        tab = self.open_editor()
+        controller = tab._object_controller
+        with patch.object(editor_objects, "_write_data", side_effect=RuntimeError("failure")), \
+                patch("pdfeditor.editing.QMessageBox.warning"):
+            controller.add("rectangle")
+        self.assertEqual(editor_objects.objects(tab.doc, 0), [])
+        self.assertEqual(len(tab._undo_stack), 0)
+        self.assertEqual(len(tab.doc._doc[0].get_drawings()), 1)
+
     def render_grid(self, grid):
         grid.stop_rendering()
         for _ in range(40):

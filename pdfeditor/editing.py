@@ -37,6 +37,11 @@ class EditMixin:
         self._undo_structural = []
         self._redo_structural = []
         self.view.canvas.set_edit_boxes([])
+        controller = getattr(self, "_object_controller", None)
+        if controller is not None:
+            controller.selected = None
+            controller.deactivate()
+            controller.refresh()
 
     # --- 페이지 전환 훅 -----------------------------------------------
 
@@ -45,6 +50,9 @@ class EditMixin:
         # 표시는 super() 체인(TextSelect→Viewer)에 맡기고, 편집 모드면 새
         # 페이지의 span 테두리를 다시 그린다.
         super().show_page(index)
+        controller = getattr(self, "_object_controller", None)
+        if controller is not None:
+            controller.refresh()
         if self._edit_mode:
             self._show_edit_boxes()
 

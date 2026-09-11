@@ -547,6 +547,121 @@ def small_overlapping_nonisolated_group_pdf_bytes():
 
 
 class GpuRasterSceneTests(unittest.TestCase):
+    def test_mask_derived_clip_is_not_absorbed_by_gradient_compaction(self):
+        from pdfeditor import gpu_raster as g
+        commands = g._rect_commands(0, 0, 20, 20)
+        items = (g.ClipPush(commands, refresh_key=("mask", 0)),
+                 g.VectorLinearGradient(commands, (0, 0), (20, 0),
+                                        ((0, 0xff000000), (1, 0xffffffff))), g.ClipPop())
+        self.assertEqual(g._compact_gradient_clip_triplets(items), (items, False))
+
+    def test_refinement_worker_reads_pixel_free_recipe(self):
+        from pdfeditor import gpu_raster as g, gpu_scene_worker as worker
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot, recipe_path, result_path = (root / "page.pdf", root / "base.pickle", root / "out.pickle")
+            with fitz.open(stream=downsampled_image_pdf_bytes(), filetype="pdf") as pdf:
+                pdf.save(snapshot)
+                base = g.vector_page_from_pymupdf(pdf[0], 1)
+                expected = g.vector_page_from_pymupdf(pdf[0], 2)
+            recipe = replace(base, items=tuple(replace(x, pixels=b"")
+                             if isinstance(x, g.VectorImage) else x for x in base.items))
+            recipe_path.write_bytes(pickle.dumps(recipe))
+            with patch.object(worker, "vector_page_from_pymupdf", side_effect=AssertionError):
+                self.assertEqual(worker.main([str(snapshot), str(result_path), "--scale", "2",
+                                              "--base-scene", str(recipe_path)]), 0)
+            self.assertEqual(pickle.loads(result_path.read_bytes()), expected)
+            self.assertFalse(Path(str(result_path) + ".tmp").exists())
+
+    def test_image_refinement_reuses_vectors_and_matches_full_extraction(self):
+        from pdfeditor import gpu_raster as g
+        from dataclasses import replace
+        with fitz.open(stream=downsampled_image_pdf_bytes(), filetype="pdf") as pdf:
+            pdf[0].insert_text((10, 20), "Vector text")
+            base = g.vector_page_from_pymupdf(pdf[0], 1)
+            full = g.vector_page_from_pymupdf(pdf[0], 2)
+            with patch.object(g, "_path_commands", side_effect=AssertionError), \
+                    patch.object(g, "_gradient_stops", side_effect=AssertionError):
+                result = g.refine_page_images(pdf[0], base, 2)
+            self.assertEqual(result, full)
+            for first, second in zip(base.items, result.items):
+                if not isinstance(first, g.VectorImage):
+                    self.assertIs(first, second)
+            recipe = replace(base, items=tuple(replace(x, pixels=b"")
+                             if isinstance(x, g.VectorImage) else x for x in base.items))
+            self.assertEqual(g.refine_page_images(pdf[0], recipe, 2), full)
+            self.assertIsNone(g.refine_page_images(pdf[0], base, 2, timeout_seconds=0))
+            self.assertIsNone(g.refine_page_images(pdf[0], replace(base, features=("tile-pattern",)), 2))
+
+    def test_mask_and_island_refinement_match_full_extraction(self):
+        from pdfeditor import gpu_raster as g
+        samples = [image_mask_pdf_bytes(), isolated_group_pdf_bytes("Multiply")]
+        for data in samples:
+            with fitz.open(stream=data, filetype="pdf") as pdf:
+                if data == samples[1]:
+                    pdf.xref_set_key(5, "Group/I", "false")
+                base = g.vector_page_from_pymupdf(pdf[0], 1)
+                full = g.vector_page_from_pymupdf(pdf[0], 2)
+                self.assertTrue(base.supported, base.reason)
+                self.assertEqual(g.refine_page_images(pdf[0], base, 2), full)
+
+    def test_early_image_reduction_preserves_source_and_high_zoom(self):
+        from pdfeditor import gpu_raster as g
+        for colorspace in (fitz.csGRAY, fitz.csCMYK):
+            with self.subTest(channels=colorspace.n), fitz.open() as pdf:
+                page = pdf.new_page(width=200, height=200)
+                pix = fitz.Pixmap(colorspace, fitz.IRect(0, 0, 512, 256), False)
+                pix.clear_with(70)
+                xref = page.insert_image((10, 10, 74, 42), pixmap=pix)
+                original = fitz.Pixmap(pdf, xref).samples
+                low = g.vector_page_from_pymupdf(page, 1)
+                self.assertTrue(low.supported, low.reason)
+                self.assertIn("image-early-downsample", low.features)
+                low_image = next(x for x in low.items if isinstance(x, g.VectorImage))
+                self.assertEqual((low_image.width, low_image.height), (64, 32))
+                self.assertEqual(fitz.Pixmap(pdf, xref).samples, original)
+                high = g.vector_page_from_pymupdf(page, 8)
+                self.assertTrue(high.supported, high.reason)
+                self.assertNotIn("image-early-downsample", high.features)
+                high_image = next(x for x in high.items if isinstance(x, g.VectorImage))
+                self.assertEqual((high_image.width, high_image.height), (512, 256))
+
+    def test_extraction_work_is_released_after_success_and_failure(self):
+        from pdfeditor import gpu_raster as g
+        with fitz.open(stream=linear_gradient_pdf_bytes(), filetype="pdf") as pdf:
+            self.assertTrue(g.vector_page_from_pymupdf(pdf[0]).supported)
+            self.assertIsNone(g._extraction_work.get())
+            with patch.object(g, "_vector_page_from_pymupdf", side_effect=ValueError("test")):
+                with self.assertRaises(ValueError):
+                    g.vector_page_from_pymupdf(pdf[0])
+            self.assertIsNone(g._extraction_work.get())
+
+    def test_repeated_gradient_conversion_is_reused_without_scene_change(self):
+        from pdfeditor import gpu_raster as g
+        with fitz.open(stream=linear_gradient_pdf_bytes(), filetype="pdf") as pdf:
+            pdf.update_stream(4, b"q /Sh1 sh Q\n" * 4)
+            with patch.object(g, "_device_color_values", wraps=g._device_color_values) as convert:
+                reference = g._vector_page_from_pymupdf(pdf[0])
+                original_calls = convert.call_count
+            with patch.object(g, "_device_color_values", wraps=g._device_color_values) as convert:
+                scene = g.vector_page_from_pymupdf(pdf[0])
+                self.assertEqual(scene, reference)
+                self.assertLess(convert.call_count, original_calls)
+
+    def test_bbox_work_reuses_identity_not_equal_looking_objects(self):
+        from pdfeditor import gpu_raster as g
+        first = g.VectorPath((("move", 0, 0), ("line", 10, 10)))
+        second = g.VectorPath((("move", 0, 0), ("line", 20, 20)))
+        token = g._extraction_work.set(({}, {}))
+        try:
+            with patch.object(g, "_uncached_item_bbox", wraps=g._uncached_item_bbox) as compute:
+                self.assertEqual(g._item_bbox(first), g._item_bbox(first))
+                self.assertNotEqual(g._item_bbox(first), g._item_bbox(second))
+                self.assertEqual(compute.call_count, 2)
+        finally:
+            g._extraction_work.reset(token)
+
     def test_image_mask_area_uses_transformed_unit_bounds_and_page_clip(self):
         from pdfeditor.gpu_raster import _image_mask_area
 

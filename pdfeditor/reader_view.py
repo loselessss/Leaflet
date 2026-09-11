@@ -330,7 +330,7 @@ class ReaderPageView(QGraphicsView):
             return
         page = self._vector_refine_pages.pop(0)
         scene = self._vector_pages.get(page)
-        if self._render_mode == "auto" and scene is not None and (
+        if self._render_mode in ("auto", "gpu") and scene is not None and (
                 (not scene.supported and scene.reason in (
                     "GPU scene deferred by complexity probe",
                     "GPU scene time budget exceeded")) or
@@ -363,6 +363,19 @@ class ReaderPageView(QGraphicsView):
             command = gpu_scene_worker_command()
             arguments = [snapshot_path, result_path, "--scale", str(scale),
                          "--timeout", str(DEFERRED_GPU_SCENE_TIMEOUT_SECONDS)]
+            from .gpu_raster import can_refine_images
+            base = self._vector_pages.get(page)
+            if can_refine_images(base) and base.raster_scale < scale:
+                from dataclasses import replace
+                from .gpu_raster import VectorImage
+                # Refinement regenerates pixels; send only the scene recipe.
+                recipe = replace(base, items=tuple(
+                    replace(item, pixels=b"") if isinstance(item, VectorImage) else item
+                    for item in base.items))
+                base_path = os.path.join(directory, "base.pickle")
+                with open(base_path, "wb") as stream:
+                    pickle.dump(recipe, stream, protocol=pickle.HIGHEST_PROTOCOL)
+                arguments.extend(["--base-scene", base_path])
             if os.environ.get("SPDF_GPU_AGGRESSIVE_BAND_MERGE", "").lower() in \
                     ("1", "true", "yes", "on"):
                 arguments.append("--aggressive-band-merge")
@@ -883,6 +896,9 @@ class ReaderPageView(QGraphicsView):
         self._set_page_transform(page_transform)
 
     def _draw_d2d_overlays(self):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None:
+            controller.paint_native(self._d2d_surface)
         canvas = self.canvas
         for rects, color in ((canvas._search_rects, SEARCH_COLOR),
                              (canvas._sel_rects, SEL_COLOR)):
@@ -1236,6 +1252,9 @@ class ReaderPageView(QGraphicsView):
                     painter.drawPixmap(region, pixmap, QRectF(pixmap.rect()))
             if page == self.canvas._active_page:
                 self.canvas.paint_overlays(painter, zoom=1, origin=QPointF())
+                controller = getattr(self, "object_controller", None)
+                if controller is not None:
+                    controller.paint(painter)
             painter.restore()
 
     def _clear_tiles(self):
@@ -1315,6 +1334,10 @@ class ReaderPageView(QGraphicsView):
             self.centerOn(transform.map(point))
 
     def _forward_mouse(self, name, event):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None and controller.mouse(name, event):
+            event.accept()
+            return
         point = self.mapToScene(event.pos())
         proxy = QMouseEvent(event.type(), point, QPointF(event.globalPos()),
                             event.button(), event.buttons(), event.modifiers())
@@ -1332,6 +1355,15 @@ class ReaderPageView(QGraphicsView):
 
     def mouseDoubleClickEvent(self, event):
         self._forward_mouse("mouseDoubleClickEvent", event)
+
+    def keyPressEvent(self, event):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None and controller.active and event.key() == Qt.Key_Escape:
+            controller.cancel()
+            self.viewport().update()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         point = self.canvas._activate_at(self.mapToScene(event.pos()))

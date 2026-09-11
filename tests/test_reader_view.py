@@ -94,6 +94,21 @@ class ReaderViewTests(unittest.TestCase):
         self.assertEqual(len(draws), 2)
         self.assertIs(draws[0][1], draws[1][1])
 
+    def test_forced_gpu_zoom_uses_worker_without_blocking_current_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=("image-downsample",), raster_scale=1)
+        self.view._render_mode = "gpu"
+        self.view._vector_pages[0] = scene
+        self.view.zoom = 2
+        self.view._vector_refine_scale = self.view._vector_raster_scale()
+        self.view._vector_refine_document = self.doc
+        self.view._vector_refine_pages = [0]
+        with patch.object(self.view, "_start_vector_refine_worker") as worker, \
+                patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError):
+            self.view._refresh_next_vector_page()
+        worker.assert_called_once_with(0)
+        self.assertIs(self.view._vector_pages[0], scene)
+
     def test_gradient_diagnostics_separate_gpu_drawing_from_cpu_bitmaps(self):
         from pdfeditor.app import _render_diagnostic_summary
         from pdfeditor.i18n import language, set_language
@@ -568,7 +583,7 @@ class ReaderViewTests(unittest.TestCase):
             vector_page.assert_not_called()
             self.assertTrue(self.view._vector_refine_timer.isActive())
             self.view._vector_refine_timer.stop()
-            self.view._refresh_next_vector_page()
+            self.view._refresh_vector_page_for_zoom(0)
             self.view._paint_d2d()
 
         from pdfeditor.reader_view import FORCED_GPU_SCENE_TIMEOUT_SECONDS
@@ -614,7 +629,7 @@ class ReaderViewTests(unittest.TestCase):
             self.view._paint_d2d()
             vector_page.assert_not_called()
             self.view._vector_refine_timer.stop()
-            self.view._refresh_next_vector_page()
+            self.view._refresh_vector_page_for_zoom(0)
             self.view._paint_d2d()
 
         from pdfeditor.reader_view import FORCED_GPU_SCENE_TIMEOUT_SECONDS
@@ -720,11 +735,33 @@ class ReaderViewTests(unittest.TestCase):
         process.poll.return_value = None
         self.view._vector_refine_process = process
         self.view._vector_refine_job = None
-
         self.view.preview_zoom(2)
-
         process.terminate.assert_not_called()
         self.view._vector_refine_process = None
+
+    def test_completed_refinement_does_not_replace_stale_page_or_scale(self):
+        from pdfeditor.gpu_raster import VectorPage
+        for stale_generation in (True, False):
+            with self.subTest(stale_generation=stale_generation):
+                old = VectorPage(True, features=("image-downsample",), raster_scale=1)
+                fresh = VectorPage(True, features=("image-downsample",), raster_scale=2)
+                directory = tempfile.mkdtemp(prefix="spdf-worker-test-")
+                result = Path(directory) / "scene.pickle"
+                result.write_bytes(pickle.dumps(fresh))
+                process = Mock(returncode=0)
+                process.poll.return_value = 0
+                self.view.zoom = 1
+                self.view._vector_pages[0] = old
+                self.view._vector_refine_process = process
+                self.view._vector_refine_job = {
+                    "document": self.doc, "generation": self.doc.render_generation + int(stale_generation),
+                    "page": 0, "scale": 2, "directory": directory,
+                    "result": str(result), "deadline": 0}
+                with patch.object(self.doc, "install_gpu_vector_page") as install:
+                    self.view._poll_vector_refine_worker()
+                self.assertIs(self.view._vector_pages[0], old)
+                self.assertEqual(install.call_count, 0 if stale_generation else 1)
+                self.assertFalse(Path(directory).exists())
 
     def test_stroked_clip_path_is_widened_then_pushed_on_gpu(self):
         from pdfeditor.gpu_raster import ClipPop, ClipStrokePush, VectorPage

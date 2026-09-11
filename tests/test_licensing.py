@@ -21,16 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LicensingTests(unittest.TestCase):
-    def test_full_license_and_legacy_notice_are_present(self):
+    def test_mit_project_license_and_dependency_license_texts_are_present(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
-        self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", license_text)
-        self.assertIn("13. Remote Network Interaction", license_text)
-        self.assertIn("END OF TERMS AND CONDITIONS", license_text)
-        legacy = (ROOT / "licenses/MIT-sPDF-legacy.txt").read_text(encoding="utf-8")
-        self.assertTrue(legacy.startswith("MIT License"))
-        self.assertIn("Copyright (c) 2026 loselessss", legacy)
-        self.assertIn("Permission is hereby granted, free of charge", legacy)
-        for name in ("GPL-3.0.txt", "LGPL-3.0.txt", "Apache-2.0.txt"):
+        self.assertTrue(license_text.startswith("MIT License"))
+        self.assertIn("Copyright (c) 2026 loselessss and contributors", license_text)
+        self.assertIn("Permission is hereby granted, free of charge", license_text)
+        for name in ("AGPL-3.0.txt", "GPL-3.0.txt", "LGPL-3.0.txt", "Apache-2.0.txt"):
             self.assertGreater((ROOT / "licenses" / name).stat().st_size, 10000)
 
     def test_exact_source_metadata_and_missing_source_fail_closed(self):
@@ -199,11 +195,11 @@ class LicenseDialogTests(unittest.TestCase):
                 dialog = LicenseDialog()
                 self.assertEqual(dialog.tabs.count(), 8)
                 self.assertIn(text, dialog.tabs.widget(0).toPlainText())
-                self.assertIn("AGPL-3.0-only", dialog.tabs.widget(0).toPlainText())
+                self.assertIn("MIT License", dialog.tabs.widget(0).toPlainText())
                 self.assertIn("/releases/tag/v" + APP_VERSION, source_url())
                 self.assertIn(source_url(), dialog.tabs.widget(0).toHtml())
-                self.assertIn("END OF TERMS AND CONDITIONS", dialog.tabs.widget(1).toPlainText())
-                self.assertIn("MIT License", dialog.tabs.widget(6).toPlainText())
+                self.assertIn("Permission is hereby granted", dialog.tabs.widget(1).toPlainText())
+                self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", dialog.tabs.widget(3).toPlainText())
                 dialog.close()
                 dialog.deleteLater()
                 self.app.processEvents()

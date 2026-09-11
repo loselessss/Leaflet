@@ -36,7 +36,8 @@ class SceneDiskCacheTests(unittest.TestCase):
         doc.close()
         doc = Document(str(self.path))
         try:
-            with patch("pdfeditor.gpu_raster.vector_page_from_pymupdf", side_effect=AssertionError):
+            with patch("pdfeditor.meta.APP_VERSION", "app-only-update"), \
+                    patch("pdfeditor.gpu_raster.vector_page_from_pymupdf", side_effect=AssertionError):
                 self.assertEqual(doc.gpu_vector_page(0), scene)
         finally:
             doc.close()
@@ -46,6 +47,12 @@ class SceneDiskCacheTests(unittest.TestCase):
         try:
             first = cache.key(doc, 0, 1, False)
             with patch("pdfeditor.meta.APP_VERSION", "different"):
+                self.assertEqual(first, cache.key(doc, 0, 1, False))
+            with patch.object(cache, "SCENE_FORMAT_VERSION", 999):
+                self.assertNotEqual(first, cache.key(doc, 0, 1, False))
+            with patch("pdfeditor.d2d_backend.ABI_VERSION", 999):
+                self.assertNotEqual(first, cache.key(doc, 0, 1, False))
+            with patch("pymupdf.VersionBind", "different"):
                 self.assertNotEqual(first, cache.key(doc, 0, 1, False))
             doc.invalidate_render()
             self.assertIsNone(cache.key(doc, 0, 1, False))

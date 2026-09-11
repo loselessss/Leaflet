@@ -261,10 +261,20 @@ class Document:
         if scene is None:
             scene = self._load_disk_gpu_scene(index, scale)
         if scene is None:
-            from .gpu_raster import vector_page_from_pymupdf
-            scene = vector_page_from_pymupdf(
-                self._doc[index], scale, timeout_seconds=timeout_seconds,
-                aggressive_band_merge=aggressive_band_merge)
+            from .gpu_raster import vector_page_from_pymupdf, refine_page_images
+            base = next((value for cache_key, value in reversed(self._gpu_vector_cache.items())
+                         if cache_key[0] == index and cache_key[2] == aggressive_band_merge
+                         and value.supported and value.raster_scale < scale), None)
+            if base is not None:
+                import time
+                started = time.monotonic()
+                scene = refine_page_images(self._doc[index], base, scale, timeout_seconds)
+                if timeout_seconds is not None:
+                    timeout_seconds = max(0.0, timeout_seconds - (time.monotonic() - started))
+            if scene is None:
+                scene = vector_page_from_pymupdf(
+                    self._doc[index], scale, timeout_seconds=timeout_seconds,
+                    aggressive_band_merge=aggressive_band_merge)
             self._save_disk_gpu_scene(index, scene)
             cost = _gpu_scene_cost(scene)
             self._gpu_vector_cache[key] = scene

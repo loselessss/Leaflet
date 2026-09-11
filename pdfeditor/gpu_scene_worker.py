@@ -3,10 +3,11 @@
 import argparse
 import os
 import pickle
+import time
 
 import pymupdf
 
-from .gpu_raster import vector_page_from_pymupdf
+from .gpu_raster import vector_page_from_pymupdf, refine_page_images, VectorPage
 
 
 def main(argv=None):
@@ -16,15 +17,26 @@ def main(argv=None):
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--aggressive-band-merge", action="store_true")
+    parser.add_argument("--base-scene")
     args = parser.parse_args(argv)
 
     with open(args.snapshot, "rb") as stream:
         data = stream.read()
     document = pymupdf.open("pdf", data)
     try:
-        scene = vector_page_from_pymupdf(
-            document[0], args.scale, timeout_seconds=args.timeout,
-            aggressive_band_merge=args.aggressive_band_merge)
+        started = time.monotonic()
+        scene = None
+        if args.base_scene:
+            # This file is written by our parent into the private worker job.
+            with open(args.base_scene, "rb") as stream:
+                base = pickle.load(stream)
+            if isinstance(base, VectorPage):
+                scene = refine_page_images(document[0], base, args.scale, args.timeout)
+        if scene is None:
+            scene = vector_page_from_pymupdf(
+                document[0], args.scale,
+                timeout_seconds=max(0.0, args.timeout - (time.monotonic() - started)),
+                aggressive_band_merge=args.aggressive_band_merge)
     finally:
         document.close()
     temporary = args.result + ".tmp"

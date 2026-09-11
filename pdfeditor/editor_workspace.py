@@ -33,6 +33,17 @@ class EditorWorkspaceMixin:
         bar.addAction(self._undo_act)
         bar.addAction(self._redo_act)
         bar.addSeparator()
+        controller = getattr(self, "_object_controller", None)
+        if controller is not None:
+            menu = self.menuBar().addMenu(localize("Object", "개체"))
+            for action in (controller.action, controller.rectangle_action, controller.image_action):
+                menu.addAction(action)
+                bar.addAction(action)
+                button = bar.widgetForAction(action)
+                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            menu.addSeparator()
+            menu.addAction(controller.dock.toggleViewAction())
+            bar.addSeparator()
         for action in (self._hand_tool_act, self._select_tool_act, self._edit_act):
             bar.addAction(action)
         bar.addSeparator()
@@ -56,6 +67,10 @@ class EditorWorkspaceMixin:
         self._page_grid = None
         self._workspace_header = None
         self._editor_overview = False
+        if self._shell.workspace_mode == "editor":
+            from .editor_object_ui import ObjectController
+            self._object_controller = ObjectController(self)
+            self.view.object_controller = self._object_controller
         return viewer
 
     def add_editor_mode_button(self, tool_bar):
@@ -85,7 +100,9 @@ class EditorWorkspaceMixin:
         pass
 
     def refresh_editor_overview(self, *, reset=False):
-        pass
+        controller = getattr(self, "_object_controller", None)
+        if controller is not None:
+            controller.refresh()
 
     def show_editor_overview(self):
         self.show_page_organizer()

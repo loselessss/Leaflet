@@ -8,7 +8,15 @@ editing, annotations, offline OCR, and multi-document tools in one application.
 Documents stay on your
 computer unless you explicitly use an external link or optional model download.
 
-**Current version: 1.30.2** · English and Korean interface · Windows
+**Current version: 1.31.0** · English and Korean interface · Windows
+
+Add rectangles and images in the editor, then move or resize them using dragging
+or millimetre properties. sPDF-created objects remain editable after saving and
+reopening the PDF; existing artwork is not automatically converted.
+
+Zoom quality updates reuse supported vector content while refreshing images in
+the background. GPU disk caches survive app-only updates; incompatible renderer
+or document changes still require rebuilding them.
 
 ## What sPDF is for
 
@@ -181,10 +189,11 @@ Press **F1** in the application for the complete localized guide.
 
 ### License and source code
 
-sPDF is licensed under **GNU AGPL v3 only (AGPL-3.0-only)**, without warranty.
+sPDF's original source code is licensed under the **MIT License**, without warranty.
 Redistribution and modification are permitted under [LICENSE](LICENSE).
-[Third-party notices and licensing scope](LICENSES.md) preserve the earlier MIT
-notice and each dependency's terms; embedding sPDF is not a licensing exemption.
+[Third-party notices and licensing scope](LICENSES.md) preserve each dependency's
+terms. Builds using the AGPL edition of PyMuPDF and GPL edition of PyQt5 are not
+distributed under MIT terms alone.
 Get version-matched application sources and dependency-source directions from
 the same release page as the installer. See [SOURCE_CODE.md](SOURCE_CODE.md)
 for details, including build instructions. License texts are also available

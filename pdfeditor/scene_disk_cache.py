@@ -10,6 +10,8 @@ import sqlite3
 import zlib
 
 MAX_DECODED = 256 * 1024 * 1024
+# Bump when extraction semantics or persisted fields change, not for UI releases.
+SCENE_FORMAT_VERSION = 4
 
 
 def _limit():
@@ -99,10 +101,9 @@ def key(document, page, scale, aggressive):
             if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != revision:
                 return None
             digest = document._disk_cache_digest = h.hexdigest()
-        from .meta import APP_VERSION
         from .d2d_backend import ABI_VERSION
         import pymupdf
-        identity = (2, APP_VERSION, ABI_VERSION, pymupdf.VersionBind,
+        identity = (SCENE_FORMAT_VERSION, ABI_VERSION, pymupdf.VersionBind,
                     digest, page, float(scale), bool(aggressive))
         return hashlib.sha256(repr(identity).encode()).hexdigest()
     except (OSError, AttributeError, ValueError):

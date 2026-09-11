@@ -931,6 +931,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                 "압축한 PDF 저장됨: %s" % result), 5000)
 
     def set_interaction_mode(self, mode, announce=True):
+        controller = getattr(self, "_object_controller", None)
+        if controller is not None:
+            controller.deactivate()
         if mode == "hand":
             if self._edit_mode:
                 self.set_edit_mode(False)
