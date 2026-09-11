@@ -8,7 +8,7 @@ editing, annotations, offline OCR, and multi-document tools in one application.
 Documents stay on your
 computer unless you explicitly use an external link or optional model download.
 
-**Current version: 1.31.0** · English and Korean interface · Windows
+**Current version: 1.31.1** · English and Korean interface · Windows
 
 Add rectangles and images in the editor, then move or resize them using dragging
 or millimetre properties. sPDF-created objects remain editable after saving and
@@ -42,7 +42,7 @@ or document changes still require rebuilding them.
 
 ### Edit and organize documents
 
-- Standalone sPDF opens in a read-only reader. Use the large blue **Edit mode**
+- Standalone sPDF opens in a read-only reader. Use the **Edit mode**
   button at the left of the ribbon or Ctrl+E to open an editor in a **separate OS process** with the
   current page open on the detailed editing canvas. Once the editor confirms that
   the document opened, sPDF closes that reader tab and closes the reader process

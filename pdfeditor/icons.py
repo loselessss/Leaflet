@@ -10,7 +10,7 @@ AVAILABLE_ICONS = frozenset({
     "hand", "help", "highlight", "info", "license", "merge", "new_tab",
     "new_window", "note", "notes", "ocr", "open", "pages", "power",
     "presentation", "print", "recent", "redo", "rotate_ccw", "rotate_cw", "save", "save_as",
-    "search", "select_all", "settings", "split", "star", "star_filled",
+    "image", "object_select", "rectangle", "search", "select_all", "settings", "split", "star", "star_filled",
     "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out",
 })
 
@@ -292,6 +292,29 @@ def fluent_icon(name, color="#424242", size=20):
         line(3.0, 13.0, 3.0, 17.0); line(3.0, 17.0, 7.0, 17.0)
         line(13.0, 17.0, 17.0, 17.0); line(17.0, 17.0, 17.0, 13.0)
         painter.drawRoundedRect(QRectF(6.0, 6.0, 8.0, 8.0), 1.0, 1.0)
+    elif name == "object_select":
+        path = QPainterPath(QPointF(4.0, 2.5))
+        path.lineTo(4.0, 15.0)
+        path.lineTo(7.4, 11.8)
+        path.lineTo(10.0, 17.2)
+        path.lineTo(12.4, 16.0)
+        path.lineTo(9.8, 10.8)
+        path.lineTo(14.5, 10.2)
+        path.closeSubpath()
+        painter.drawPath(path)
+    elif name == "rectangle":
+        painter.drawRoundedRect(QRectF(3.0, 4.0, 14.0, 12.0), 1.2, 1.2)
+        line(10.0, 6.5, 10.0, 13.5)
+        line(6.5, 10.0, 13.5, 10.0)
+    elif name == "image":
+        painter.drawRoundedRect(QRectF(2.5, 3.0, 15.0, 14.0), 1.2, 1.2)
+        painter.drawEllipse(QRectF(5.0, 5.3, 2.4, 2.4))
+        path = QPainterPath(QPointF(4.5, 14.5))
+        path.lineTo(8.3, 10.4)
+        path.lineTo(10.7, 12.5)
+        path.lineTo(13.3, 9.5)
+        path.lineTo(16.0, 14.5)
+        painter.drawPath(path)
     elif name == "edit":
         line(4.0, 16.0, 7.5, 15.2)
         line(7.5, 15.2, 16.5, 6.2)

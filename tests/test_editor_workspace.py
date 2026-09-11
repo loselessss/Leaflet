@@ -175,6 +175,17 @@ class EditorWorkspaceTests(unittest.TestCase):
         bridge.return_value.launch.assert_called_once_with(
             self.window, tab, mode="reader", handoff_source=True)
 
+    def test_object_commands_use_compact_icons(self):
+        from PyQt5.QtCore import Qt
+        tab = self.open_editor()
+        controller = tab._object_controller
+        for action in (controller.action, controller.rectangle_action,
+                       controller.image_action):
+            self.assertFalse(action.icon().isNull())
+            button = tab._interaction_toolbar.widgetForAction(action)
+            self.assertEqual(button.toolButtonStyle(), Qt.ToolButtonIconOnly)
+            self.assertEqual(button.toolTip(), action.text())
+
     def test_editor_tiled_view_keeps_zoom_and_edit_interaction_bounded(self):
         from PyQt5.QtCore import QPointF
         tab = self.open_editor()
@@ -450,8 +461,8 @@ class EditorWorkspaceTests(unittest.TestCase):
         reading = reader._tabs.currentWidget()
         button = reading._editor_mode_button
         self.assertEqual(button.text(), "Edit mode")
-        self.assertTrue(button.property("accent"))
-        self.assertGreaterEqual(button.height(), 40)
+        self.assertFalse(button.property("accent"))
+        self.assertGreaterEqual(button.height(), 34)
         self.assertTrue(reading._interaction_toolbar.isAncestorOf(button))
         self.assertIsNone(reading._workspace_header)
         with patch.object(reader, "open_editor") as launch:

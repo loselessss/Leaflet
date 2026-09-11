@@ -14,13 +14,11 @@ class EditorWorkspaceMixin:
         bar.setObjectName("editorCommandBar")
         bar.setMovable(False)
         bar.setFloatable(False)
-        bar.setIconSize(QSize(18, 18))
+        bar.setIconSize(QSize(20, 20))
         bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self._reader_mode_button = QPushButton(
-            localize("Back to reader", "리더로 돌아가기"))
+        self._reader_mode_button = self._mode_button(
+            localize("Back to reader", "리더로 돌아가기"), "back")
         self._reader_mode_button.setObjectName("backToReaderButton")
-        self._reader_mode_button.setIcon(fluent_icon("back"))
-        self._reader_mode_button.setMinimumHeight(34)
         self._reader_mode_button.setToolTip(localize(
             "Return to the reader; unsaved changes are checked before switching.",
             "미저장 변경을 확인한 뒤 현재 문서를 리더로 전환합니다."))
@@ -40,7 +38,7 @@ class EditorWorkspaceMixin:
                 menu.addAction(action)
                 bar.addAction(action)
                 button = bar.widgetForAction(action)
-                button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+                button.setToolButtonStyle(Qt.ToolButtonIconOnly)
             menu.addSeparator()
             menu.addAction(controller.dock.toggleViewAction())
             bar.addSeparator()
@@ -75,7 +73,7 @@ class EditorWorkspaceMixin:
 
     def add_editor_mode_button(self, tool_bar):
         self._editor_mode_button = self._mode_button(
-            localize("Edit mode", "편집 모드"), "edit", accent=True)
+            localize("Edit mode", "편집 모드"), "edit")
         self._editor_mode_button.setObjectName("openEditorModeButton")
         self._editor_mode_button.setToolTip(localize(
             "Open the page organizer in an editor window (Ctrl+E)",
@@ -87,9 +85,9 @@ class EditorWorkspaceMixin:
     @staticmethod
     def _mode_button(text, icon, *, accent=False):
         button = QPushButton(text)
-        button.setMinimumSize(145, 40)
+        button.setMinimumHeight(34)
+        button.setIconSize(QSize(20, 20))
         button.setProperty("accent", accent)
-        button.setStyleSheet("font-size: 14px; font-weight: 600;")
         button.setIcon(fluent_icon(icon, "#ffffff" if accent else "#242424"))
         return button
 

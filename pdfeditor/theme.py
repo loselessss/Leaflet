@@ -214,14 +214,19 @@ QToolBar::separator {
     margin: 7px 6px;
 }
 
-QToolBar#editorCommandBar {
+QToolBar#editorCommandBar, QToolBar#command_bar {
     background: #ffffff;
     border-bottom: 1px solid #e3e7ed;
     spacing: 3px;
     padding: 9px 14px;
 }
 
-QToolBar#editorCommandBar QToolButton {
+QToolBar#editorCommandBar QToolButton, QToolBar#command_bar QToolButton {
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    border: 1px solid transparent;
     border-radius: 7px;
     margin: 0 1px;
 }
@@ -233,17 +238,17 @@ QToolBar#editorCommandBar QToolButton[editorLabeled="true"] {
     font-weight: 600;
 }
 
-QToolBar#editorCommandBar QToolButton:hover {
+QToolBar#editorCommandBar QToolButton:hover, QToolBar#command_bar QToolButton:hover {
     background: #f0f3f7;
 }
 
-QToolBar#editorCommandBar QToolButton:checked {
+QToolBar#editorCommandBar QToolButton:checked, QToolBar#command_bar QToolButton:checked {
     background: #e8efff;
     color: #244b91;
     border: 1px solid #cfddfa;
 }
 
-QPushButton#backToReaderButton {
+QPushButton#backToReaderButton, QPushButton#openEditorModeButton {
     background: #f5f7fa;
     border: 1px solid #dce2ea;
     border-radius: 8px;
@@ -252,7 +257,7 @@ QPushButton#backToReaderButton {
     font-weight: 600;
 }
 
-QPushButton#backToReaderButton:hover {
+QPushButton#backToReaderButton:hover, QPushButton#openEditorModeButton:hover {
     background: #eaf0fa;
     border-color: #b9cbe7;
 }

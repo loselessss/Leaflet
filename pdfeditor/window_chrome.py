@@ -158,12 +158,17 @@ class WindowChrome(QWidget):
         for button in (self.minimize, self.maximize, self.close_button):
             row.addWidget(button)
         self.layout.addWidget(self.caption)
+        self.caption_divider = QWidget(self)
+        self.caption_divider.setObjectName("captionDivider")
+        self.caption_divider.setFixedHeight(1)
+        self.layout.addWidget(self.caption_divider)
         self.caption.installEventFilter(self)
         self.drag_space.installEventFilter(self)
         bar.installEventFilter(self)
         window.installEventFilter(self)
         self.setStyleSheet("""
             QWidget#windowCaption { background: #e9edf2; }
+            QWidget#captionDivider { background: #c9ced6; }
             QTabBar#captionTabs { background: transparent; }
             QTabBar#captionTabs::tab { min-width: 90px; max-width: 290px;
                 min-height: 30px; font-weight: normal; }

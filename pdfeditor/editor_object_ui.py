@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QAction, QDockWidget, QDoubleSpinBox, QFileDialog,
 
 from . import editor_objects as model
 from .i18n import localize
+from .icons import fluent_icon
 
 
 class ObjectController:
@@ -20,11 +21,14 @@ class ObjectController:
         self.drag = None
         self.preview = None
         self.action = QAction(localize("Select object", "개체 선택"), tab)
+        self.action.setIcon(fluent_icon("object_select"))
         self.action.setCheckable(True)
         self.action.triggered.connect(self.activate)
         self.rectangle_action = QAction(localize("Add rectangle", "사각형 추가"), tab)
+        self.rectangle_action.setIcon(fluent_icon("rectangle"))
         self.rectangle_action.triggered.connect(lambda: self.add("rectangle"))
         self.image_action = QAction(localize("Place image…", "이미지 배치…"), tab)
+        self.image_action.setIcon(fluent_icon("image"))
         self.image_action.triggered.connect(self.add_image)
         self.dock = QDockWidget(localize("Object properties", "개체 속성"), tab)
         self.dock.setObjectName("editorObjectProperties")

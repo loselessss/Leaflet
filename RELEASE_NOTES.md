@@ -1,5 +1,11 @@
 # sPDF Release Notes
 
+## 1.31.1 - 2026-09-11
+
+- Reader and editor toolbars now share the same spacing, icon sizes and button colors.
+- **Cleaner editor toolbar:** Object selection, rectangle insertion and image placement now use compact icons with tooltips.
+- **Consistent workspace controls:** Reader/editor switching uses the same compact visual style, and the caption divider now spans the full window width.
+
 ## 1.31.0 - 2026-09-11
 
 - **Zoom refinement:** Reuse supported vector content while images are refreshed in the background, including in GPU-priority mode.

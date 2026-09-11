@@ -54,6 +54,9 @@ class WindowChromeTests(unittest.TestCase):
             self.assertTrue(reader.windowFlags() & Qt.FramelessWindowHint)
             self.assertIs(reader.menuWidget(), reader._window_chrome)
             self.assertIs(reader._tabs.tabBar().parentWidget(), reader._window_chrome.caption)
+            self.assertEqual(reader._window_chrome.caption_divider.width(),
+                             reader._window_chrome.width())
+            self.assertEqual(reader._window_chrome.caption_divider.height(), 1)
             self.assertLess(reader._window_chrome.caption.mapTo(reader, QPoint()).y(),
                             reader.menuBar().mapTo(reader, QPoint()).y())
             reader._window_chrome.toggle_maximized()
