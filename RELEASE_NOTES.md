@@ -1,5 +1,13 @@
 # sPDF Release Notes
 
+## 1.32.0 - 2026-09-12
+
+- Edit text directly on the page with a small font, size and color palette. Apply with Enter or cancel with Esc.
+- Add printable binding or folding guides with page ranges, line styles and mirrored even pages, then save as PDF.
+
+- Reduce interface stalls while preparing complex pages for GPU display.
+- Correct the status shown when GPU preparation fails.
+
 ## 1.31.1 - 2026-09-11
 
 - Reader and editor toolbars now share the same spacing, icon sizes and button colors.

@@ -62,7 +62,9 @@ class AnnotMixin:
             recovery.changed()
 
     def maybe_save(self):
-        """저장 안 된 변경이 있으면 물어본다. False면 진행 중단(취소)."""
+        """Ask about unsaved changes, including an active inline edit."""
+        if not self._commit_inline_text():
+            return False
         if not self._dirty or self.doc is None:
             return True
         annotation_mode = self.doc.annotation_mode
@@ -93,6 +95,8 @@ class AnnotMixin:
 
     @saving_command
     def save(self):
+        if not self._commit_inline_text():
+            return False
         if self.doc is None:
             return False
         if self.doc.annotation_mode:
@@ -113,6 +117,8 @@ class AnnotMixin:
 
     @saving_command
     def save_as_dialog(self):
+        if not self._commit_inline_text():
+            return False
         if self.doc is None:
             return False
         if self.doc.annotation_mode:

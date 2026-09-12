@@ -42,6 +42,32 @@ class SceneDiskCacheTests(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_memory_only_lookup_does_not_restore_disk_scene(self):
+        doc = Document(str(self.path))
+        try:
+            with patch.object(doc, "_load_disk_gpu_scene") as restore:
+                self.assertIsNone(doc.cached_gpu_vector_page(0, memory_only=True))
+                restore.assert_not_called()
+        finally:
+            doc.close()
+
+    def test_worker_loads_disk_scene_without_extraction(self):
+        from pdfeditor.gpu_scene_worker import main
+        import pickle
+        doc = Document(str(self.path))
+        try:
+            scene = doc.gpu_vector_page(0)
+            key = doc.gpu_scene_disk_cache_key(0)
+        finally:
+            doc.close()
+        result = self.root / "result.pickle"
+        with patch("pdfeditor.gpu_scene_worker.vector_page_from_pymupdf",
+                   side_effect=AssertionError("Unexpected extraction")):
+            self.assertEqual(main([str(self.path), str(result),
+                                   "--disk-cache-key", key]), 0)
+        with result.open("rb") as stream:
+            self.assertEqual(pickle.load(stream), scene)
+
     def test_file_and_version_changes_invalidate(self):
         doc = Document(str(self.path))
         try:

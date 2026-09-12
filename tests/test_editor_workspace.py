@@ -69,6 +69,86 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.settle()
         return dialog, dialog.panel
 
+    def test_inline_text_cancel_apply_font_and_undo(self):
+        from PyQt5.QtCore import QPointF
+        tab = self.open_editor()
+        tab.open_page_editor()
+        span = tab.doc.spans(0)[0]
+        point = QPointF(span['bbox'][0]+1, span['bbox'][1]+1)
+        before = tab.doc._doc[0].get_text()
+        tab.edit_span_at(point)
+        session = tab._inline_text
+        self.assertIs(session.input.parent(), tab.view.viewport())
+        self.assertTrue(session.input.isVisible())
+        self.assertFalse(session.palette.isModal())
+        session.input.setText('Cancelled')
+        session.cancel()
+        self.assertEqual(tab.doc._doc[0].get_text(), before)
+        self.assertFalse(tab._undo_stack)
+        tab.edit_span_at(point)
+        session = tab._inline_text
+        session.input.setText('Changed')
+        session.font.setCurrentIndex(2)
+        self.assertTrue(session.commit())
+        self.assertIn('Changed', tab.doc._doc[0].get_text())
+        self.assertIn('Times', tab.doc.spans(0)[0]['font'])
+        self.assertEqual(len(tab._undo_stack), 1)
+        tab.undo()
+        self.assertEqual(tab.doc._doc[0].get_text(), before)
+
+    def test_inline_text_page_change_commits_to_original_page(self):
+        from PyQt5.QtCore import QPointF
+        tab = self.open_editor()
+        tab.open_page_editor()
+        tab._add_text_box_at(QPointF(35, 365))
+        tab._inline_text.input.setText('Inline page zero')
+        tab.show_page(1)
+        self.assertIsNone(tab._inline_text)
+        self.assertIn('Inline page zero', tab.doc._doc[0].get_text())
+        self.assertNotIn('Inline page zero', tab.doc._doc[1].get_text())
+
+    def test_inline_text_failure_retains_input_for_correction(self):
+        from PyQt5.QtCore import QPointF
+        tab = self.open_editor()
+        tab.open_page_editor()
+        tab._add_text_box_at(QPointF(35, 365))
+        session = tab._inline_text
+        session.font.setCurrentIndex(1)
+        session.input.setText('한글')
+        with patch('pdfeditor.editing.QMessageBox.warning'):
+            self.assertFalse(session.commit())
+        self.assertIs(tab._inline_text, session)
+        self.assertEqual(session.input.text(), '한글')
+        self.assertFalse(tab._undo_stack)
+        session.font.setCurrentIndex(0)
+        self.assertTrue(session.commit())
+        self.assertIn('한글', tab.doc._doc[0].get_text())
+
+    def test_save_commits_active_inline_text(self):
+        from PyQt5.QtCore import QPointF
+        tab = self.open_editor()
+        tab.open_page_editor()
+        tab._add_text_box_at(QPointF(35, 365))
+        tab._inline_text.input.setText('Saved inline')
+        with patch.object(tab, '_save_document_file') as save:
+            save.side_effect = lambda path: self.assertIn('Saved inline', tab.doc._doc[0].get_text())
+            self.assertTrue(tab.save())
+        self.assertIsNone(tab._inline_text)
+
+    def test_binding_guides_are_undoable_and_dialog_previews(self):
+        from pdfeditor.binding_guides import add_guides
+        from pdfeditor.binding_guide_dialog import BindingGuideDialog
+        tab = self.open_editor()
+        before = len(tab.doc._doc[0].get_drawings())
+        dialog = BindingGuideDialog(tab.doc, 0, tab)
+        self.dialogs.append(dialog)
+        self.assertFalse(dialog.preview.pixmap().isNull())
+        self.assertTrue(tab.apply_document_change(
+            lambda: add_guides(tab.doc, [0], offset=30), structural=False))
+        self.assertEqual(len(tab.doc._doc[0].get_drawings()), before+1)
+        tab.undo()
+        self.assertEqual(len(tab.doc._doc[0].get_drawings()), before)
+
     def test_object_property_and_mixed_history(self):
         from pdfeditor import editor_objects
         tab = self.open_editor()

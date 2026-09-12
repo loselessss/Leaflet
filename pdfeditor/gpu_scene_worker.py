@@ -18,6 +18,7 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--aggressive-band-merge", action="store_true")
     parser.add_argument("--base-scene")
+    parser.add_argument("--disk-cache-key")
     args = parser.parse_args(argv)
 
     with open(args.snapshot, "rb") as stream:
@@ -26,7 +27,11 @@ def main(argv=None):
     try:
         started = time.monotonic()
         scene = None
-        if args.base_scene:
+        if args.disk_cache_key:
+            from .scene_disk_cache import load
+            scene = load(args.disk_cache_key, document[0])
+        cache_hit = scene is not None
+        if scene is None and args.base_scene:
             # This file is written by our parent into the private worker job.
             with open(args.base_scene, "rb") as stream:
                 base = pickle.load(stream)
@@ -37,6 +42,9 @@ def main(argv=None):
                 document[0], args.scale,
                 timeout_seconds=max(0.0, args.timeout - (time.monotonic() - started)),
                 aggressive_band_merge=args.aggressive_band_merge)
+        if args.disk_cache_key and scene.supported and not cache_hit:
+            from .scene_disk_cache import save
+            save(args.disk_cache_key, scene)
     finally:
         document.close()
     temporary = args.result + ".tmp"

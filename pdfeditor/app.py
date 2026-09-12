@@ -740,6 +740,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                   self.edit_canvas_size, "edit")
         self._act(p, localize("Bleed...", "도련 설정..."), None,
                   self.edit_page_bleed, "fit_page")
+        self._act(p, localize("Binding / folding guides...", "제본·접기 안내선..."), None,
+                  self.add_binding_guides, "edit")
         self._act(p, "현재 페이지 책갈피 추가", "Ctrl+B",
                   self.add_current_bookmark, "notes")
         self._act(p, "TXT 책갈피 가져오기...", None,

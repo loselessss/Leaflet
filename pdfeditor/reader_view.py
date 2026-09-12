@@ -31,7 +31,7 @@ VIEWPORT_PIXELS = 6_000_000
 MAX_VISIBLE_TILES = 48
 GPU_SCENE_TIMEOUT_SECONDS = 1.0
 FORCED_GPU_SCENE_TIMEOUT_SECONDS = 10.0
-AUTO_GPU_SCENE_COMPLEXITY_LIMIT = 5000
+AUTO_GPU_SCENE_COMPLEXITY_LIMIT = 3000
 DEFERRED_GPU_SCENE_TIMEOUT_SECONDS = 10.0
 GPU_SCENE_WORKER_TIMEOUT_SECONDS = 12.0
 VECTOR_SCENE_REFINE_DELAY_MS = 120
@@ -248,7 +248,10 @@ class ReaderPageView(QGraphicsView):
 
     def _gpu_vector_page(self, document, page):
         scale = self._vector_raster_scale()
-        cached = document.cached_gpu_vector_page(page, scale)
+        # Large on-disk scenes can take over a second to decode and replay
+        # source images. Only inspect the in-memory cache before the cheap
+        # complexity probe; deferred workers restore disk scenes off the UI.
+        cached = document.cached_gpu_vector_page(page, scale, memory_only=True)
         if cached is not None:
             return cached
         if self._render_mode == "auto":
@@ -363,6 +366,9 @@ class ReaderPageView(QGraphicsView):
             command = gpu_scene_worker_command()
             arguments = [snapshot_path, result_path, "--scale", str(scale),
                          "--timeout", str(DEFERRED_GPU_SCENE_TIMEOUT_SECONDS)]
+            cache_key = self._document.gpu_scene_disk_cache_key(page, scale)
+            if cache_key:
+                arguments.extend(("--disk-cache-key", cache_key))
             from .gpu_raster import can_refine_images
             base = self._vector_pages.get(page)
             if can_refine_images(base) and base.raster_scale < scale:
@@ -394,6 +400,7 @@ class ReaderPageView(QGraphicsView):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as error:
             shutil.rmtree(directory, ignore_errors=True)
+            self._finish_failed_vector_refine(page)
             self.render_failed.emit(str(error))
             if self._vector_refine_pages:
                 self._vector_refine_timer.start(0)
@@ -446,13 +453,24 @@ class ReaderPageView(QGraphicsView):
                          (usable and
                           "image-downsample" not in scene.features))
         if current and usable:
-            document.install_gpu_vector_page(job["page"], scene)
+            document.install_gpu_vector_page(job["page"], scene, persist=False)
         if current and usable and scale_matches:
             self._discard_native_vector_page(job["page"])
             self._vector_pages[job["page"]] = scene
             self.viewport().update()
+        elif current and not usable:
+            self._finish_failed_vector_refine(job["page"])
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
+
+    def _finish_failed_vector_refine(self, page):
+        # Keep a usable lower-resolution scene when image refinement fails.
+        from .gpu_raster import VectorPage
+        previous = self._vector_pages.get(page)
+        if previous is None or not previous.supported:
+            self._vector_pages[page] = VectorPage(
+                False, reason="GPU scene preparation failed")
+            self.viewport().update()
 
     def _stop_vector_refine_worker(self):
         self._vector_refine_poll_timer.stop()

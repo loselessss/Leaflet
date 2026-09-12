@@ -8,8 +8,24 @@ from .access import editing_command
 
 class DocumentToolsMixin:
     @editing_command
+    def add_binding_guides(self):
+        if self.doc is None or not self._commit_inline_text():
+            return
+        from .binding_guide_dialog import BindingGuideDialog
+        from .binding_guides import add_guides
+        dialog = BindingGuideDialog(self.doc, self.page_index, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        if self.apply_document_change(lambda: add_guides(
+                self.doc, dialog.pages, **dialog.values()), structural=False):
+            if dialog.save_copy.isChecked():
+                self.save_as_dialog()
+
+    @editing_command
     def apply_document_change(self, operation, structural=True):
         if self.doc is None:
+            return False
+        if not self._commit_inline_text():
             return False
         stacks = [list(getattr(self, name)) for name in
                   ("_undo_stack", "_redo_stack", "_undo_structural",

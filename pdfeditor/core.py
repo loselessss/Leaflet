@@ -287,7 +287,7 @@ class Document:
             self._gpu_vector_cache.move_to_end(key)
         return scene
 
-    def cached_gpu_vector_page(self, index, raster_scale=1.0):
+    def cached_gpu_vector_page(self, index, raster_scale=1.0, *, memory_only=False):
         """Return a reusable supported scene without starting extraction."""
         scale = max(1.0, float(raster_scale))
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
@@ -300,7 +300,12 @@ class Document:
                     "image-downsample" not in candidate.features:
                 self._gpu_vector_cache.move_to_end(cached_key)
                 return candidate
-        return self._load_disk_gpu_scene(index, scale)
+        return None if memory_only else self._load_disk_gpu_scene(index, scale)
+
+    def gpu_scene_disk_cache_key(self, index, raster_scale=1.0):
+        from . import scene_disk_cache as disk
+        return disk.key(self, index, max(1.0, float(raster_scale)),
+                        _aggressive_gpu_band_merge_enabled())
 
     def _load_disk_gpu_scene(self, index, scale):
         from . import scene_disk_cache as disk
@@ -837,7 +842,8 @@ class Document:
     # --- 텍스트 편집 (설계 §3.4) --------------------------------------
 
     @document_write
-    def replace_span(self, index, bbox, origin, new_text, size, rgb, *, fit=True):
+    def replace_span(self, index, bbox, origin, new_text, size, rgb, *, fit=True,
+                     fontname="korea", fontfile=None):
         """한 span의 글자를 지우고(redaction) 같은 baseline에 다시 쓴다.
 
         한계(설계 §3.4): 원본 폰트를 그대로 못 쓰는 경우가 많아 CJK 내장
@@ -848,22 +854,37 @@ class Document:
         fill=None: 배경을 칠하지 않고 글자만 지운다. 흰 배경이면 티가 안
         나고, 배경색이 있으면 그 자리가 지워질 수 있다(§3.4 한계).
         """
+        fontname, font = self._edit_font(fontname, fontfile)
+        self._validate_edit_glyphs(font, new_text)
         page = self._doc[index]
         rect = fitz.Rect(*bbox)
         page.add_redact_annot(rect, fill=None)
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
 
         page = self._doc[index]  # apply_redactions 후 페이지 재취득
-        fontsize = self._fit_fontsize(new_text, size, rect.width) if fit else size
+        fontsize = self._fit_fontsize(new_text, size, rect.width, font=font) if fit else size
         page.insert_text((origin[0], origin[1]), new_text,
-                         fontsize=fontsize, fontname="korea", color=rgb)
+                         fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=rgb)
 
-    def _fit_fontsize(self, text, size, max_width):
+    @staticmethod
+    def _edit_font(fontname, fontfile):
+        if fontfile:
+            import hashlib
+            font = fitz.Font(fontfile=fontfile)
+            return "spdf" + hashlib.sha256(font.buffer).hexdigest()[:16], font
+        return fontname, fitz.Font("cjk" if fontname == "korea" else fontname)
+
+    @staticmethod
+    def _validate_edit_glyphs(font, text):
+        if any(not char.isspace() and not font.has_glyph(ord(char)) for char in text):
+            raise ValueError("선택한 글꼴에 없는 글자가 있습니다. / The selected font lacks some characters.")
+
+    def _fit_fontsize(self, text, size, max_width, *, font=None):
         """새 글자가 원래 폭을 넘으면 폰트 크기를 줄여 한 줄에 맞춘다.
         리플로우가 없으므로(그 줄 안에서만 교체) 최소한의 안전장치."""
         if max_width <= 0:
             return size
-        font = fitz.Font("cjk")
+        font = font or fitz.Font("cjk")
         width = font.text_length(text, fontsize=size)
         if width <= max_width:
             return size
@@ -922,12 +943,14 @@ class Document:
 
     @document_write
     def replace_scanned_text(self, index, bbox, origin, new_text, size,
-                             bg=None, fg=None):
+                             bg=None, fg=None, *, fontname="korea", fontfile=None):
         """스캔본 글자 교체 — 배경색으로 덮고 그 자리에 새 글자를 쓴다.
 
         기존 OCR 텍스트 레이어(보이지 않는 글자)도 함께 지운다 — 안 그러면
         검색이 옛 글자를 계속 찾아낸다.
         """
+        fontname, font = self._edit_font(fontname, fontfile)
+        self._validate_edit_glyphs(font, new_text)
         if bg is None or fg is None:
             sbg, sfg = self.sample_bg_fg(index, bbox)
             bg = bg or sbg
@@ -946,21 +969,25 @@ class Document:
         # 3) 새 글자 쓰기
         if new_text.strip():
             page.insert_text(origin, new_text, fontsize=size,
-                             fontname="korea", color=fg)
+                             fontname=fontname, fontfile=fontfile, color=fg)
 
     @document_write
-    def add_text_box(self, index, point, text, size=11, bg=None, fg=(0, 0, 0)):
+    def add_text_box(self, index, point, text, size=11, bg=None, fg=(0, 0, 0), *,
+                     fontname="korea", fontfile=None):
         """임의 위치에 텍스트 박스 — OCR 없이도 스캔본에 글자를 얹는 자유 편집.
 
         bg가 있으면 글자 뒤에 배경 사각형을 깔아 밑에 있는 내용을 가린다.
         """
+        fontname, font = self._edit_font(fontname, fontfile)
+        self._validate_edit_glyphs(font, text)
         page = self._doc[index]
         if bg is not None:
-            w = fitz.get_text_length(text, fontname="korea", fontsize=size)
+            w = font.text_length(text, fontsize=size)
             rect = fitz.Rect(point[0] - 1, point[1] - size,
                              point[0] + w + 2, point[1] + size * 0.3)
             page.draw_rect(rect, color=None, fill=bg, width=0)
-        page.insert_text(point, text, fontsize=size, fontname="korea", color=fg)
+        page.insert_text(point, text, fontsize=size, fontname=fontname,
+                         fontfile=fontfile, color=fg)
 
     # --- 페이지 조작 ---------------------------------------------------
 

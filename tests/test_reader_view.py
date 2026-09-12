@@ -730,6 +730,31 @@ class ReaderViewTests(unittest.TestCase):
                 0, self.view._vector_raster_scale()), installed)
         self.assertFalse(Path(directory).exists())
 
+    def test_failed_worker_finishes_pending_diagnostic(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._d2d_requested = True
+        self.view._vector_pages[0] = VectorPage(
+            False, reason="GPU scene deferred by complexity probe")
+        process = Mock(returncode=1)
+        process.poll.return_value = 1
+        directory = tempfile.mkdtemp(prefix="spdf-worker-test-")
+        self.view._vector_refine_process = process
+        self.view._vector_refine_job = {
+            "document": self.doc, "generation": self.doc.render_generation,
+            "page": 0, "scale": self.view._vector_raster_scale(),
+            "directory": directory, "result": str(Path(directory) / "missing"),
+        }
+        self.view._poll_vector_refine_worker()
+        self.assertEqual(self.view.render_diagnostic(0)["mode"], "fallback")
+        self.assertFalse(Path(directory).exists())
+
+    def test_failed_image_refinement_keeps_usable_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True)
+        self.view._vector_pages[0] = scene
+        self.view._finish_failed_vector_refine(0)
+        self.assertIs(self.view._vector_pages[0], scene)
+
     def test_zoom_does_not_cancel_running_scene_worker(self):
         process = Mock()
         process.poll.return_value = None

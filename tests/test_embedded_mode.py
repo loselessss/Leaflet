@@ -556,10 +556,14 @@ class EmbeddedModeTests(unittest.TestCase):
             editor = module.new_window(workspace_mode="editor")
             tab = editor.open_in_tab(str(source))
             self.settle()
-            with patch("pdfeditor.editing.TextEditDialog") as dialog:
-                dialog.return_value.exec_.return_value = QDialog.Accepted
-                dialog.return_value.values.return_value = ("Blue text", 18, (0, 0, 1))
-                tab._add_text_box_at(QPointF(72, 180))
+            from PyQt5.QtGui import QColor
+            tab.open_page_editor()
+            tab._add_text_box_at(QPointF(72, 180))
+            session = tab._inline_text
+            session.input.setText("Blue text")
+            session.size.setValue(18)
+            session.color = QColor(0, 0, 255)
+            self.assertTrue(session.commit())
             self.assertTrue(tab._dirty)
             spans = tab.doc.spans(0)
             added = next(span for span in spans if "Blue text" in span["text"])

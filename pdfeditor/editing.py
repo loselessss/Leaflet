@@ -31,6 +31,7 @@ class EditMixin:
         self._redo_structural = []
 
     def _reset_edit(self):
+        self._cancel_inline_text()
         self._edit_mode = False
         self._undo_stack = []
         self._redo_stack = []
@@ -49,6 +50,8 @@ class EditMixin:
         # EditMixin이 MRO 맨 앞이므로 이 show_page가 먼저 불린다. 실제
         # 표시는 super() 체인(TextSelect→Viewer)에 맡기고, 편집 모드면 새
         # 페이지의 span 테두리를 다시 그린다.
+        if not self._commit_inline_text():
+            return
         super().show_page(index)
         controller = getattr(self, "_object_controller", None)
         if controller is not None:
@@ -69,6 +72,8 @@ class EditMixin:
             return
         if on and self.is_editor_overview():
             self.open_page_editor()
+            return
+        if not on and not self._commit_inline_text():
             return
         self._edit_mode = on
         self._edit_act.setChecked(on)
@@ -101,29 +106,28 @@ class EditMixin:
         """
         if self.doc is None:
             return
+        if not self._commit_inline_text():
+            return
         span = self._span_at(pt)
         if span is None:
             self._add_text_box_at(pt)
             return
-        scanned = self.doc.is_scanned_area(self.page_index, span["bbox"])
-        color = (self.doc.sample_bg_fg(self.page_index, span["bbox"])[1]
-                 if scanned else span["rgb"])
-        dialog = TextEditDialog(self, text=span["text"], size=span["size"],
-                                color=color, replacing=True)
-        if dialog.exec_() != QDialog.Accepted:
+        self._start_inline_text(pt, span)
+
+    def _start_inline_text(self, pt, span=None):
+        if not self._commit_inline_text():
             return
-        new_text, size, rgb = dialog.values()
-        if (new_text == span["text"] and abs(size - span["size"]) < 0.05
-                and all(abs(a - b) < 1 / 255 for a, b in zip(rgb, color))):
-            return
-        if scanned:
-            operation = lambda: self.doc.replace_scanned_text(
-                self.page_index, span["bbox"], span["origin"],
-                new_text, size, fg=rgb)
-        else:
-            operation = lambda: self.doc.replace_span(
-                self.page_index, span["bbox"], span["origin"], new_text, size, rgb)
-        self._perform_text_edit(operation)
+        from .inline_text import InlineTextSession
+        self._inline_text = InlineTextSession(self, pt, span)
+
+    def _commit_inline_text(self):
+        session = getattr(self, "_inline_text", None)
+        return session.commit() if session is not None else True
+
+    def _cancel_inline_text(self):
+        session = getattr(self, "_inline_text", None)
+        if session is not None:
+            session.cancel()
 
     @editing_command
     def resize_span_at(self, pt, factor=None):
@@ -159,20 +163,7 @@ class EditMixin:
     def _add_text_box_at(self, pt):
         """빈 자리 클릭 — 새 글자를 얹는다. 스캔본이면 배경도 함께 깔아
         아래 내용을 가린다(OCR 없이도 쓸 수 있는 자유 편집)."""
-        dialog = TextEditDialog(self)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        text, size, color = dialog.values()
-        if not text.strip():
-            return
-        point = (pt.x(), pt.y())
-        bg = None
-        if self.doc.is_scanned_area(self.page_index, (pt.x(), pt.y() - 10,
-                                                      pt.x() + 60, pt.y() + 4)):
-            bg, _fg = self.doc.sample_bg_fg(
-                self.page_index, (pt.x(), pt.y() - 10, pt.x() + 60, pt.y() + 4))
-        self._perform_text_edit(lambda: self.doc.add_text_box(
-            self.page_index, point, text, size=size, bg=bg, fg=color))
+        self._start_inline_text(pt)
 
     def _perform_text_edit(self, operation):
         before = None
@@ -212,6 +203,9 @@ class EditMixin:
 
     @history_command
     def undo(self):
+        if getattr(self, "_inline_text", None) is not None:
+            self._cancel_inline_text()
+            return
         if self.doc is not None and self.doc.annotation_mode:
             return self._step_annotation_history()
         if not self._undo_stack:
@@ -229,6 +223,7 @@ class EditMixin:
 
     @history_command
     def redo(self):
+        self._cancel_inline_text()
         if self.doc is not None and self.doc.annotation_mode:
             return self._step_annotation_history(forward=True)
         if not self._redo_stack:
@@ -261,6 +256,7 @@ class EditMixin:
         스냅샷 복원은 문서 전체를 갈아치우므로 렌더/단어/주석 캐시가 전부
         낡는다 — 한 번에 정리한다.
         """
+        self._cancel_inline_text()
         self.doc.invalidate_render()
         self._cache.clear()
         self._words_cache.clear()
