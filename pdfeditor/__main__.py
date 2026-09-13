@@ -29,6 +29,9 @@ def main():
     parser.add_argument("--peer-request")
     parser.add_argument("--no-updates", action="store_true")
     args = parser.parse_args()
+    from .paths import is_packaged
+    # MSIX updates are installed through the package channel, not Inno Setup.
+    args.no_updates = args.no_updates or is_packaged()
     workspace = args.workspace or settings.startup_workspace()
 
     from PyQt5.QtCore import Qt

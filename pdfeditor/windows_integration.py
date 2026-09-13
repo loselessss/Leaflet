@@ -17,7 +17,8 @@ def set_current_process_app_id():
     다른 운영체제와 오래된 Windows에서도 앱 시작을 막지 않도록 실패는
     조용히 무시한다. UI를 만들기 전에 호출해야 창마다 같은 ID가 적용된다.
     """
-    if sys.platform != "win32":
+    from .paths import is_packaged
+    if sys.platform != "win32" or is_packaged():
         return False
     try:
         import ctypes

@@ -196,7 +196,7 @@ class LicenseDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.tabs.count(), 8)
                 self.assertIn(text, dialog.tabs.widget(0).toPlainText())
                 self.assertIn("MIT License", dialog.tabs.widget(0).toPlainText())
-                self.assertIn("/releases/tag/v" + APP_VERSION, source_url())
+                self.assertIn("/releases/tag/sources-v" + APP_VERSION, source_url())
                 self.assertIn(source_url(), dialog.tabs.widget(0).toHtml())
                 self.assertIn("Permission is hereby granted", dialog.tabs.widget(1).toPlainText())
                 self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", dialog.tabs.widget(3).toPlainText())

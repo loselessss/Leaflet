@@ -14,6 +14,21 @@ def is_frozen():
     return getattr(sys, "frozen", False)
 
 
+def is_packaged():
+    """Detect MSIX identity without registry or environment heuristics."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        length = ctypes.c_uint32(0)
+        query = ctypes.windll.kernel32.GetCurrentPackageFullName
+        query.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.c_wchar_p]
+        query.restype = ctypes.c_long
+        return query(ctypes.byref(length), None) == 122
+    except (OSError, AttributeError):
+        return False
+
+
 def resource(*parts):
     """번들에 포함된 읽기 전용 리소스 경로(개발: 프로젝트 루트 기준)."""
     if is_frozen():

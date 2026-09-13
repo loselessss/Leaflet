@@ -75,6 +75,31 @@ jobs:
             Output/sPDF_Dependency_Sources_*.md
           compression-level: 0
 
+      - name: Publish matching sources separately
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $sourceTag = "sources-v$version"
+          $sourceArchive = "Output\sPDF_Source_$version.zip"
+          $dependencySources = "Output\sPDF_Dependency_Sources_$version.md"
+          "Corresponding sources for sPDF $version. Download the application source archive and dependency source directions together. / sPDF $version 대응 소스입니다. 앱 소스와 의존성 소스 안내를 함께 받으세요." |
+            Set-Content -Encoding utf8 -LiteralPath source-notes.md
+          gh release view $sourceTag --json id 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $sourceTag --target $env:GITHUB_SHA --prerelease --latest=false `
+              --title "sPDF $version — Sources" --notes-file source-notes.md
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $sourceCommit = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$sourceTag" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($sourceCommit -ne $env:GITHUB_SHA) { throw "Source tag belongs to a different commit" }
+          gh release edit $sourceTag --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload $sourceTag $sourceArchive "$sourceArchive.sha256" $dependencySources --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Publish GitHub release
         shell: pwsh
         env:
@@ -84,21 +109,21 @@ jobs:
           $version = $tag.TrimStart("v")
           $installer = "Output\sPDF_Setup_$version.exe"
           $latestInstaller = "Output\sPDF_Setup_latest.exe"
-          $sourceArchive = "Output\sPDF_Source_$version.zip"
-          $dependencySources = "Output\sPDF_Dependency_Sources_$version.md"
           python release_notes.py --version $version --release-notes RELEASE_NOTES.md --release-notes-ko RELEASE_NOTES.ko.md --output release-notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sourceUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/sources-v$version"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          "`n[Source code and dependency sources / 대응 소스 및 의존성 소스]($sourceUrl)`n`nSHA-256 (both installers): ``$hash``" |
+            Add-Content -Encoding utf8 -LiteralPath release-notes.md
           gh release view $tag --json id 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release edit $tag --title "sPDF $version" `
               --notes-file release-notes.md
-            gh release upload $tag $installer "$installer.sha256" `
-              $latestInstaller "$latestInstaller.sha256" `
-              $sourceArchive "$sourceArchive.sha256" $dependencySources --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $installer $latestInstaller --clobber
           } else {
-            gh release create $tag $installer "$installer.sha256" `
-              $latestInstaller "$latestInstaller.sha256" `
-              $sourceArchive "$sourceArchive.sha256" $dependencySources `
+            gh release create $tag $installer $latestInstaller `
               --verify-tag --title "sPDF $version" `
               --notes-file release-notes.md
           }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

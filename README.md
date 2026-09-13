@@ -8,7 +8,7 @@ editing, annotations, offline OCR, and multi-document tools in one application.
 Documents stay on your
 computer unless you explicitly use an external link or optional model download.
 
-**Current version: 1.32.0** · English and Korean interface · Windows
+**Current version: 1.32.1** · English and Korean interface · Windows
 
 Edit text on the page; use the floating palette for font, size and color (built-in fonts or a TTF/OTF file). Enter applies a line, Esc cancels it. Page Organization → Binding / folding guides adds printable lines and offers Save As PDF. Text editing keeps the existing line layout; replacement fonts may differ.
 
@@ -256,3 +256,5 @@ filesystem permission: copying and printing remain available.
 See [CHANGELOG.md](CHANGELOG.md) for release history, [PLAN.md](PLAN.md) for
 design history and enduring constraints, and [LICENSES.md](LICENSES.md) for
 open-source notices.
+
+[MSIX preparation and signing](MSIX.md). Installer releases link to a separate version-matched source archive; source access is retained.

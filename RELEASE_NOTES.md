@@ -1,5 +1,10 @@
 # sPDF Release Notes
 
+## 1.32.1 - 2026-09-13
+
+- Installer downloads are separate from the linked source archives.
+- Add preparation for MSIX packaging.
+
 ## 1.32.0 - 2026-09-12
 
 - Edit text directly on the page with a small font, size and color palette. Apply with Enter or cancel with Esc.
