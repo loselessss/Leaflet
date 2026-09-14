@@ -76,6 +76,8 @@ class UpdateDialog(QDialog):
         title.setWordWrap(True)
         layout.addWidget(title)
         form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         form.setHorizontalSpacing(20)
         form.setVerticalSpacing(10)
         form.addRow(tr("현재 버전"), QLabel(service.current_version))
@@ -90,9 +92,10 @@ class UpdateDialog(QDialog):
         self.notes = QTextBrowser()
         self.notes.setMinimumHeight(220)
         self.notes.document().setDocumentMargin(14)
-        self.notes.setPlainText(update.release_notes or tr("변경 기록이 없습니다."))
+        self.notes.setMarkdown(update.release_notes or tr("변경 기록이 없습니다."))
         layout.addWidget(self.notes, 1)
         self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
         self.progress.hide()
         layout.addWidget(self.progress)
         self.status = QLabel("")
@@ -107,7 +110,7 @@ class UpdateDialog(QDialog):
         self.release_button.setIcon(fluent_icon("external"))
         self.release_button.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(update.release_url)))
-        layout.addWidget(self.release_button, 0, Qt.AlignLeft)
+        buttons.addButton(self.release_button, QDialogButtonBox.HelpRole)
         self.install_button = QPushButton(tr("다운로드 후 설치"))
         self.install_button.setProperty("accent", True)
         self.install_button.setIcon(fluent_icon("download", "#ffffff"))
@@ -143,15 +146,17 @@ class UpdateDialog(QDialog):
         worker.start()
 
     def _on_progress(self, value):
+        percent = ""
         if value.total_bytes:
             self.progress.setRange(0, 100)
             self.progress.setValue(min(
                 100, round(value.completed_bytes * 100 / value.total_bytes)))
+            percent = "%d%% · " % self.progress.value()
         else:
             self.progress.setRange(0, 0)
         speed = value.bytes_per_second / (1024 * 1024)
         self.status.setText(
-            "%.1f MB / %s · %.1f MB/s" %
+            percent + "%.1f MB / %s · %.1f MB/s" %
             (value.completed_bytes / (1024 * 1024),
              _size_text(value.total_bytes), speed))
 

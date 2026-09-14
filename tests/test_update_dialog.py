@@ -13,7 +13,7 @@ class UpdateDialogLayoutTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_update_dialog_has_separate_roomy_actions(self):
+    def test_update_dialog_has_aligned_actions_and_readable_progress(self):
         update = SimpleNamespace(
             version="1.17.1", release_notes="Update notes\n" * 20,
             release_url="https://github.com/loselessss/sPDF/releases",
@@ -23,11 +23,15 @@ class UpdateDialogLayoutTests(unittest.TestCase):
         dialog.show()
         self.app.processEvents()
         buttons = dialog.findChild(QDialogButtonBox)
-        self.assertEqual(len(buttons.buttons()), 2)
-        self.assertNotIn(dialog.release_button, buttons.buttons())
+        self.assertEqual(len(buttons.buttons()), 3)
+        self.assertIn(dialog.release_button, buttons.buttons())
         self.assertGreaterEqual(dialog.layout().spacing(), 14)
         self.assertEqual(dialog.notes.document().documentMargin(), 14)
-        self.assertLess(dialog.release_button.geometry().bottom(), buttons.y())
+        self.assertEqual(dialog.release_button.y(), dialog.install_button.y())
+        dialog._on_progress(SimpleNamespace(total_bytes=100, completed_bytes=22,
+                                           bytes_per_second=0))
+        self.assertFalse(dialog.progress.isTextVisible())
+        self.assertTrue(dialog.status.text().startswith("22%"))
         for button in buttons.buttons():
             self.assertGreaterEqual(button.height(), 36)
         dialog.close()
