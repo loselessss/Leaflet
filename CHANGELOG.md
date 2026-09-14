@@ -2,9 +2,8 @@
 
 English | [한국어](CHANGELOG.ko.md)
 
-## 1.32.1 - 2026-09-13
+## 1.32.2 - 2026-09-14
 
 ### Improvements
 
-- Keep installer releases focused on installers; provide matching sources through a clearly linked source archive release.
-- Add unsigned MSIX preparation and keep MSIX updates separate from EXE installation.
+- Fix unnecessary CPU fallback and duplicate glyphs when PDF text maps one glyph to multiple characters.

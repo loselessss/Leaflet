@@ -11,7 +11,7 @@ import zlib
 
 MAX_DECODED = 256 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 4
+SCENE_FORMAT_VERSION = 5
 
 
 def _limit():

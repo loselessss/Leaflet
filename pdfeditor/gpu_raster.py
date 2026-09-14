@@ -1807,6 +1807,11 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             for index in range(span.m_internal.len):
                 item = span.items(index)
                 gid = int(item.gid)
+                if gid == -1:
+                    # MuPDF uses -1 for additional Unicode mappings of an
+                    # already emitted glyph (for example a ligature). It has
+                    # no separate ink; encoding it again duplicates the glyph.
+                    continue
                 if gid < 0:
                     gid = _encoded_glyph_id(font, item.ucs)
                     if gid < 0:

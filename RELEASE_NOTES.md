@@ -1,5 +1,9 @@
 # sPDF Release Notes
 
+## 1.32.2 - 2026-09-14
+
+- Fix unnecessary CPU fallback and duplicate glyphs when PDF text maps one glyph to multiple characters.
+
 ## 1.32.1 - 2026-09-13
 
 - Installer downloads are separate from the linked source archives.

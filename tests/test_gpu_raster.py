@@ -1226,6 +1226,25 @@ class GpuRasterSceneTests(unittest.TestCase):
         self.assertEqual(_encoded_glyph_id(font, ord("f")), 42)
         self.assertEqual(font.codepoint, ord("f"))
 
+    def test_ligature_unicode_continuation_does_not_add_ink(self):
+        from pymupdf import mupdf as m
+        from pdfeditor.gpu_raster import _DisplayListDevice
+
+        font = m.fz_new_base14_font("Helvetica")
+        text = m.FzText()
+        matrix = m.FzMatrix(12, 0, 0, 12, 20, 30)
+        m.fz_show_glyph(text, font, matrix, font.fz_encode_character(ord("f")),
+                       ord("f"), 0, 0, 0, 0)
+        device = _DisplayListDevice((0, 0, 200, 200))
+        ctm = m.FzMatrix(1, 0, 0, 1, 0, 0).internal()
+        expected = device._text_outlines(text.m_internal, ctm)
+        self.assertTrue(expected)
+        # Both encodable and unencodable continuation characters have no ink.
+        for codepoint in (ord("i"), 0x10FFFF):
+            m.fz_show_glyph(text, font, matrix, -1, codepoint, 0, 0, 0, 0)
+        self.assertEqual(device._text_outlines(text.m_internal, ctm),
+                         expected)
+
     def test_missing_cmap_glyph_keeps_cpu_fallback(self):
         from pdfeditor.gpu_raster import _encoded_glyph_id
 
