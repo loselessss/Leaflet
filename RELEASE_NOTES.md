@@ -2,6 +2,7 @@
 
 ## 1.32.2 - 2026-09-14
 
+- Align the title-bar divider beneath tabs and window controls in both workspaces.
 - Align update dialog buttons and show download percentages without clipping; format release-note headings.
 - Fix unnecessary CPU fallback and duplicate glyphs when PDF text maps one glyph to multiple characters.
 

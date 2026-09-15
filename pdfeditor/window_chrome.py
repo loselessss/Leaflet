@@ -141,6 +141,9 @@ class WindowChrome(QWidget):
         self.brand.setAttribute(Qt.WA_TransparentForMouseEvents)
         row.addWidget(self.brand)
         bar.setExpanding(False)
+        # The full-width caption divider owns the baseline. Qt's tab base
+        # otherwise adds a second, offset line ending before the controls.
+        bar.setDrawBase(False)
         bar.setElideMode(Qt.ElideMiddle)
         bar.setUsesScrollButtons(True)
         bar.setObjectName("captionTabs")
