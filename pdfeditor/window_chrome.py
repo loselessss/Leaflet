@@ -136,7 +136,8 @@ class WindowChrome(QWidget):
         row = QHBoxLayout(self.caption)
         row.setContentsMargins(8, 4, 0, 0)
         row.setSpacing(0)
-        self.brand = QLabel("sPDF", self.caption)
+        self.brand = QLabel("Leaflet", self.caption)
+        self.brand.setObjectName("captionBrand")
         self.brand.setContentsMargins(4, 0, 12, 0)
         self.brand.setAttribute(Qt.WA_TransparentForMouseEvents)
         row.addWidget(self.brand)
@@ -172,6 +173,7 @@ class WindowChrome(QWidget):
         self.setStyleSheet("""
             QWidget#windowCaption { background: #e9edf2; }
             QWidget#captionDivider { background: #c9ced6; }
+            QLabel#captionBrand { color: #20242a; font-weight: 600; }
             QTabBar#captionTabs { background: transparent; }
             QTabBar#captionTabs::tab { min-width: 90px; max-width: 290px;
                 min-height: 30px; font-weight: normal; }

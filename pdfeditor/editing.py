@@ -1,15 +1,16 @@
 """EditMixin — 텍스트 편집(설계 §3.4) + 스냅샷 기반 undo/redo.
 
 편집 모델: 편집 모드에서 span(같은 글꼴로 이어진 글자 토막)을 클릭 →
-현재 글자를 지우고 같은 자리에 새 글자를 쓴다. PDF는 문단/리플로우가
-없으므로 그 줄 안에서만 교체된다.
+현재 글자를 지우고 같은 자리에 새 글자를 쓴다. 가까운 조각은 한 줄로
+묶고, 드래그한 여러 줄은 선택한 상자 안에서만 줄을 바꾸어 교체한다.
 
 undo/redo: PyMuPDF 저널링이 텍스트 삽입과 함께 쓰면 깨져서(연산 중 폰트
 등록 불가) 문서 스냅샷(bytes) 스택으로 구현한다. 편집 전에 현재 상태를
 한 장 찍어두고, 되돌리기는 그 스냅샷으로 복원한다.
 """
 
-from PyQt5.QtCore import QRectF
+import fitz
+from PyQt5.QtCore import QRectF, QPointF
 from PyQt5.QtWidgets import QDialog, QInputDialog, QMessageBox
 from .access import editing_command, history_command
 from .i18n import localize
@@ -84,6 +85,7 @@ class EditMixin:
             self._show_edit_boxes()
         else:
             self.view.canvas.set_edit_boxes([])
+            self.view.viewport().setToolTip('')
             self.statusBar().clearMessage()
 
     def _show_edit_boxes(self):
@@ -91,10 +93,49 @@ class EditMixin:
         if self.doc is None:
             return
         self._page_spans = self.doc.spans(self.page_index)
+        from .text_regions import text_lines
+        self._text_lines = text_lines(self._page_spans)
+        matrix = self.doc._doc[self.page_index].rotation_matrix
         self.view.canvas.set_edit_boxes(
-            [QRectF(s["bbox"][0], s["bbox"][1],
-                    s["bbox"][2] - s["bbox"][0], s["bbox"][3] - s["bbox"][1])
-             for s in self._page_spans])
+            [QRectF(r.x0, r.y0, r.width, r.height)
+             for s in self._text_lines for r in [fitz.Rect(s['bbox']) * matrix]])
+        self.view.viewport().setToolTip(localize(
+            'Click to edit a line; drag a box around several lines to edit a paragraph.',
+            '클릭: 한 줄 편집 · 여러 줄을 상자로 드래그: 문단 편집'))
+
+    def _text_point(self, pt):
+        point = fitz.Point(pt.x(), pt.y()) * self.doc._doc[self.page_index].derotation_matrix
+        return QPointF(point.x, point.y)
+
+    def _drag_text_region(self, start, end):
+        from .text_regions import selected_region
+        start, end = self._text_point(start), self._text_point(end)
+        rect = QRectF(start, end).normalized()
+        return selected_region(getattr(self, '_text_lines', []),
+                               (rect.left(), rect.top(), rect.right(), rect.bottom()))
+
+    def on_drag_selected(self, start, end):
+        if not self._edit_mode:
+            return super().on_drag_selected(start, end)
+        if self.doc is None or getattr(self, '_inline_text', None) is not None:
+            return
+        region = self._drag_text_region(start, end)
+        matrix = self.doc._doc[self.page_index].rotation_matrix
+        self.view.canvas.set_selection([
+            QRectF(r.x0, r.y0, r.width, r.height)
+            for span in (region['sources'] if region else [])
+            for r in [fitz.Rect(span['bbox']) * matrix]])
+
+    @editing_command
+    def edit_text_selection(self, start, end):
+        if not self._edit_mode or self.doc is None:
+            return
+        if not self._commit_inline_text():
+            return
+        region = self._drag_text_region(start, end)
+        if region:
+            from .paragraph_text import ParagraphTextSession
+            self._inline_text = ParagraphTextSession(self, self._text_point(start), region)
 
     # --- 클릭 → 편집 ---------------------------------------------------
 
@@ -107,6 +148,13 @@ class EditMixin:
         if self.doc is None:
             return
         if not self._commit_inline_text():
+            return
+        pt = self._text_point(pt)
+        region = next((line for line in getattr(self, '_text_lines', [])
+                       if fitz.Rect(line['bbox']).contains((pt.x(), pt.y()))), None)
+        if region and len(region['sources']) > 1:
+            from .paragraph_text import ParagraphTextSession
+            self._inline_text = ParagraphTextSession(self, pt, region)
             return
         span = self._span_at(pt)
         if span is None:

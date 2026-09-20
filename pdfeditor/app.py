@@ -546,6 +546,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self.view.viewport_changed.connect(self.schedule_reading_position)
         self.view.page_flip.connect(self.on_wheel_flip)
         self.view.canvas.drag_selected.connect(self.on_drag_selected)
+        self.view.canvas.drag_finished.connect(self.edit_text_selection)
         self.view.canvas.selection_cleared.connect(self._clear_selection)
         self.view.canvas.word_picked.connect(self.on_word_picked)
         self.view.canvas.clicked.connect(self._dispatch_click)
@@ -1579,8 +1580,6 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
             self.setMinimumSize(520, 320)
             self._tabs = DocumentTabs(TransferTabBar())
             self._window_chrome = WindowChrome(self, self._tabs.tabBar())
-            self._tabs.currentChanged.connect(lambda _index:
-                self._window_chrome.brand.setVisible(self._tabs.count() == 0))
             self.setMenuWidget(self._window_chrome)
         else:
             self._tabs = QTabWidget()

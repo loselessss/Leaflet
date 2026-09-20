@@ -547,6 +547,17 @@ def small_overlapping_nonisolated_group_pdf_bytes():
 
 
 class GpuRasterSceneTests(unittest.TestCase):
+    def test_move_only_fill_is_ignored_without_falling_back(self):
+        from pdfeditor import gpu_raster as g
+        with fitz.open() as pdf:
+            page = pdf.new_page(width=100, height=100)
+            page.draw_rect((10, 10, 40, 40), fill=(1, 0, 0))
+            content = page.get_contents()[0]
+            pdf.update_stream(content, b"0 0 m f\n" + pdf.xref_stream(content))
+            scene = g.vector_page_from_pymupdf(page)
+        self.assertTrue(scene.supported, scene.reason)
+        self.assertEqual(len(scene.items), 2)
+
     def test_mask_derived_clip_is_not_absorbed_by_gradient_compaction(self):
         from pdfeditor import gpu_raster as g
         commands = g._rect_commands(0, 0, 20, 20)

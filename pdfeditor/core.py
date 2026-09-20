@@ -698,8 +698,8 @@ class Document:
     def spans(self, index):
         """편집 단위(span = 같은 글꼴/크기로 이어진 한 토막) 목록.
 
-        편집은 이 단위로 한다 — PDF는 글자를 좌표에 찍어놓은 포맷이라
-        '문단'이라는 개념이 없기 때문(설계 §3.4).
+        PDF의 원래 조각과 쓰기 방향을 반환한다. 편집 UI는 이 조각들을
+        기하 정보로 묶되, 교체 시 원래 범위 목록을 유지한다.
         """
         out = []
         for block in self._doc[index].get_text("dict")["blocks"]:
@@ -715,6 +715,8 @@ class Document:
                         "size": sp["size"],
                         "flags": sp["flags"],
                         "font": sp["font"],
+                        "dir": tuple(line.get("dir", (1, 0))),
+                        "wmode": line.get("wmode", 0),
                         # PyMuPDF는 색을 int로 준다 → RGB 0~1 튜플로
                         "rgb": (((c >> 16) & 255) / 255.0,
                                 ((c >> 8) & 255) / 255.0,
@@ -840,6 +842,12 @@ class Document:
             doc.delete_page(len(doc) - 1)
 
     # --- 텍스트 편집 (설계 §3.4) --------------------------------------
+
+    @document_write
+    def replace_text_region(self, index, region, text, size, rgb, **options):
+        """Replace selected fragments with text wrapped inside a bounded box."""
+        from .text_regions import replace_region
+        replace_region(self, index, region, text, size, rgb, **options)
 
     @document_write
     def replace_span(self, index, bbox, origin, new_text, size, rgb, *, fit=True,

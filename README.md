@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Current version: 1.32.2** · Windows · English and Korean
+**Current version: 1.33.0** · Windows · English and Korean
 
 ## Download
 
@@ -27,7 +27,12 @@ Press **F1** for the full usage guide.
 - **OCR:** Recognize Korean and English scans locally and add searchable text.
 - **Output:** Print, compress PDFs, and convert between PDFs and images.
 
-Text editing works within existing lines or boxes; it does not reflow paragraphs,
+Click nearby fragments on the same line to edit them together, or drag a box around
+several lines to edit a paragraph. Adjust box dimensions, alignment and line spacing
+in the small palette, and check the PDF output preview. Use Ctrl+Enter to apply
+paragraph edits; Enter inserts a line break. Overflow blocks application until corrected.
+
+Text wraps within the selected box; it does not reflow the surrounding document,
 and replacement fonts may look different. Objects added with sPDF can be edited
 again after saving; existing PDF artwork is not automatically converted into objects.
 

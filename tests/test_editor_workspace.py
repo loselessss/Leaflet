@@ -69,6 +69,66 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.settle()
         return dialog, dialog.panel
 
+    def test_paragraph_drag_overflow_apply_undo_redo(self):
+        from PyQt5.QtCore import QPointF, Qt
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        tab.open_page_editor()
+        tab.doc._doc[0].insert_text((35, 80), 'Second line', fontsize=12)
+        tab._show_edit_boxes()
+        before = tab.doc._doc[0].get_text()
+        tab.view.canvas.drag_finished.emit(QPointF(30, 35), QPointF(160, 85))
+        session = tab._inline_text
+        self.assertIn('Page 01\nSecond line', session.input.text())
+        session.input.setText('Replacement paragraph')
+        session.font.setCurrentIndex(1)
+        session.unify.setChecked(True)
+        session.height.setValue(.5)
+        self.assertFalse(session.commit())
+        self.assertEqual(tab.doc._doc[0].get_text(), before)
+        session.width.setValue(70)
+        session.size.setValue(12)
+        session.fit_height()
+        self.assertGreater(session.height.value(), .5)
+        QTest.keyClick(session.input, Qt.Key_Return)
+        self.assertIs(tab._inline_text, session)
+        self.assertIn('\n', session.input.text())
+        session.input.setText('Replacement paragraph')
+        self.assertTrue(session.validate())
+        self.assertFalse(session.preview.pixmap().isNull())
+        self.assertTrue(session.commit())
+        self.assertIn('Replacement paragraph', tab.doc._doc[0].get_text())
+        self.assertNotIn('Second line', tab.doc._doc[0].get_text())
+        tab.undo()
+        self.assertEqual(tab.doc._doc[0].get_text(), before)
+        tab.redo()
+        self.assertIn('Replacement paragraph', tab.doc._doc[0].get_text())
+
+    def test_fragment_click_and_rotated_paragraph_selection(self):
+        import fitz
+        from PyQt5.QtCore import QPointF
+        tab = self.open_editor()
+        tab.open_page_editor()
+        page = tab.doc._doc[0]
+        page.insert_text((35, 80), 'First', fontsize=12)
+        page.insert_text((62, 80), 'word', fontsize=12, color=(1, 0, 0))
+        page.set_rotation(90)
+        tab._show_edit_boxes()
+        point = fitz.Point(40, 75) * page.rotation_matrix
+        tab.edit_span_at(QPointF(point.x, point.y))
+        session = tab._inline_text
+        self.assertEqual(session.input.text(), 'First word')
+        session.input.setText('Edited')
+        session.width.setValue(50)
+        session.height.setValue(15)
+        session.font.setCurrentIndex(1)
+        self.assertFalse(session.validate())
+        session.unify.setChecked(True)
+        self.assertTrue(session.validate())
+        session.cancel()
+        self.assertIn('First', tab.doc._doc[0].get_text())
+        self.assertFalse(tab._undo_stack)
+
     def test_inline_text_cancel_apply_font_and_undo(self):
         from PyQt5.QtCore import QPointF
         tab = self.open_editor()

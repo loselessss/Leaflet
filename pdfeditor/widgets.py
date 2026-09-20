@@ -243,6 +243,7 @@ class PageCanvas(QWidget):
     """
 
     drag_selected = pyqtSignal(QPointF, QPointF)  # 드래그 시작/현재 (PDF 좌표)
+    drag_finished = pyqtSignal(QPointF, QPointF)
     selection_cleared = pyqtSignal()
     word_picked = pyqtSignal(QPointF)   # 더블클릭 지점 (PDF 좌표)
     clicked = pyqtSignal(QPointF)       # 드래그 없는 단순 클릭 (메모 배치/열기)
@@ -445,6 +446,12 @@ class PageCanvas(QWidget):
                 ev.accept()
                 return
             # 드래그 없이 눌렀다 뗀 것만 '클릭' — 선택 드래그와 구분한다.
+            if self._drag_start is not None and self._dragged:
+                target = self._page_point(ev.pos())
+                start = self._drag_start
+                self._drag_start = None
+                if target is not None and target[0] == self._active_page:
+                    self.drag_finished.emit(start, target[1])
             if self._drag_start is not None and not self._dragged:
                 target = self._page_point(ev.pos())
                 if target is not None and target[0] == self._active_page:

@@ -28,6 +28,9 @@ class LineInput(QLineEdit):
 
 
 class InlineTextSession(QObject):
+    def make_input(self, text, parent):
+        return LineInput(text, parent)
+
     def __init__(self, host, point, span=None):
         super().__init__(host)
         self.host, self.document, self.page = host, host.doc, host.page_index
@@ -45,7 +48,7 @@ class InlineTextSession(QObject):
         self.fontfile = None
         self.font_id = -1
         self.done = False
-        self.input = LineInput(self.initial_text, host.view.viewport())
+        self.input = self.make_input(self.initial_text, host.view.viewport())
         self.input.setAttribute(Qt.WA_NativeWindow)
         self.input.session = self
         self.input.setAccessibleName(localize('Edit text on page', '페이지에서 텍스트 편집'))
@@ -53,7 +56,7 @@ class InlineTextSession(QObject):
         self.palette = QDialog(host, Qt.Tool)
         self.palette.setWindowTitle(localize('Text properties', '글자 속성'))
         layout = QVBoxLayout(self.palette)
-        form = QFormLayout()
+        form = self.form = QFormLayout()
         self.font = QComboBox()
         for label, name, family in [
                 (localize('Default (Korean)', '기본 (한글 지원)'), 'korea', 'Malgun Gothic'),
@@ -74,12 +77,12 @@ class InlineTextSession(QObject):
         self.color_button.clicked.connect(self.choose_color)
         form.addRow(localize('Color', '색상'), self.color_button)
         layout.addLayout(form)
-        note = QLabel(localize(
+        note = self.note = QLabel(localize(
             'Enter: apply · Esc: cancel\nOne line at a time. Replacement fonts may differ.',
             'Enter: 적용 · Esc: 취소\n한 줄씩 수정합니다. 대체 글꼴은 원본과 다를 수 있습니다.'))
         note.setWordWrap(True)
         layout.addWidget(note)
-        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
+        buttons = self.buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Apply).setText(localize('Apply', '적용'))
         buttons.button(QDialogButtonBox.Cancel).setText(localize('Cancel', '취소'))
         buttons.button(QDialogButtonBox.Apply).clicked.connect(self.commit)
@@ -134,6 +137,9 @@ class InlineTextSession(QObject):
         canvas = view.canvas
         z = view.zoom
         x, y, right, bottom = self.bbox
+        import fitz
+        rotated = fitz.Rect(x, y, right, bottom) * self.document._doc[self.page].rotation_matrix
+        x, y, right, bottom = tuple(rotated)
         transforms = getattr(view, '_page_transforms', None)
         if transforms is not None and self.page in transforms:
             rect = transforms[self.page].mapRect(QRectF(x, y, right-x, bottom-y))

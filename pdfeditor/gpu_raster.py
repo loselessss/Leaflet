@@ -1744,9 +1744,16 @@ class _DisplayListDevice(_mupdf.FzDevice2):
     def fill_path(self, _context, path, even_odd, ctm, colorspace, color,
                   alpha, color_params):
         try:
+            # A fill after a move-only path paints no pixels. Some generators
+            # emit many of these harmless operations, so do not reject the
+            # entire GPU scene. Empty clipping paths remain conservative below
+            # because they affect subsequent drawing.
+            commands = _path_commands(path, allow_empty=True)
+            if not commands:
+                return
             self._features.add("vector")
             self._append_item(VectorPath(
-                _path_commands(path), bool(even_odd),
+                commands, bool(even_odd),
                 fill_argb=_device_color(
                     colorspace, color, alpha, color_params),
                 transform=_matrix(ctm)))

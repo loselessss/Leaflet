@@ -1,5 +1,12 @@
 # sPDF Release Notes
 
+## 1.33.0 - 2026-09-20
+
+- Edit fragmented text together, or drag several lines to edit a paragraph inside a box.
+- Adjust box size, alignment and line spacing with a PDF output preview and overflow checks.
+- Show the Leaflet name at the far left of the title bar.
+- Avoid CPU fallback for harmless empty fill operations emitted by PDF generators.
+
 ## 1.32.2 - 2026-09-14
 
 - Align the title-bar divider beneath tabs and window controls in both workspaces.
