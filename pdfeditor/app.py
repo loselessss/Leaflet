@@ -17,7 +17,7 @@ from PyQt5.QtGui import QDrag
 from PyQt5.QtWidgets import (
     QAction, QActionGroup, QApplication, QCheckBox, QDialog, QDialogButtonBox,
     QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QMainWindow, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
+    QListWidget, QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
     QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabBar, QTabWidget, QToolBar,
     QToolButton, QVBoxLayout, QWidget,
 )
@@ -317,6 +317,28 @@ class TransferTabBar(QTabBar):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._pressed_tab = None
+
+    def contextMenuEvent(self, ev):
+        index = self.tabAt(ev.pos())
+        if index < 0:
+            ev.ignore()
+            return
+        tab = self.window()._tabs.widget(index)
+        actions = getattr(tab, "_tab_context_actions", ())
+        if not actions:
+            ev.ignore()
+            return
+        menu = QMenu(self)
+        try:
+            for action in actions:
+                if action is None:
+                    menu.addSeparator()
+                else:
+                    menu.addAction(action)
+            menu.exec_(ev.globalPos())
+        finally:
+            menu.deleteLater()
+        ev.accept()
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -661,8 +683,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         export_label = localize("Save PDF with annotations...", "주석 포함 PDF 저장...") \
             if annotation_mode else "다른 이름으로 저장..."
         self._save_act = self._act(m, save_label, "Ctrl+S", self.save, "save")
-        self._act(m, export_label, "Ctrl+Shift+S",
-                  self.save_as_dialog, "save_as")
+        save_as_act = self._act(m, export_label, "Ctrl+Shift+S",
+                               self.save_as_dialog, "save_as")
         self._act(m, "PDF 용량 줄이기...", None,
                   self.compress_pdf, "download")
         self._act(m, "이미지를 PDF로...", None,
@@ -674,11 +696,14 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                       self._shell.show_recovery, "undo")
         self._print_act = self._act(
             m, "인쇄...", "Ctrl+P", self.print_document, "print")
-        self._act(m, "탐색기에서 현재 위치 열기", None,
-                  self.open_current_location, "external")
+        location_act = self._act(m, "탐색기에서 현재 위치 열기", None,
+                                 self.open_current_location, "external")
         m.addSeparator()
-        self._act(m, "탭 닫기", "Ctrl+W",
-                  lambda: self._shell.close_tab(self), "close")
+        close_act = self._act(m, "탭 닫기", "Ctrl+W",
+                              lambda: self._shell.close_tab(self), "close")
+        self._tab_context_actions = (
+            self._save_act, save_as_act, self._print_act, location_act,
+            None, close_act)
         self._act(m, "종료", "Ctrl+Q", lambda: self._shell.request_exit(), "power")
 
         e = self.menuBar().addMenu("편집(&E)")
@@ -913,9 +938,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if self._shell.updates_enabled:
             self._act(h, "업데이트 확인...", None,
                       lambda: self._shell.check_for_updates(True), "update")
-        self._act(h, "PDF 기본 프로그램 / 브라우저 설정...", None,
-                  self.check_default_app, "settings")
-        self._shell._add_language_menu(h)
+        self._act(h, localize("Preferences…", "환경설정…"), None,
+                  self._shell.show_preferences, "settings")
         self._act(h, "오픈소스 라이선스", None, self.show_licenses,
                   "license")
         self._act(h, "정보", None, self.show_about, "info")
@@ -1847,14 +1871,21 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
                 self, "업데이트 확인...", None,
                 lambda: self.check_for_updates(True), "update"))
         h.addAction(_make_action(
-            self, "PDF 기본 프로그램 / 브라우저 설정...", None,
-            lambda: _show_default_app_settings(self), "settings"))
-        self._add_language_menu(h)
+            self, localize("Preferences…", "환경설정…"), None,
+            self.show_preferences, "settings"))
         h.addAction(_make_action(self, "오픈소스 라이선스", None,
                                  lambda: show_licenses(self), "license"))
         h.addAction(_make_action(
             self, "정보", None, self._shell_about, "info"))
         return mb
+
+    def show_preferences(self):
+        from .preferences_dialog import PreferencesDialog
+        dialog = PreferencesDialog(self, lambda: _show_default_app_settings(self))
+        try:
+            dialog.exec_()
+        finally:
+            dialog.deleteLater()
 
     def _add_language_menu(self, parent_menu):
         if self.workspace_mode is not None:

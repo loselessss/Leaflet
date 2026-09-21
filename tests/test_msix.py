@@ -85,14 +85,13 @@ class MsixTests(unittest.TestCase):
         with patch('pdfeditor.paths.is_packaged',return_value=True):
             self.assertFalse(set_current_process_app_id())
 
-    def test_only_installers_are_attached_to_normal_release(self):
+    def test_installers_and_sources_share_one_release(self):
         workflow=Path('.github/workflows/release.yml').read_text(encoding='utf-8')
         normal=workflow.split('- name: Publish GitHub release',1)[1]
-        self.assertIn('gh release upload $tag $installer $latestInstaller --clobber',normal)
-        self.assertNotIn('$sourceArchive',normal)
-        self.assertIn('sources-v$version',normal)
-        self.assertLess(workflow.index('gh release upload $sourceTag'),workflow.index('- name: Publish GitHub release'))
-        self.assertIn('--prerelease --latest=false',workflow)
+        self.assertIn('gh release upload $tag $installer $latestInstaller $sourceArchive',normal)
+        self.assertIn('$dependencySources --clobber',normal)
+        self.assertNotIn('sources-v$version',workflow)
+        self.assertNotIn('--prerelease',workflow)
 
 
 if __name__=='__main__':

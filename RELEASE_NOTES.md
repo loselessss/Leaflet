@@ -1,5 +1,12 @@
 # sPDF Release Notes
 
+## 1.33.1 - 2026-09-21
+
+- Right-click a document tab to save, print, open its folder or close it.
+
+- Configure language, startup, rendering and system integration in Help → Preferences.
+- Put installers and their matching source files together under one release.
+
 ## 1.33.0 - 2026-09-20
 
 - Edit fragmented text together, or drag several lines to edit a paragraph inside a box.

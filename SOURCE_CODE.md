@@ -3,15 +3,12 @@
 ## Get the matching version / 같은 버전 받기
 
 Open **Help → Open-source Licenses → Source code** in sPDF. The link points to
-the source archive release (`sources-vVERSION`) for the version you are running,
-not to the moving `main` branch:
+the release for the version you are running, not to the moving `main` branch:
 
 - [All sPDF releases](https://github.com/loselessss/sPDF/releases)
-- The normal release links to its separate source archive release. There, download
-  `sPDF_Source_VERSION.zip` and `sPDF_Dependency_Sources_VERSION.md` together.
-- Source archive releases are marked prerelease and never latest so they cannot
-  replace the installer update channel. GitHub-generated tag ZIPs alone do not
-  contain the build inventory and dependency-source directions.
+- Under the same release's Assets, download `sPDF_Source_VERSION.zip` and
+  `sPDF_Dependency_Sources_VERSION.md` together. GitHub-generated tag ZIPs alone
+  do not contain the build inventory and dependency-source directions.
 - The ZIP contains the tagged sPDF source, build scripts and the actual build
   environment's package versions and notices. Unrelated project files and
   personal/untracked files are excluded.
@@ -23,9 +20,8 @@ not to the moving `main` branch:
   or licensing has been audited retroactively.
 
 sPDF의 **도움말 → 오픈소스 라이선스 → 소스 코드**에서 실행 중인 버전의 릴리스로
-이동할 수 있습니다. 일반 릴리스 본문에 연결된 별도 소스 보관 릴리스에서
-소스 ZIP과 의존성 소스 안내를 함께 받으세요. 소스 보관 릴리스는 최신 설치본이나
-자동 업데이트 대상으로 취급하지 않습니다.
+이동할 수 있습니다. 같은 릴리스의 Assets에서 소스 ZIP과 의존성 소스 안내를
+함께 받으세요.
 ZIP에는 해당 태그의 sPDF 소스·빌드 스크립트·실제 빌드 환경의 패키지 버전·고지가
 들어갑니다. sPDF와 무관한 프로젝트 파일과 개인·미추적 파일은 제외합니다.
 외부 라이브러리 원본은 의존성 안내의 **같은 버전 소스 링크**에서 받을 수 있으며,
@@ -64,14 +60,12 @@ sPDF를 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 
   archives for PyMuPDF and PyQt5 and the matching Qt source distribution.
   Generated icons and the rebuilt native DLL may differ; their tagged
   generators and native source/build script are included. Other local source changes stop publication.
-- Publish the source ZIP, its checksum and dependency source document in the
-  public `sources-vVERSION` archive release before publishing installers. Link
-  that location clearly next to the installer downloads. Source preparation or
-  publication failures stop installer publication. Sources remain publicly
-  downloadable without Actions artifact access or an expiry date.
-- Normal releases attach only the versioned and latest-alias EXE installers.
-  Their SHA-256 is included in the release body; GitHub asset digests continue
-  to protect updater downloads. Existing historic releases are not rewritten.
+- Publish the source ZIP, its checksum and dependency source document as Assets
+  in the same public release as the installers. Source preparation or publication
+  failures stop installer publication. Sources remain publicly downloadable
+  without Actions artifact access or an expiry date.
+- The installer SHA-256 is included in the release body; GitHub asset digests
+  continue to protect updater downloads. Existing historic releases are not rewritten.
 - MSIX preparation and signing directions are in [MSIX.md](MSIX.md).
 - Check upstream source links remain accessible for as long as required. If
   an upstream source disappears, host an exact copy yourself; a dead URL is

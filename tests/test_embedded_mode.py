@@ -642,12 +642,14 @@ class EmbeddedModeTests(unittest.TestCase):
         self.assertTrue(window.updates_enabled)
         self.assertIsNotNone(window._update_service)
         self.assertIn("Check for Updates...", menu_texts)
-        self.assertIn("Display Renderer", menu_texts)
+        self.assertIn("Preferences…", menu_texts)
+        self.assertNotIn("Display Renderer", menu_texts)
         window.close()
 
     def test_unavailable_direct2d_cannot_be_selected(self):
         from PyQt5.QtWidgets import QAction
         from pdfeditor.app import AppWindow
+        from pdfeditor.preferences_dialog import PreferencesDialog
 
         unavailable = SimpleNamespace(available=False, driver="none")
         with patch("pdfeditor.app.probe_d2d_backend", return_value=unavailable), \
@@ -655,9 +657,11 @@ class EmbeddedModeTests(unittest.TestCase):
                       return_value=False), \
                 patch("pdfeditor.app.settings.ui_language", return_value="en"):
             window = AppWindow(updates_enabled=True)
-        actions = {action.text(): action for action in window.findChildren(QAction)}
+            dialog = PreferencesDialog(window, lambda: None)
+        actions = {action.text(): action for action in dialog.findChildren(QAction)}
         self.assertIn("GPU (Direct2D)", actions)
         self.assertFalse(actions["GPU (Direct2D)"].isEnabled())
+        dialog.close()
         window.close()
 
 

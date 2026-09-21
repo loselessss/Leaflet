@@ -14,7 +14,7 @@ from .paths import resource
 
 
 def source_url():
-    return "https://github.com/loselessss/sPDF/releases/tag/sources-v" + APP_VERSION
+    return "https://github.com/loselessss/sPDF/releases/tag/v" + APP_VERSION
 
 
 def summary_html():
@@ -24,14 +24,14 @@ def summary_html():
         "<p>WITHOUT ANY WARRANTY, including merchantability or fitness for a "
         "particular purpose. Read the full license in the MIT tab.</p>"
         "<p><a href='{url}'>Source code for this version</a>: download the source "
-        "ZIP and dependency source guide from the source archive release.</p>"
+        "ZIP and dependency source guide under Assets.</p>"
         "<p>Third-party components keep their own licenses. Builds using AGPL "
         "PyMuPDF and GPL PyQt5 are not distributed under MIT terms alone.</p>",
         "<h2>{name} {version}</h2><p>Copyright (c) 2026 loselessss and contributors.</p>"
         "<p>sPDF가 직접 작성한 소스 코드는 <b>MIT License</b>로 제공합니다.</p>"
         "<p>상품성·특정 목적 적합성을 포함하여 어떠한 보증도 제공하지 않습니다. "
         "전체 조건은 MIT 탭에서 읽을 수 있습니다.</p>"
-        "<p><a href='{url}'>이 버전의 소스 코드</a>: 별도 소스 보관 릴리스의 소스 ZIP과 "
+        "<p><a href='{url}'>이 버전의 소스 코드</a>: Assets에서 소스 ZIP과 "
         "의존성 소스 안내를 함께 받으세요.</p>"
         "<p>외부 구성요소의 라이선스는 그대로 유지합니다. AGPL판 PyMuPDF와 "
         "GPL판 PyQt5를 사용하는 설치본은 MIT 조건만으로 배포되지 않습니다.</p>",

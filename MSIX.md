@@ -46,12 +46,12 @@ signtool verify /pa /v Output\sPDF_VERSION_x64_unsigned.msix
 
 After successful signing/verification, rename the signed copy to omit `unsigned`.
 Test install, file opening, reader/editor handoff, OCR, GPU workers, upgrade and
-uninstall before enabling release uploads. Keep version-matched source access
-beside any MSIX download, as for EXE releases (see [SOURCE_CODE.md](SOURCE_CODE.md)).
+uninstall before enabling release uploads. Keep version-matched source assets
+in the same release as any MSIX download, as for EXE releases (see [SOURCE_CODE.md](SOURCE_CODE.md)).
 Unsigned workflow artifacts expire and are not a public corresponding-source host.
 
-MSIX도 EXE와 같은 소스 제공 의무가 적용됩니다. 다운로드 위치 옆에 해당 버전의
-공개 소스 링크를 유지하세요. 서명된 패키지의 설치·업그레이드 검증이 끝나기 전에는
+MSIX도 EXE와 같은 소스 제공 의무가 적용됩니다. 같은 릴리스에 해당 버전의
+공개 소스 파일을 첨부하세요. 서명된 패키지의 설치·업그레이드 검증이 끝나기 전에는
 일반 릴리스 첨부 대상으로 자동 추가하지 않습니다.
 
 - [Microsoft: package manifest](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)

@@ -168,7 +168,7 @@ class LicensingTests(unittest.TestCase):
     def test_workflow_packages_sources_before_publication(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertLess(workflow.index("python create_source_bundle.py"), workflow.index("gh release create"))
-        self.assertIn('$sourceArchive "$sourceArchive.sha256" $dependencySources', workflow)
+        self.assertIn('$sourceArchive `\n              "$sourceArchive.sha256" $dependencySources', workflow)
         self.assertIn("Output/sPDF_Source_*.zip", workflow)
         spec = (ROOT / "spdf.spec").read_text(encoding="utf-8")
         self.assertIn("write_legal_bundle", spec)
@@ -196,7 +196,7 @@ class LicenseDialogTests(unittest.TestCase):
                 self.assertEqual(dialog.tabs.count(), 8)
                 self.assertIn(text, dialog.tabs.widget(0).toPlainText())
                 self.assertIn("MIT License", dialog.tabs.widget(0).toPlainText())
-                self.assertIn("/releases/tag/sources-v" + APP_VERSION, source_url())
+                self.assertIn("/releases/tag/v" + APP_VERSION, source_url())
                 self.assertIn(source_url(), dialog.tabs.widget(0).toHtml())
                 self.assertIn("Permission is hereby granted", dialog.tabs.widget(1).toPlainText())
                 self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", dialog.tabs.widget(3).toPlainText())
