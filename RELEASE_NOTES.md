@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## 1.33.4 - 2026-09-23
+
+- Add a small app icon beside Leaflet in the reader and editor title bars.
+
 ## 1.33.3 - 2026-09-23
 
 - Use Leaflet consistently in the interface and installer, and explain the reader and editor roles on the start page.

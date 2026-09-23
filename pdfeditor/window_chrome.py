@@ -3,12 +3,27 @@
 import sys
 
 from PyQt5.QtCore import QEvent, QRectF, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter, QPen
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPen
 from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QStackedWidget, QStyle,
                              QToolButton, QVBoxLayout, QWidget)
 
 from .i18n import localize
 from .meta import APP_NAME
+from .paths import app_icon
+
+
+class CaptionIcon(QWidget):
+    """Small app mark painted at the current screen's pixel density."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.icon = QIcon(app_icon())
+        self.setFixedSize(16, 16)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        self.icon.paint(painter, self.rect())
 
 
 class DocumentTabs(QStackedWidget):
@@ -158,9 +173,11 @@ class WindowChrome(QWidget):
         row = QHBoxLayout(self.caption)
         row.setContentsMargins(8, 4, 0, 0)
         row.setSpacing(0)
+        self.brand_icon = CaptionIcon(self.caption)
+        row.addWidget(self.brand_icon, 0, Qt.AlignVCenter)
         self.brand = QLabel(APP_NAME, self.caption)
         self.brand.setObjectName("captionBrand")
-        self.brand.setContentsMargins(4, 0, 12, 0)
+        self.brand.setContentsMargins(6, 0, 12, 0)
         self.brand.setAttribute(Qt.WA_TransparentForMouseEvents)
         row.addWidget(self.brand)
         bar.setExpanding(False)

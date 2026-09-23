@@ -109,6 +109,13 @@ class WindowChromeTests(unittest.TestCase):
             self.assertIs(reader.menuWidget(), reader._window_chrome)
             self.assertIs(reader._tabs.tabBar().parentWidget(), reader._window_chrome.caption)
             self.assertEqual(reader._window_chrome.brand.text(), "Leaflet")
+            icon = reader._window_chrome.brand_icon
+            self.assertFalse(icon.icon.isNull())
+            self.assertEqual((icon.width(), icon.height()), (16, 16))
+            self.assertTrue(icon.isVisible())
+            self.assertTrue(icon.testAttribute(Qt.WA_TransparentForMouseEvents))
+            self.assertLess(icon.geometry().right(), reader._window_chrome.brand.x())
+            self.assertEqual(reader._window_chrome.brand.contentsMargins().left(), 6)
             self.assertTrue(reader._window_chrome.brand.isVisible())
             reader._tabs.currentChanged.disconnect(reader._on_tab_changed)
             placeholder = QWidget()
