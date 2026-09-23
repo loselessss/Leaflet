@@ -265,10 +265,23 @@ class ViewerMixin(NavigationMixin):
         self._set_fit_zoom(self.page_index)
         if self.view.zoom != old_zoom:
             self._cache.clear()
+        initial_width = self.view.viewport().width()
         self.show_page(self.page_index)
+        # A tall page may make the vertical scrollbar appear during the first
+        # render. That narrows the viewport after fit-width was calculated.
         self._update_page_label()
         self.update_thumbnail_viewport_marker()
         self._view_ready = True
+        QTimer.singleShot(0, lambda d=document, w=initial_width:
+                          self._correct_initial_fit(d, w))
+
+    def _correct_initial_fit(self, document, initial_width):
+        """Settle fit-width after a newly visible scrollbar changes the viewport."""
+        if self.doc is not document or getattr(self, "_closing_doc", False):
+            return
+        if self.view.viewport().width() != initial_width:
+            self._set_fit_zoom(self.page_index)
+            self.show_page(self.page_index)
 
     def refresh_page(self, index):
         """페이지 내용이 바뀌었을 때(주석 등) 렌더 캐시와 썸네일을 무효화."""

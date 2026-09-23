@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Current version: 1.33.4** · Windows · English and Korean
+**Current version: 1.33.5** · Windows · English and Korean
 
 ## Download
 
