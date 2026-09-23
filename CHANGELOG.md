@@ -2,6 +2,12 @@
 
 English | [한국어](CHANGELOG.ko.md)
 
+## 1.33.6 - 2026-09-23
+
+### Bug fixes
+
+- Reserve space for the initial vertical scrollbar before rendering so fit-width zoom is accurate without drawing the page twice.
+
 ## 1.33.5 - 2026-09-23
 
 ### Bug fixes

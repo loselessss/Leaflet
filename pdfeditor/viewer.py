@@ -191,7 +191,7 @@ class ViewerMixin(NavigationMixin):
         size = getattr(self.view, "displayed_page_size", None)
         return size(self.doc, index) if size is not None else self.doc.page_size(index)
 
-    def _set_fit_zoom(self, index):
+    def _set_fit_zoom(self, index, *, reserve_vertical=False):
         """렌더 없이 줌 값만 창 너비에 맞춘다 — 문서를 열 때 이걸로 먼저
         배율을 정한 뒤 show_page를 부르면 첫 페이지를 한 번만 렌더한다
         (예전엔 zoom 1.0으로 그리고 fit으로 또 그려서 두 배로 느렸다)."""
@@ -199,14 +199,23 @@ class ViewerMixin(NavigationMixin):
                  list(range(index - index % 2,
                             min(index - index % 2 + 2,
                                 self.doc.page_count))))
-        widths = [self._displayed_page_size(page)[0] for page in pages]
+        sizes = [self._displayed_page_size(page) for page in pages]
+        widths = [size[0] for size in sizes]
         avail = self.view.viewport().width() - 24  # 여백/스크롤바 몫
         if len(widths) > 1:
             avail -= 16.0
         pw = sum(widths)
         if pw > 0 and avail > 0:
-            self.view.zoom = max(self.view.ZOOM_MIN,
-                                 min(self.view.ZOOM_MAX, avail / pw))
+            zoom = max(self.view.ZOOM_MIN,
+                       min(self.view.ZOOM_MAX, avail / pw))
+            if reserve_vertical and max(size[1] for size in sizes) * zoom > \
+                    self.view.viewport().height() and not self.view.verticalScrollBar().isVisible():
+                # Predict the scrollbar before the first render so the PDF is
+                # prepared once at the final fit-width zoom.
+                avail -= self.view.verticalScrollBar().sizeHint().width()
+                zoom = max(self.view.ZOOM_MIN,
+                           min(self.view.ZOOM_MAX, avail / pw))
+            self.view.zoom = zoom
 
     def zoom_fit(self):
         """창 너비에 맞춘다."""
@@ -262,26 +271,13 @@ class ViewerMixin(NavigationMixin):
             self.page_index = max(0, min(
                 self.doc.page_count - 1, int(state.get("page", 0))))
         old_zoom = self.view.zoom
-        self._set_fit_zoom(self.page_index)
+        self._set_fit_zoom(self.page_index, reserve_vertical=True)
         if self.view.zoom != old_zoom:
             self._cache.clear()
-        initial_width = self.view.viewport().width()
         self.show_page(self.page_index)
-        # A tall page may make the vertical scrollbar appear during the first
-        # render. That narrows the viewport after fit-width was calculated.
         self._update_page_label()
         self.update_thumbnail_viewport_marker()
         self._view_ready = True
-        QTimer.singleShot(0, lambda d=document, w=initial_width:
-                          self._correct_initial_fit(d, w))
-
-    def _correct_initial_fit(self, document, initial_width):
-        """Settle fit-width after a newly visible scrollbar changes the viewport."""
-        if self.doc is not document or getattr(self, "_closing_doc", False):
-            return
-        if self.view.viewport().width() != initial_width:
-            self._set_fit_zoom(self.page_index)
-            self.show_page(self.page_index)
 
     def refresh_page(self, index):
         """페이지 내용이 바뀌었을 때(주석 등) 렌더 캐시와 썸네일을 무효화."""

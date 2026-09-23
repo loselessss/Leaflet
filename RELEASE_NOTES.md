@@ -1,5 +1,10 @@
 # Leaflet Release Notes
 
+## 1.33.6 - 2026-09-23
+
+- Add a small Leaflet icon beside the title in reader and editor windows.
+- Keep fit-width zoom accurate when a vertical scrollbar appears on first display, without rendering the page twice.
+
 ## 1.33.5 - 2026-09-23
 
 - Add a small Leaflet icon beside the title in reader and editor windows.
