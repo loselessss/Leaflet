@@ -244,6 +244,12 @@ def native_frame_event(window, message):
     import ctypes
     from ctypes import wintypes
     msg = wintypes.MSG.from_address(int(message))
+    # Most native messages are unrelated to our custom frame. Avoid resolving
+    # and configuring Win32 functions on every paint/input/startup message.
+    if msg.message not in (0x84, 0x24):
+        return None
+    if msg.message == 0x84 and window.isMaximized():
+        return None
     user32 = ctypes.windll.user32
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     if msg.message == 0x84 and not window.isMaximized():  # WM_NCHITTEST

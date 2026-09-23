@@ -1,5 +1,10 @@
 # sPDF Release Notes
 
+## 1.33.2 - 2026-09-23
+
+- Reduce unnecessary native window-message processing.
+- Skip delayed initial page layout after document closure or completed initialization.
+
 ## 1.33.1 - 2026-09-21
 
 - Right-click a document tab to save, print, open its folder or close it.

@@ -1,13 +1,28 @@
 import os
 import unittest
+from unittest.mock import Mock, patch
 
 from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtWidgets import QApplication, QTabBar, QWidget
 
 from pdfeditor.window_chrome import DocumentTabs, resize_hit_test
+from pdfeditor.window_chrome import native_frame_event
 
 
 class WindowChromeTests(unittest.TestCase):
+    def test_unrelated_native_message_does_not_resolve_user32(self):
+        import ctypes
+        from ctypes import wintypes
+        message = wintypes.MSG()
+        message.message = 0x000F  # WM_PAINT
+        window = Mock()
+        window.isFullScreen.return_value = False
+        with patch("pdfeditor.window_chrome.sys.platform", "win32"), \
+                patch.object(ctypes, "windll", create=True) as libraries:
+            self.assertIsNone(native_frame_event(window, ctypes.addressof(message)))
+            self.assertEqual(libraries.mock_calls, [])
+            self.assertNotIn("user32", libraries._mock_children)
+
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

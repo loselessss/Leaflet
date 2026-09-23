@@ -243,7 +243,9 @@ class ViewerMixin(NavigationMixin):
 
     def finish_initial_layout(self, document):
         """창 배치가 끝난 실제 폭으로 맞춤 배율과 HiDPI 이미지를 확정한다."""
-        if self.doc is not document or self.doc is None:
+        if (self.doc is not document or self.doc is None
+                or getattr(self, "_closing_doc", False)
+                or getattr(self, "_view_ready", False)):
             return
         if self._initial_reading_state is not None:
             state = self._initial_reading_state
