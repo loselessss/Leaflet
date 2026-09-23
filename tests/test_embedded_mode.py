@@ -54,6 +54,24 @@ class EmbeddedModeTests(unittest.TestCase):
                     for _ in range(4):
                         self.app.processEvents()
 
+    def test_first_open_renders_after_initial_layout_only_once(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            original = module.DocumentTab._render_current
+            renders = []
+
+            def record_render(tab):
+                renders.append((tab.page_index, tab.view.zoom))
+                return original(tab)
+
+            with patch.object(module.DocumentTab, "_render_current", record_render):
+                tab = window.open_in_tab(str(source))
+                for _ in range(4):
+                    self.app.processEvents()
+            self.assertTrue(tab._view_ready)
+            self.assertEqual(len(renders), 1, renders)
+            self.assertEqual(renders[0][0], 0)
+
     def test_read_only_window_keeps_reading_and_blocks_all_edit_commands(self):
         from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QAction, QAbstractItemView

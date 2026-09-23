@@ -417,6 +417,9 @@ class ViewerMixin(NavigationMixin):
         """보이는 항목 중 아직 안 그린 것만 렌더(레이지, 설계 §3.1)."""
         if self.doc is None or self.is_editor_overview():
             return
+        if not getattr(self, "_view_ready", True):
+            self._schedule_thumbs()
+            return
         width = self.thumbs.thumbnail_width()
         visible = self.thumbs.visible_rows()
         for row in visible:
@@ -435,6 +438,11 @@ class ViewerMixin(NavigationMixin):
                 row, image,
                 rendered_width=width,
             )
+            # Yield to the first-page paint and input between thumbnails.
+            # Recheck visibility next time instead of retaining a stale queue.
+            if any(not self.thumbs.is_rendered(other, width) for other in visible):
+                self._schedule_thumbs()
+            break
         if visible:
             self.thumbs.evict_thumbnails_outside(
                 max(0, visible[0] - 4),

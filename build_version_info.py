@@ -1,6 +1,7 @@
 """PyInstaller EXE용 Windows 버전 리소스를 빌드 폴더에 생성한다."""
 
 from pathlib import Path
+from pdfeditor.meta import APP_NAME
 
 
 def _version_tuple(version):
@@ -14,12 +15,12 @@ def version_info_text(version, description, internal_name, filename):
     """PyInstaller가 읽는 VSVersionInfo 텍스트를 반환한다."""
     numeric = repr(_version_tuple(version))
     strings = {
-        "CompanyName": "sPDF",
+        "CompanyName": APP_NAME,
         "FileDescription": description,
         "FileVersion": version,
         "InternalName": internal_name,
         "OriginalFilename": filename,
-        "ProductName": "sPDF",
+        "ProductName": APP_NAME,
         "ProductVersion": version,
     }
     string_rows = ",\n        ".join(
@@ -50,8 +51,8 @@ def write_version_info_files(directory, version):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     definitions = (
-        ("spdf-version.txt", "sPDF", "sPDF", "sPDF.exe"),
-        ("spdf-ocr-version.txt", "sPDF OCR 작업 프로세스",
+        ("spdf-version.txt", APP_NAME, "sPDF", "sPDF.exe"),
+        ("spdf-ocr-version.txt", "Leaflet OCR 작업 프로세스",
          "sPDF OCR Worker", "spdf-ocr.exe"),
     )
     paths = []

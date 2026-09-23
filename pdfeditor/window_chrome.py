@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QStackedWidget, QStyle,
                              QToolButton, QVBoxLayout, QWidget)
 
 from .i18n import localize
+from .meta import APP_NAME
 
 
 class DocumentTabs(QStackedWidget):
@@ -121,6 +122,27 @@ class CaptionButton(QToolButton):
             painter.drawRect(QRectF(0, 0, 9, 9))
 
 
+class ResizeHandle(QWidget):
+    """Keep a small, reachable resize target above native document viewports."""
+
+    def __init__(self, window, edges, cursor):
+        super().__init__(window)
+        self.edges = edges
+        self.setObjectName("windowResizeHandle")
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_NativeWindow)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setCursor(cursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            handle = self.window().windowHandle()
+            if handle is not None and handle.startSystemResize(self.edges):
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
 class WindowChrome(QWidget):
     def __init__(self, window, bar):
         super().__init__(window)
@@ -136,7 +158,7 @@ class WindowChrome(QWidget):
         row = QHBoxLayout(self.caption)
         row.setContentsMargins(8, 4, 0, 0)
         row.setSpacing(0)
-        self.brand = QLabel("Leaflet", self.caption)
+        self.brand = QLabel(APP_NAME, self.caption)
         self.brand.setObjectName("captionBrand")
         self.brand.setContentsMargins(4, 0, 12, 0)
         self.brand.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -181,6 +203,38 @@ class WindowChrome(QWidget):
             QToolButton:hover { background: #dce1e7; }
             QToolButton#captionClose:hover { background: #e45b60; }
         """)
+        self._resize_handles = [
+            ResizeHandle(window, edges, cursor) for edges, cursor in (
+                (Qt.TopEdge, Qt.SizeVerCursor),
+                (Qt.BottomEdge, Qt.SizeVerCursor),
+                (Qt.LeftEdge, Qt.SizeHorCursor),
+                (Qt.RightEdge, Qt.SizeHorCursor),
+                (Qt.TopEdge | Qt.LeftEdge, Qt.SizeFDiagCursor),
+                (Qt.TopEdge | Qt.RightEdge, Qt.SizeBDiagCursor),
+                (Qt.BottomEdge | Qt.LeftEdge, Qt.SizeBDiagCursor),
+                (Qt.BottomEdge | Qt.RightEdge, Qt.SizeFDiagCursor),
+            )]
+        self._sync_resize_handles()
+
+    def _sync_resize_handles(self):
+        handles = getattr(self, "_resize_handles", ())
+        visible = (self.owner.isVisible() and not self.owner.isMaximized()
+                   and not self.owner.isFullScreen())
+        width, height, edge = self.owner.width(), self.owner.height(), 6
+        bounds = (
+            (edge, 0, width - 2 * edge, edge),
+            (edge, height - edge, width - 2 * edge, edge),
+            (0, edge, edge, height - 2 * edge),
+            (width - edge, edge, edge, height - 2 * edge),
+            (0, 0, edge, edge), (width - edge, 0, edge, edge),
+            (0, height - edge, edge, edge),
+            (width - edge, height - edge, edge, edge),
+        )
+        for handle, rect in zip(handles, bounds):
+            handle.setGeometry(*rect)
+            handle.setVisible(visible)
+            if visible:
+                handle.raise_()
 
     def _button(self, kind, text, callback):
         button = CaptionButton(kind, self.caption)
@@ -207,6 +261,10 @@ class WindowChrome(QWidget):
             self.owner.showMaximized()
 
     def eventFilter(self, watched, event):
+        if watched is self.owner and event.type() in (
+                QEvent.Show, QEvent.Hide, QEvent.Resize, QEvent.LayoutRequest,
+                QEvent.WindowStateChange):
+            self._sync_resize_handles()
         if watched is self.owner and event.type() == QEvent.WindowStateChange:
             maximized = self.owner.isMaximized()
             self.maximize.kind = "restore" if maximized else "maximize"

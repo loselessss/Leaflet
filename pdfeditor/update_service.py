@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 
-GITHUB_REPOSITORY = "loselessss/sPDF"
+GITHUB_REPOSITORY = "loselessss/Leaflet"
 GITHUB_API_URL = (
     "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPOSITORY)
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")

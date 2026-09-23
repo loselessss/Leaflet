@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
-from pdfeditor.meta import APP_VERSION
+from pdfeditor.meta import APP_NAME, APP_VERSION
 
 ROOT = Path(__file__).resolve().parent
 NS = 'http://schemas.microsoft.com/appx/manifest/foundation/windows10'
@@ -40,7 +40,7 @@ def manifest(version, name, publisher, display_name):
     node(root, 'Identity', Name=name, Publisher=publisher,
          Version=package_version(version), ProcessorArchitecture='x64')
     props = node(root, 'Properties')
-    for key, text in [('DisplayName','sPDF'), ('PublisherDisplayName',display_name),
+    for key, text in [('DisplayName',APP_NAME), ('PublisherDisplayName',display_name),
                       ('Logo',r'Assets\StoreLogo.png')]:
         node(props,key).text = text
     resources = node(root,'Resources')
@@ -52,7 +52,7 @@ def manifest(version, name, publisher, display_name):
     applications = node(root,'Applications')
     app = node(applications,'Application',Id='sPDF',Executable=r'app\sPDF.exe',
                EntryPoint='Windows.FullTrustApplication')
-    ET.SubElement(app,'{'+UAP+'}VisualElements',DisplayName='sPDF',Description='sPDF PDF reader and editor',
+    ET.SubElement(app,'{'+UAP+'}VisualElements',DisplayName=APP_NAME,Description=APP_NAME+' PDF reader and editor',
         Square150x150Logo=r'Assets\Square150x150Logo.png',
         Square44x44Logo=r'Assets\Square44x44Logo.png',BackgroundColor='transparent')
     extensions = node(app,'Extensions')

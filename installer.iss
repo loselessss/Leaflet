@@ -4,9 +4,9 @@
 ; 버전은 bandwagon 방식대로 수동 동기화 — pdfeditor\meta.py의 APP_VERSION과
 ; 아래 MyAppVersion을 함께 맞출 것(자동 동기화 안 됨).
 
-#define MyAppName "sPDF"
-#define MyAppVersion "1.33.2"
-#define MyAppPublisher "sPDF"
+#define MyAppName "Leaflet"
+#define MyAppVersion "1.33.3"
+#define MyAppPublisher "Leaflet"
 #define MyAppExeName "sPDF.exe"
 #define MyProgId "sPDF.Document"
 #define MyAppUserModelId "sPDF.Desktop"
@@ -36,14 +36,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
 [CustomMessages]
-english.ReaderShortcut=sPDF Reader
-korean.ReaderShortcut=sPDF 리더
-english.EditorShortcut=sPDF Editor
-korean.EditorShortcut=sPDF 편집기
-english.ReaderDesktopShortcut=Create an sPDF Reader desktop shortcut
-korean.ReaderDesktopShortcut=sPDF 리더 바탕 화면 바로 가기 만들기
-english.EditorDesktopShortcut=Create an sPDF Editor desktop shortcut
-korean.EditorDesktopShortcut=sPDF 편집기 바탕 화면 바로 가기 만들기
+english.ReaderShortcut=Leaflet Reader
+korean.ReaderShortcut=Leaflet 리더
+english.EditorShortcut=Leaflet Editor
+korean.EditorShortcut=Leaflet 편집기
+english.ReaderDesktopShortcut=Create a Leaflet Reader desktop shortcut
+korean.ReaderDesktopShortcut=Leaflet 리더 바탕 화면 바로 가기 만들기
+english.EditorDesktopShortcut=Create a Leaflet Editor desktop shortcut
+korean.EditorDesktopShortcut=Leaflet 편집기 바탕 화면 바로 가기 만들기
 english.AdditionalShortcuts=Additional shortcuts:
 korean.AdditionalShortcuts=추가 바로 가기:
 
@@ -52,12 +52,12 @@ Name: "desktopreader"; Description: "{cm:ReaderDesktopShortcut}"; GroupDescripti
 Name: "desktopeditor"; Description: "{cm:EditorDesktopShortcut}"; GroupDescription: "{cm:AdditionalShortcuts}"; Flags: unchecked
 ; PDF/Illustrator 연결은 '연결 프로그램 후보'로만 등록(기본값을 강제로 뺏지 않음).
 ; 사용자가 나중에 Windows '기본 앱'에서 sPDF를 직접 고를 수 있다.
-Name: "associate"; Description: "Add sPDF to the Open with list for PDF and Illustrator files"; GroupDescription: "File associations:"; Languages: english
-Name: "associate"; Description: "PDF 및 Illustrator 파일의 연결 프로그램 목록에 sPDF 추가"; GroupDescription: "파일 연결:"; Languages: korean
+Name: "associate"; Description: "Add Leaflet to the Open with list for PDF and Illustrator files"; GroupDescription: "File associations:"; Languages: english
+Name: "associate"; Description: "PDF 및 Illustrator 파일의 연결 프로그램 목록에 Leaflet 추가"; GroupDescription: "파일 연결:"; Languages: korean
 ; Windows 8 이상에서는 설치 프로그램이 기본 앱을 직접 바꿀 수 없다.
 ; 선택 시 설치 완료 후 Windows 기본 앱 설정을 열어 사용자가 확정한다.
-Name: "associate\defaultpdf"; Description: "Choose sPDF as the default PDF app after installation (opens Windows Settings)"; GroupDescription: "File associations:"; Flags: unchecked; Languages: english
-Name: "associate\defaultpdf"; Description: "설치 후 sPDF를 기본 PDF 앱으로 선택(Windows 설정 열기)"; GroupDescription: "파일 연결:"; Flags: unchecked; Languages: korean
+Name: "associate\defaultpdf"; Description: "Choose Leaflet as the default PDF app after installation (opens Windows Settings)"; GroupDescription: "File associations:"; Flags: unchecked; Languages: english
+Name: "associate\defaultpdf"; Description: "설치 후 Leaflet을 기본 PDF 앱으로 선택(Windows 설정 열기)"; GroupDescription: "파일 연결:"; Flags: unchecked; Languages: korean
 
 [Files]
 Source: "dist\sPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -79,6 +79,14 @@ Name: "{autodesktop}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Pa
 
 [InstallDelete]
 ; 업데이트 및 설치 언어 변경 시 이전 바로가기를 정리한 뒤 선택 항목만 다시 만든다.
+Type: files; Name: "{group}\Leaflet Reader.lnk"
+Type: files; Name: "{group}\Leaflet Editor.lnk"
+Type: files; Name: "{group}\Leaflet 리더.lnk"
+Type: files; Name: "{group}\Leaflet 편집기.lnk"
+Type: files; Name: "{autodesktop}\Leaflet Reader.lnk"
+Type: files; Name: "{autodesktop}\Leaflet Editor.lnk"
+Type: files; Name: "{autodesktop}\Leaflet 리더.lnk"
+Type: files; Name: "{autodesktop}\Leaflet 편집기.lnk"
 Type: files; Name: "{group}\{#MyAppName}.lnk"
 Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
 Type: files; Name: "{group}\sPDF Reader.lnk"
@@ -91,6 +99,8 @@ Type: files; Name: "{autodesktop}\sPDF 리더.lnk"
 Type: files; Name: "{autodesktop}\sPDF 편집기.lnk"
 
 [Registry]
+; Keep the existing file association identity, but show only the new app name.
+Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: none; ValueName: "sPDF"; Flags: deletevalue; Tasks: associate
 ; 설치 시 고른 언어를 앱의 최초 UI 언어 기본값으로 전달한다.
 Root: HKA; Subkey: "Software\sPDF"; ValueType: string; ValueName: "UILanguage"; ValueData: "{code:GetUiLanguage}"; Flags: uninsdeletevalue
 ; --- ProgId: sPDF로 PDF를 열었을 때의 아이콘/실행 명령 ---
@@ -110,10 +120,10 @@ Root: HKA; Subkey: "Software\sPDF\Capabilities\FileAssociations"; ValueType: str
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: "Software\sPDF\Capabilities"; Flags: uninsdeletevalue; Tasks: associate
 
 [Run]
-Filename: "ms-settings:defaultapps"; Description: "Choose sPDF as the default PDF app"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: english
-Filename: "ms-settings:defaultapps"; Description: "sPDF를 기본 PDF 앱으로 선택"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: korean
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch sPDF"; Flags: nowait postinstall skipifsilent; Languages: english
-Filename: "{app}\{#MyAppExeName}"; Description: "sPDF 실행"; Flags: nowait postinstall skipifsilent; Languages: korean
+Filename: "ms-settings:defaultapps"; Description: "Choose Leaflet as the default PDF app"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: english
+Filename: "ms-settings:defaultapps"; Description: "Leaflet을 기본 PDF 앱으로 선택"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: korean
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Leaflet"; Flags: nowait postinstall skipifsilent; Languages: english
+Filename: "{app}\{#MyAppExeName}"; Description: "Leaflet 실행"; Flags: nowait postinstall skipifsilent; Languages: korean
 
 [Code]
 function GetUiLanguage(Param: String): String;

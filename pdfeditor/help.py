@@ -18,8 +18,8 @@ HELP_HTML = """
 <h3>📂 파일</h3>
 <table cellpadding="4">
 <tr><td><b>Ctrl+O</b> / <b>Ctrl+T</b></td><td>PDF 또는 PDF 호환 Illustrator 파일 열기 — 새 <b>탭</b>으로</td></tr>
-<tr><td><b>Ctrl+Shift+N</b></td><td>새 sPDF 창</td></tr>
-<tr><td>도움말 → 환경설정</td><td><b>PDF 기본 앱 / 브라우저 설정</b> — Edge·Chrome·Firefox의 PDF 링크를 sPDF로 열기</td></tr>
+<tr><td><b>Ctrl+Shift+N</b></td><td>새 Leaflet 창</td></tr>
+<tr><td>도움말 → 환경설정</td><td><b>PDF 기본 앱 / 브라우저 설정</b> — Edge·Chrome·Firefox의 PDF 링크를 Leaflet으로 열기</td></tr>
 <tr><td><b>Ctrl+S</b></td><td>저장 (원본은 <code>.bak</code>으로 자동 백업). Illustrator 원본은 덮어쓰지 않고 PDF로 저장</td></tr>
 <tr><td><b>Ctrl+Shift+S</b></td><td>다른 이름으로 저장</td></tr>
 <tr><td>파일 → <b>PDF 용량 줄이기</b></td><td>무손실·균형·강한 압축 중에서 선택해 별도 PDF로 저장</td></tr>
@@ -31,7 +31,7 @@ HELP_HTML = """
 <p>여러 PDF를 <b>탭</b>으로 엽니다. 각 탭은 페이지·편집·검색 상태를 따로
 가집니다. 이미 열어둔 파일을 또 열면 새 탭 대신 <b>그 탭으로</b> 이동합니다
 — 같은 파일을 두 곳에서 고치다 저장이 덮어써지는 걸 막기 위해서입니다.
-탭은 드래그로 순서를 바꾸거나 <b>다른 sPDF 창의 탭 막대로 옮길</b> 수
+탭은 드래그로 순서를 바꾸거나 <b>다른 Leaflet 창의 탭 막대로 옮길</b> 수
 있습니다. 저장하지 않은 편집 내용도 함께 이동하며, 마지막 탭을 옮긴 빈 창은
 자동으로 닫힙니다.</p>
 <p>탭을 모두 닫으면 <b>시작 페이지</b>가 나오고, 여기서 <b>즐겨찾기 / 최근
@@ -174,7 +174,7 @@ HELP_HTML_EN = """
 <h3>📂 Files and tabs</h3>
 <table cellpadding="4">
 <tr><td><b>Ctrl+O / Ctrl+T</b></td><td>Open a PDF or PDF-compatible Illustrator file in a new tab</td></tr>
-<tr><td><b>Ctrl+Shift+N</b></td><td>Open a new sPDF window</td></tr>
+<tr><td><b>Ctrl+Shift+N</b></td><td>Open a new Leaflet window</td></tr>
 <tr><td><b>Ctrl+S</b></td><td>Save and create a <code>.bak</code> backup. Illustrator sources are exported to PDF instead of being overwritten</td></tr>
 <tr><td><b>Ctrl+Shift+S</b></td><td>Save as</td></tr>
 <tr><td>File → <b>Reduce PDF Size</b></td><td>Save a separate PDF using lossless, balanced, or strong compression</td></tr>
@@ -183,7 +183,7 @@ HELP_HTML_EN = """
 <tr><td><b>Ctrl+W</b></td><td>Close the current tab</td></tr>
 <tr><td>File → <b>Recover Unsaved Work</b></td><td>Restore or discard copies from an interrupted standalone session</td></tr>
 </table>
-<p>Drag tabs to reorder them or move them to another sPDF window. Unsaved
+<p>Drag tabs to reorder them or move them to another Leaflet window. Unsaved
 changes move with the tab, and an empty source window closes automatically.
 The home page provides favorites and recent files. You can also drag and drop
 PDF or PDF-compatible Illustrator files onto the window.</p>
@@ -252,7 +252,7 @@ reordering, and merging participate in undo/redo.</p>
 <p>Use the large <b>Edit mode</b> button at the left of the reader ribbon or
 Ctrl+E to open a separate editor. It starts on the detailed editing canvas and
 shows the current page's original size in millimetres on the bottom status bar.
-After the editor confirms that the document opened, sPDF closes the matching
+After the editor confirms that the document opened, Leaflet closes the matching
 reader tab and closes the reader process when it was the last tab. A failed or
 timed-out open leaves the reader unchanged.
 <b>Page Organization</b> or Ctrl+Shift+P opens a separate thumbnail grid where

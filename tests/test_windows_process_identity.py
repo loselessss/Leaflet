@@ -27,7 +27,7 @@ class WindowsProcessIdentityTests(unittest.TestCase):
 
         self.assertIn("StringStruct('ProductVersion', %r)" % APP_VERSION, gui)
         self.assertIn("StringStruct('ProductVersion', %r)" % APP_VERSION, ocr)
-        self.assertIn("sPDF OCR 작업 프로세스", ocr)
+        self.assertIn("Leaflet OCR 작업 프로세스", ocr)
 
 
 if __name__ == "__main__":

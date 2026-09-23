@@ -15,7 +15,7 @@ _language = DEFAULT_LANGUAGE
 
 # Qt standard buttons use the Qt/Windows translation catalog rather than the
 # application's Korean source strings, so they otherwise remain English on a
-# Korean sPDF interface.
+# Korean Leaflet interface.
 QT_STANDARD_BUTTONS_KO = {
     "Save": "저장",
     "Discard": "저장 안 함",
@@ -178,13 +178,13 @@ EN = {
     "화면 렌더러": "Display Renderer",
     "자동 (권장)": "Auto (Recommended)",
     "화면 렌더러 변경": "Display Renderer Change",
-    "화면 렌더러 변경 사항은 sPDF를 다시 실행하면 적용됩니다.":
-        "The display renderer change will take effect after restarting sPDF.",
+    "화면 렌더러 변경 사항은 Leaflet을 다시 실행하면 적용됩니다.":
+        "The display renderer change will take effect after restarting Leaflet.",
     "왼쪽 패널": "Left Panel",
     "한국어": "Korean",
     "언어 변경": "Language Change",
-    "언어 변경 사항은 sPDF를 다시 실행하면 적용됩니다.":
-        "The language change will take effect after restarting sPDF.",
+    "언어 변경 사항은 Leaflet을 다시 실행하면 적용됩니다.":
+        "The language change will take effect after restarting Leaflet.",
     "(비어 있음)": "(Empty)",
     "(빈 탭)": "(Empty Tab)",
     "현재 파일을 즐겨찾기에서 제거": "Remove Current File from Favorites",
@@ -274,9 +274,9 @@ EN = {
     "삭제할 페이지를 선택하세요.": "Select the pages to delete.",
     "PDF 기본 프로그램 및 브라우저 설정": "Default PDF App and Browser Settings",
     "Windows 기본 앱 설정 열기": "Open Windows Default Apps Settings",
-    "Microsoft Edge에서 PDF를 sPDF로 열기": "Open PDFs from Microsoft Edge in sPDF",
-    "Google Chrome에서 PDF를 sPDF로 열기": "Open PDFs from Google Chrome in sPDF",
-    "Mozilla Firefox에서 PDF를 sPDF로 열기": "Open PDFs from Mozilla Firefox in sPDF",
+    "Microsoft Edge에서 PDF를 Leaflet으로 열기": "Open PDFs from Microsoft Edge in Leaflet",
+    "Google Chrome에서 PDF를 Leaflet으로 열기": "Open PDFs from Google Chrome in Leaflet",
+    "Mozilla Firefox에서 PDF를 Leaflet으로 열기": "Open PDFs from Mozilla Firefox in Leaflet",
     "설정 열기 실패": "Could Not Open Settings",
     "브라우저 설정 실패": "Browser Settings Failed",
     "브라우저 설정 완료": "Browser Settings Updated",
@@ -284,7 +284,7 @@ EN = {
     "AI 고품질로": "Use High-quality AI OCR",
 
     # Update UI
-    "sPDF 업데이트": "sPDF Update",
+    "Leaflet 업데이트": "Leaflet Update",
     "현재 버전": "Current Version",
     "새 버전": "New Version",
     "설치 파일": "Installer",
@@ -323,11 +323,11 @@ EN = {
     "Windows PDF 기본 앱: <b>%s</b>": "Windows default PDF app: <b>%s</b>",
     "확인할 수 없음 (설정에서 직접 확인하세요)":
         "Unavailable (check Windows Settings)",
-    "sPDF (이 프로그램)": "sPDF (this application)",
+    "Leaflet (이 프로그램)": "Leaflet (this application)",
     "Windows 앱": "Windows application",
     "Windows에서만 사용할 수 있는 설정입니다.": "This setting is available only on Windows.",
-    "아래 옵션을 켜도 현재 기본 PDF 앱으로 열립니다. 먼저 Windows 기본 앱에서 sPDF를 선택하세요.":
-        "These options use the current default PDF app. Select sPDF in Windows Default Apps first.",
+    "아래 옵션을 켜도 현재 기본 PDF 앱으로 열립니다. 먼저 Windows 기본 앱에서 Leaflet을 선택하세요.":
+        "These options use the current default PDF app. Select Leaflet in Windows Default Apps first.",
     "브라우저의 내장 PDF 뷰어 대신 Windows 기본 앱을 사용합니다. 적용 후 브라우저를 완전히 종료했다 다시 실행하세요. Firefox는 웹페이지에 삽입된 PDF를 계속 브라우저에 표시할 수 있습니다.\n\n이 설정은 사용자별 브라우저 정책을 사용하므로 브라우저에 '조직에서 관리'가 표시될 수 있습니다.":
         "Use the Windows default app instead of the browser's built-in PDF viewer. Fully close and restart the browser after applying. Firefox may continue to display PDFs embedded in web pages.\n\nThese per-user browser policies may cause the browser to show a 'Managed by your organization' notice.",
     "설정 화면을 열지 못했습니다.\nWindows 설정 → 앱 → 기본 앱에서 직접 변경하세요.":
@@ -369,8 +369,8 @@ EN = {
         "This page already has a text layer.\nRunning OCR may duplicate text.\n\nContinue anyway?",
     "모든 페이지에 이미 텍스트 레이어가 있습니다.":
         "Every page already has a text layer.",
-    "OCR 구성요소를 찾을 수 없습니다.\n\n설치가 손상되었을 수 있습니다. sPDF를 다시 설치해 주세요.":
-        "OCR components could not be found.\n\nThe installation may be damaged. Reinstall sPDF.",
+    "OCR 구성요소를 찾을 수 없습니다.\n\n설치가 손상되었을 수 있습니다. Leaflet을 다시 설치해 주세요.":
+        "OCR components could not be found.\n\nThe installation may be damaged. Reinstall Leaflet.",
     "OCR 엔진이 설치되어 있지 않습니다.\n\n명령 프롬프트에서 설치 후 다시 실행하세요:\npip install rapidocr onnxruntime":
         "The OCR engine is not installed.\n\nInstall it from Command Prompt and restart:\npip install rapidocr onnxruntime",
     "AI 고품질(VL) OCR 인식 중...\n(첫 페이지는 모델 로드로 수십 초 걸릴 수 있습니다)":
@@ -382,11 +382,11 @@ EN = {
     "GitHub에서 최신 버전을 확인하는 중입니다…": "Checking GitHub for the latest version…",
     "업데이트 확인": "Update Check",
     "업데이트 설치": "Install Update",
-    "설치 프로그램을 실행합니다.\n저장하지 않은 문서를 확인한 뒤 sPDF를 종료합니다. 계속할까요?":
-        "The installer will start after sPDF checks for unsaved documents and exits. Continue?",
+    "설치 프로그램을 실행합니다.\n저장하지 않은 문서를 확인한 뒤 Leaflet을 종료합니다. 계속할까요?":
+        "The installer will start after Leaflet checks for unsaved documents and exits. Continue?",
     "불러오는 중...": "Loading...",
     "옮기는 중...": "Moving...",
-    "sPDF 문서": "sPDF Document",
+    "Leaflet 문서": "Leaflet Document",
     "PDF 분리": "Split PDF",
     "분리할 페이지가 없습니다.": "There are no pages to split.",
     "페이지 범위를 입력하세요.": "Enter a page range.",
@@ -469,12 +469,12 @@ _PATTERNS = (
      lambda m: "Split into %s PDFs: %s" % (m.group(1), m.group(2))),
     (re.compile(r"^OCR 완료 — (\d+)개 텍스트 블록 인식 \(저장해야 파일에 반영됩니다\)$"),
      lambda m: "OCR completed — recognized %s text blocks (save to apply changes)" % m.group(1)),
-    (re.compile(r"^현재 sPDF (.+)가 최신 버전입니다\.$"),
-     lambda m: "sPDF %s is up to date." % m.group(1)),
-    (re.compile(r"^sPDF (.+) 업데이트가 있습니다\.\n자세히 볼까요\?$"),
-     lambda m: "sPDF %s is available.\nView details?" % m.group(1)),
-    (re.compile(r"^sPDF (.+) 업데이트가 있습니다\.$"),
-     lambda m: "sPDF %s is available." % m.group(1)),
+    (re.compile(r"^현재 Leaflet (.+)가 최신 버전입니다\.$"),
+     lambda m: "Leaflet %s is up to date." % m.group(1)),
+    (re.compile(r"^Leaflet (.+) 업데이트가 있습니다\.\n자세히 볼까요\?$"),
+     lambda m: "Leaflet %s is available.\nView details?" % m.group(1)),
+    (re.compile(r"^Leaflet (.+) 업데이트가 있습니다\.$"),
+     lambda m: "Leaflet %s is available." % m.group(1)),
     (re.compile(r"^Windows PDF 기본 앱: <b>(.+)</b>$"),
      lambda m: "Windows default PDF app: <b>%s</b>" % m.group(1)),
     (re.compile(r"^(.+) 설정을 변경했습니다\.\n브라우저를 완전히 종료한 뒤 다시 실행하세요\.$"),
@@ -663,29 +663,40 @@ def install(app, language_code=None):
                 if new != old:
                     obj.setTabText(index, new)
 
-    def translate_tree(root):
+    def translate_tree(root, visited=None):
         try:
-            translate_object(root)
             children = root.findChildren(QObject)
         except RuntimeError:
             return
-        for child in children:
+        for child in [root] + children:
+            if visited is not None:
+                key = (child, language())
+                if key in visited:
+                    continue
+                visited.add(key)
             translate_object(child)
 
     class TranslationFilter(QObject):
         def __init__(self, parent):
             super().__init__(parent)
             self.pending = {}
+            self.flush_scheduled = False
 
         def schedule(self, root):
             key = id(root)
-            already_pending = key in self.pending
             self.pending[key] = (weakref.ref(root), language())
-            if already_pending:
+            if self.flush_scheduled:
                 return
-            QTimer.singleShot(0, lambda: self.flush(key))
+            self.flush_scheduled = True
+            QTimer.singleShot(0, self.flush_pending)
 
-        def flush(self, key):
+        def flush_pending(self):
+            self.flush_scheduled = False
+            visited = set()
+            for key in tuple(self.pending):
+                self.flush(key, visited)
+
+        def flush(self, key, visited=None):
             pending = self.pending.pop(key, None)
             if pending is None:
                 return
@@ -695,7 +706,7 @@ def install(app, language_code=None):
                 current_language = language()
                 try:
                     set_language(scheduled_language)
-                    translate_tree(root)
+                    translate_tree(root, visited)
                 finally:
                     set_language(current_language)
 

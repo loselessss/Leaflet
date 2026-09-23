@@ -28,14 +28,14 @@ def release_payload(tag="v1.6.1", content=b"installer", url=None,
                     body="변경 내용"):
     version = tag.lstrip("v")
     download = url or (
-        "https://github.com/loselessss/sPDF/releases/download/%s/"
+        "https://github.com/loselessss/Leaflet/releases/download/%s/"
         "sPDF_Setup_%s.exe" % (tag, version))
     return json.dumps({
         "tag_name": tag,
         "name": "sPDF %s" % version,
         "body": body,
         "html_url": (
-            "https://github.com/loselessss/sPDF/releases/tag/%s" % tag),
+            "https://github.com/loselessss/Leaflet/releases/tag/%s" % tag),
         "assets": [{
             "name": "sPDF_Setup_%s.exe" % version,
             "browser_download_url": download,

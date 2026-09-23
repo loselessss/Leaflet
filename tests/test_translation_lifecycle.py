@@ -77,6 +77,24 @@ class TranslationLifecycleTests(unittest.TestCase):
         self.assertEqual(spin.lineEdit().text(), "175%")
         sip.delete(spin)
 
+    def test_overlapping_trees_translate_each_widget_once_per_batch(self):
+        class CountingButton(QPushButton):
+            reads = 0
+
+            def text(self):
+                self.reads += 1
+                return super().text()
+
+        parent = QWidget()
+        button = CountingButton("저장", parent)
+        self.app.processEvents()
+        button.reads = 0
+        self.translator.schedule(parent)
+        self.translator.schedule(button)
+        self.translator.flush_pending()
+        self.assertEqual(button.reads, 1)
+        sip.delete(parent)
+
 
 if __name__ == "__main__":
     unittest.main()

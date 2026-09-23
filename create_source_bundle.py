@@ -89,7 +89,7 @@ def check_source_access(record):
 
 def dependency_document(version, records):
     lines = [
-        "# sPDF %s dependency sources / 의존성 소스" % version, "",
+        "# Leaflet %s dependency sources / 의존성 소스" % version, "",
         "These exact-version upstream archives accompany the application source ZIP.",
         "이 소스들은 앱 소스 ZIP과 함께 사용합니다. 링크가 끊기면 배포자가 대응 소스를 제공해야 합니다.",
         "PyMuPDF's sdist contains its MuPDF source archive; retain its build configuration.",

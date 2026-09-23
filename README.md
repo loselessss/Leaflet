@@ -1,17 +1,17 @@
-# sPDF
+# Leaflet
 
 English | [한국어](README.ko.md)
 
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Current version: 1.33.2** · Windows · English and Korean
+**Current version: 1.33.3** · Windows · English and Korean
 
 ## Download
 
-Get the installer from the [latest release](https://github.com/loselessss/sPDF/releases/latest).
+Get the installer from the [latest release](https://github.com/loselessss/Leaflet/releases/latest).
 
-Launch **sPDF Reader** or **sPDF Editor** from the Start menu.
+Launch **Leaflet Reader** or **Leaflet Editor** from the Start menu.
 Use **Edit mode** in the reader or **Back to reader** in the editor to switch.
 Press **F1** for the full usage guide.
 
@@ -33,7 +33,7 @@ in the small palette, and check the PDF output preview. Use Ctrl+Enter to apply
 paragraph edits; Enter inserts a line break. Overflow blocks application until corrected.
 
 Text wraps within the selected box; it does not reflow the surrounding document,
-and replacement fonts may look different. Objects added with sPDF can be edited
+and replacement fonts may look different. Objects added with Leaflet can be edited
 again after saving; existing PDF artwork is not automatically converted into objects.
 
 ## Shortcuts
@@ -58,7 +58,7 @@ See [source and build instructions](SOURCE_CODE.md),
 
 ## License
 
-sPDF's original source code is available under the [MIT License](LICENSE).
+Leaflet's original source code is available under the [MIT License](LICENSE).
 Third-party components retain their own licenses; builds using AGPL PyMuPDF
 and GPL PyQt5 are not covered by MIT alone.
 See [third-party notices](LICENSES.md) and [source availability](SOURCE_CODE.md).

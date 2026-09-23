@@ -213,7 +213,7 @@ def _show_default_app_settings(parent):
     if not spdf_default:
         warning = QLabel(
             "아래 옵션을 켜도 현재 기본 PDF 앱으로 열립니다. 먼저 Windows "
-            "기본 앱에서 sPDF를 선택하세요.")
+            "기본 앱에서 Leaflet을 선택하세요.")
         warning.setWordWrap(True)
         warning.setStyleSheet("color: #b45309;")
         layout.addWidget(warning)
@@ -224,9 +224,9 @@ def _show_default_app_settings(parent):
     layout.addSpacing(8)
 
     labels = {
-        "edge": "Microsoft Edge에서 PDF를 sPDF로 열기",
-        "chrome": "Google Chrome에서 PDF를 sPDF로 열기",
-        "firefox": "Mozilla Firefox에서 PDF를 sPDF로 열기",
+        "edge": "Microsoft Edge에서 PDF를 Leaflet으로 열기",
+        "chrome": "Google Chrome에서 PDF를 Leaflet으로 열기",
+        "firefox": "Mozilla Firefox에서 PDF를 Leaflet으로 열기",
     }
     states = {}
     checks = {}
@@ -406,7 +406,7 @@ class TransferTabBar(QTabBar):
             _dragged_tabs.pop(token, None)
 
         # 같은 프로세스면 dropEvent에서 이미 위젯을 떼어 대상 창에 붙인다.
-        # 아직 원래 창에 남아 있으면 다른 sPDF 프로세스가 경로를 받은 경우다.
+        # 아직 원래 창에 남아 있으면 다른 Leaflet 프로세스가 경로를 받은 경우다.
         moved_to_external_process = result == Qt.MoveAction and \
             shell._tabs.indexOf(tab) >= 0
         if moved_to_external_process:
@@ -1204,9 +1204,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if initial:
             self._two_page_mode = initial["two_page"]
             self._two_page_act.setChecked(self._two_page_mode)
-        self._set_fit_zoom(target)
-        self.show_page(target)
-        # 탭이 실제 화면에 배치된 뒤 확정된 폭과 모니터 DPR로 다시 맞춘다.
+        # Rendering before the final layout repeats CPU rasterization / GPU
+        # preparation at a provisional width. Render once on the next turn.
+        self.page_index = target
         QTimer.singleShot(0, lambda d=doc: self.finish_initial_layout(d))
         self._schedule_thumbs()
         self._notes_changed()
@@ -1584,7 +1584,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
                 application, "_spdf_update_cleanup_started", False):
             application._spdf_update_cleanup_started = True
             # The installer may still hold its own executable when the
-            # post-install launch starts sPDF, so retry after it has exited.
+            # post-install launch starts Leaflet, so retry after it has exited.
             self._update_service.cleanup_downloads()
             QTimer.singleShot(2000, self._update_service.cleanup_downloads)
             QTimer.singleShot(10000, self._update_service.cleanup_downloads)
@@ -2014,7 +2014,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
             return
         QMessageBox.information(
             self, tr("화면 렌더러 변경"),
-            tr("화면 렌더러 변경 사항은 sPDF를 다시 실행하면 적용됩니다."))
+            tr("화면 렌더러 변경 사항은 Leaflet을 다시 실행하면 적용됩니다."))
 
     def _set_render_diagnostics(self, enabled):
         try:
@@ -2033,7 +2033,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
         settings.set_ui_language(language_code)
         QMessageBox.information(
             self, tr("언어 변경"),
-            tr("언어 변경 사항은 sPDF를 다시 실행하면 적용됩니다."))
+            tr("언어 변경 사항은 Leaflet을 다시 실행하면 적용됩니다."))
 
     def _shell_help(self):
         from .help import show_help
@@ -2075,15 +2075,15 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
             if manual:
                 QMessageBox.information(
                     self, "업데이트 확인",
-                    "현재 sPDF %s가 최신 버전입니다." % APP_VERSION)
+                    "현재 Leaflet %s가 최신 버전입니다." % APP_VERSION)
             return
         self._available_update = update
         if manual:
             self._show_available_update()
         else:
             answer = QMessageBox.question(
-                self, "sPDF 업데이트",
-                "sPDF %s 업데이트가 있습니다.\n자세히 볼까요?"
+                self, "Leaflet 업데이트",
+                "Leaflet %s 업데이트가 있습니다.\n자세히 볼까요?"
                 % update.version)
             if answer == QMessageBox.Yes:
                 self._show_available_update()
@@ -2112,7 +2112,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
         answer = QMessageBox.question(
             self, "업데이트 설치",
             "설치 프로그램을 실행합니다.\n"
-            "저장하지 않은 문서를 확인한 뒤 sPDF를 종료합니다. 계속할까요?")
+            "저장하지 않은 문서를 확인한 뒤 Leaflet을 종료합니다. 계속할까요?")
         if answer != QMessageBox.Yes:
             return
         for window in list(_app_windows):
@@ -2231,7 +2231,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
 
     @editing_command
     def open_snapshot_in_tab(self, snapshot_path, original_path):
-        """별도 sPDF 프로세스가 넘긴 미저장 PDF를 읽고 임시 파일을 회수한다."""
+        """별도 Leaflet 프로세스가 넘긴 미저장 PDF를 읽고 임시 파일을 회수한다."""
         if self._find_open_tab(original_path) is not None:
             return False
         try:
@@ -2511,7 +2511,7 @@ def new_window(path=None, force_new=False, updates_enabled=None, *,
     updates_enabled = bool(updates_enabled)
     application = QApplication.instance()
     if application is not None:
-        # Embedded hosts use the same English UI without enabling sPDF updates.
+        # Embedded hosts use the same English UI without enabling Leaflet updates.
         install_i18n(application)
     window = next((candidate for candidate in _app_windows
                    if candidate.access_policy == policy

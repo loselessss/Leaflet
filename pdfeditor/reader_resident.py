@@ -52,7 +52,7 @@ class ReaderResident(QObject):
         self.server.newConnection.connect(self._accept)
         self.tray = QSystemTrayIcon(app.windowIcon() if not app.windowIcon().isNull()
                                    else fluent_icon("open"), self)
-        self.tray.setToolTip(localize("sPDF reader", "sPDF 리더"))
+        self.tray.setToolTip(localize("Leaflet reader", "Leaflet 리더"))
         menu = QMenu()
         menu.addAction(localize("Open reader", "리더 열기"), self.restore)
         menu.addSeparator()

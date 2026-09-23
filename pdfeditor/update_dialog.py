@@ -63,7 +63,7 @@ class UpdateDialog(QDialog):
         self._service = service
         self._update = update
         self._worker = None
-        self.setWindowTitle(tr("sPDF 업데이트"))
+        self.setWindowTitle(tr("Leaflet 업데이트"))
         self.setMinimumSize(680, 540)
         self.resize(780, 640)
 
@@ -71,8 +71,8 @@ class UpdateDialog(QDialog):
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(14)
         title = QLabel(localize(
-            "<h3>sPDF %s is available.</h3>" % update.version,
-            "<h3>sPDF %s 업데이트가 있습니다.</h3>" % update.version))
+            "<h3>Leaflet %s is available.</h3>" % update.version,
+            "<h3>Leaflet %s 업데이트가 있습니다.</h3>" % update.version))
         title.setWordWrap(True)
         layout.addWidget(title)
         form = QFormLayout()

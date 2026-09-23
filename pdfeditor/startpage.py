@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 
 from . import settings
 from .icons import fluent_icon
-from .i18n import tr
+from .i18n import localize, tr
 from .meta import APP_NAME, APP_VERSION
 
 
@@ -69,6 +69,7 @@ class StartPage(QWidget):
         super().__init__(parent)
         self.setObjectName("startPage")
         root = QVBoxLayout(self)
+        self._root_layout = root
         root.setContentsMargins(48, 34, 48, 38)
         root.setSpacing(12)
 
@@ -78,8 +79,16 @@ class StartPage(QWidget):
         f.setPointSize(22)
         f.setBold(True)
         title.setFont(f)
-        ver = QLabel("v%s — PDF 보기 · 주석 · OCR" % APP_VERSION)
+        ver = QLabel(localize(
+            "v%s — PDF reading · search · annotations · text editing · page organization · OCR",
+            "v%s — PDF 읽기 · 검색 · 주석 · 텍스트 편집 · 페이지 구성 · OCR") % APP_VERSION)
         ver.setObjectName("subtitle")
+        ver.setWordWrap(True)
+        purpose = QLabel(localize(
+            "Read and annotate in Reader; edit text, organize pages and recognize scanned text in Editor.",
+            "리더에서 읽고 메모하세요. 편집기에서 글자와 페이지를 수정하고, OCR로 스캔 문자를 인식하세요."))
+        purpose.setObjectName("subtitle")
+        purpose.setWordWrap(True)
 
         # 시작 화면에서는 주 용도인 PDF를 전면에 둔다. PDF 호환 AI 열기는
         # 파일 메뉴와 드래그 앤 드롭에서 계속 지원한다.
@@ -97,6 +106,7 @@ class StartPage(QWidget):
 
         root.addWidget(title)
         root.addWidget(ver)
+        root.addWidget(purpose)
         root.addSpacing(8)
         row = QHBoxLayout()
         row.addWidget(btn)
@@ -134,6 +144,14 @@ class StartPage(QWidget):
         self.recent_list.open_requested.connect(self.open_file)
         self.fav_list.customContextMenuRequested.connect(self._fav_menu)
         self.recent_list.customContextMenuRequested.connect(self._recent_menu)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        compact = self.height() < 520
+        side = 24 if self.width() < 720 else 48
+        self._root_layout.setContentsMargins(
+            side, 18 if compact else 34, side, 18 if compact else 38)
+        self._root_layout.setSpacing(8 if compact else 12)
 
     def refresh(self):
         # 즐겨찾기는 최근에 추가한 것을 위로

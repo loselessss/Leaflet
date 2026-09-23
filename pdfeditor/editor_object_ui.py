@@ -35,7 +35,7 @@ class ObjectController:
         self.dock.setAllowedAreas(Qt.RightDockWidgetArea)
         panel = QWidget()
         layout = QFormLayout(panel)
-        self.label = QLabel(localize("Select an sPDF object.", "sPDF에서 추가한 개체를 선택하세요."))
+        self.label = QLabel(localize("Select an Leaflet object.", "Leaflet에서 추가한 개체를 선택하세요."))
         self.label.setWordWrap(True)
         layout.addRow(self.label)
         self.fields = []
@@ -104,7 +104,7 @@ class ObjectController:
             for field, value in zip(self.fields, (rect.x0, rect.y0, rect.width, rect.height)):
                 field.setValue(value * 25.4 / 72)
         else:
-            self.label.setText(localize("Select an sPDF object.", "sPDF에서 추가한 개체를 선택하세요."))
+            self.label.setText(localize("Select an Leaflet object.", "Leaflet에서 추가한 개체를 선택하세요."))
         tab.view.viewport().update()
 
     def current(self):

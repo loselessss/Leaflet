@@ -39,7 +39,7 @@ def friendly_handler_name():
     if not h:
         return "확인할 수 없음 (설정에서 직접 확인하세요)"
     if "spdf" in h.lower():
-        return "sPDF (이 프로그램)"
+        return "Leaflet (이 프로그램)"
     guess = {
         "AcroExch": "Adobe Acrobat/Reader",
         "Acrobat": "Adobe Acrobat",

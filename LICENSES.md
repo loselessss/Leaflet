@@ -1,16 +1,16 @@
-# sPDF licensing and third-party notices / 라이선스·오픈소스 고지
+# Leaflet licensing and third-party notices / 라이선스·오픈소스 고지
 
-## sPDF
+## Leaflet
 
 Copyright (c) 2026 loselessss and contributors.
 
-sPDF's original source code is licensed under the MIT License. See
+Leaflet's original source code is licensed under the MIT License. See
 [LICENSE](LICENSE) for the complete terms. This declaration applies to the
-sPDF application source, its OCR worker, native renderer, build scripts, tests
-and documentation to the extent those files are owned by the sPDF authors.
+Leaflet application source, its OCR worker, native renderer, build scripts, tests
+and documentation to the extent those files are owned by the Leaflet authors.
 
-sPDF가 직접 작성한 소스 코드는 MIT License로 제공합니다. 전체 조건은
-[LICENSE](LICENSE)에 있습니다. 이 선언은 sPDF 작성자가 권리를 보유한 범위에서
+Leaflet이 직접 작성한 소스 코드는 MIT License로 제공합니다. 전체 조건은
+[LICENSE](LICENSE)에 있습니다. 이 선언은 Leaflet 작성자가 권리를 보유한 범위에서
 앱 소스·OCR 워커·네이티브 렌더러·빌드 스크립트·테스트·문서에 적용합니다.
 
 ### Distribution scope / 배포 적용 범위
@@ -69,13 +69,13 @@ See [SOURCE_CODE.md](SOURCE_CODE.md) for version-matched sources, dependencies
 and build instructions. Supplying an executable requires the applicable
 corresponding-source access and license notices, not merely a public repository.
 If you modify AGPL-covered dependencies for remote network use, review AGPL
-section 13. Embedding sPDF or using read-only mode does not create an exemption
+section 13. Embedding Leaflet or using read-only mode does not create an exemption
 from applicable third-party licenses.
-Ordinary PDF documents processed by sPDF do not become AGPL merely through use.
+Ordinary PDF documents processed by Leaflet do not become AGPL merely through use.
 
 버전에 맞는 소스·의존성·빌드 안내는 [SOURCE_CODE.md](SOURCE_CODE.md)를 참고하세요.
 실행 파일 배포에는 대응 소스 접근과 고지가 필요하며, 저장소 공개만으로 모든
 조건을 충족했다고 보지 않습니다. AGPL 적용 의존성을 수정해 네트워크 서비스로
 제공할 경우 AGPL 13조도 검토해야 합니다. 내장 모드나 읽기 전용 모드는 적용되는
-외부 라이선스의 예외가 아니며, 일반 PDF 문서가 sPDF로 처리되었다는 이유만으로
+외부 라이선스의 예외가 아니며, 일반 PDF 문서가 Leaflet으로 처리되었다는 이유만으로
 AGPL이 되지는 않습니다.

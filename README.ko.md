@@ -1,17 +1,17 @@
-# sPDF
+# Leaflet
 
 [English](README.md) | 한국어
 
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을
 사용할 수 있는 Windows PDF 리더·편집기입니다.
 
-**현재 버전: 1.33.2** · Windows · 한국어·영어
+**현재 버전: 1.33.3** · Windows · 한국어·영어
 
 ## 다운로드
 
-[최신 릴리스](https://github.com/loselessss/sPDF/releases/latest)에서 설치 파일을 받으세요.
+[최신 릴리스](https://github.com/loselessss/Leaflet/releases/latest)에서 설치 파일을 받으세요.
 
-시작 메뉴의 **sPDF 리더** 또는 **sPDF 편집기**로 실행합니다.
+시작 메뉴의 **Leaflet 리더** 또는 **Leaflet 편집기**로 실행합니다.
 리더의 **편집 모드**, 편집기의 **리더로 돌아가기** 버튼으로 모드를 전환합니다.
 자세한 사용법은 프로그램에서 **F1**을 누르면 볼 수 있습니다.
 
@@ -32,7 +32,7 @@ GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 
 글이 넘치면 상자를 늘리거나 글자 크기를 줄여야 적용할 수 있습니다.
 
 텍스트는 선택한 상자 안에서 줄을 바꾸며, 주변 문서 전체를 자동으로 재배치하지 않습니다.
-대체 글꼴의 모양은 원본과 다를 수 있습니다. sPDF에서 추가한 개체는 저장 후에도
+대체 글꼴의 모양은 원본과 다를 수 있습니다. Leaflet에서 추가한 개체는 저장 후에도
 편집할 수 있지만, 기존 PDF의 그림을 자동으로 편집 개체로 바꾸지는 않습니다.
 
 ## 단축키
@@ -57,7 +57,7 @@ Python, PyQt5, PyMuPDF, Direct2D, RapidOCR로 개발했습니다.
 
 ## 라이선스
 
-sPDF가 직접 작성한 소스 코드는 [MIT License](LICENSE)로 제공합니다.
+Leaflet이 직접 작성한 소스 코드는 [MIT License](LICENSE)로 제공합니다.
 외부 구성요소는 각자의 라이선스를 유지하며, AGPL판 PyMuPDF와 GPL판 PyQt5를
 사용하는 설치본에는 MIT 조건만 적용되지 않습니다.
 [오픈소스 고지](LICENSES.md)와 [소스 제공 안내](SOURCE_CODE.md)를 참고하세요.

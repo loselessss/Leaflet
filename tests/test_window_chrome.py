@@ -3,10 +3,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from PyQt5.QtCore import QPoint, Qt
-from PyQt5.QtWidgets import QApplication, QTabBar, QWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTabBar, QWidget
+from PyQt5.QtTest import QTest
 
 from pdfeditor.window_chrome import DocumentTabs, resize_hit_test
 from pdfeditor.window_chrome import native_frame_event
+from pdfeditor.window_chrome import WindowChrome
 
 
 class WindowChromeTests(unittest.TestCase):
@@ -56,6 +58,43 @@ class WindowChromeTests(unittest.TestCase):
                                 ((1, 99), 16), ((99, 99), 17), ((50, 99), 15),
                                 ((1, 50), 10), ((99, 50), 11), ((50, 50), None)):
             self.assertEqual(resize_hit_test(*point, 100, 100, 5), expected)
+
+    def test_top_and_bottom_handles_start_resize_and_follow_window_state(self):
+        window = QMainWindow()
+        window.resize(700, 500)
+        chrome = WindowChrome(window, QTabBar())
+        window.setMenuWidget(chrome)
+        window.show()
+        self.app.processEvents()
+        try:
+            top, bottom = chrome._resize_handles[:2]
+            self.assertTrue(top.isVisible())
+            self.assertTrue(bottom.isVisible())
+            self.assertEqual(top.geometry().top(), 0)
+            self.assertEqual(bottom.geometry().bottom(), window.height() - 1)
+            native = Mock()
+            native.startSystemResize.return_value = True
+            with patch.object(window, "windowHandle", return_value=native):
+                QTest.mouseClick(top, Qt.LeftButton)
+                native.startSystemResize.assert_called_with(Qt.TopEdge)
+                QTest.mouseClick(bottom, Qt.LeftButton)
+                native.startSystemResize.assert_called_with(Qt.BottomEdge)
+                native.startSystemMove.assert_not_called()
+            window.resize(800, 600)
+            self.app.processEvents()
+            self.assertEqual(bottom.geometry().bottom(), window.height() - 1)
+            window.showMaximized()
+            self.app.processEvents()
+            self.assertTrue(all(handle.isHidden() for handle in chrome._resize_handles))
+            window.showNormal()
+            self.app.processEvents()
+            self.assertTrue(all(handle.isVisible() for handle in chrome._resize_handles))
+            window.showFullScreen()
+            self.app.processEvents()
+            self.assertTrue(all(handle.isHidden() for handle in chrome._resize_handles))
+        finally:
+            window.close()
+            window.deleteLater()
 
     def test_only_standalone_workspace_has_caption_tabs(self):
         from pdfeditor.app import AppWindow

@@ -253,7 +253,7 @@ class PrintMixin:
         from . import settings
 
         printer = QPrinter(QPrinter.HighResolution)
-        printer.setDocName(os.path.basename(self.doc.path or "sPDF 문서"))
+        printer.setDocName(os.path.basename(self.doc.path or "Leaflet 문서"))
         duplex = {
             "simplex": QPrinter.DuplexNone,
             "long": QPrinter.DuplexLongSide,

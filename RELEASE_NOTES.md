@@ -1,4 +1,13 @@
-# sPDF Release Notes
+# Leaflet Release Notes
+
+## 1.33.3 - 2026-09-23
+
+- Use Leaflet consistently in the interface and installer, and explain the reader and editor roles on the start page.
+- Make the top, bottom and corner resize targets easier to grab in reader and editor windows.
+- Speed up image-mask conversion and reuse repeated gradient-opacity calculations without changing rendered output.
+
+- Avoid rendering the first page twice while the initial window layout settles.
+- Reduce repeated UI translation work and prepare thumbnails one at a time to keep document opening responsive.
 
 ## 1.33.2 - 2026-09-23
 

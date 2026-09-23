@@ -662,6 +662,17 @@ def _rgba_to_premul_bgra(samples, width, height):
     return bytes(bgra)
 
 
+def _alpha_to_premul_bgra(samples, argb=0xffffffff):
+    """Expand an 8-bit mask using exact integer LUTs, without pixel loops."""
+    pixels = bytearray(len(samples) * 4)
+    for channel, shift in enumerate((0, 8, 16)):
+        value = (argb >> shift) & 255
+        table = bytes((value * alpha + 127) // 255 for alpha in range(256))
+        pixels[channel::4] = samples.translate(table)
+    pixels[3::4] = samples
+    return bytes(pixels)
+
+
 def _linear_or_radial_shade_values(shade):
     if int(shade.type) not in (FZ_LINEAR_SHADE, FZ_RADIAL_SHADE):
         return None
@@ -854,15 +865,37 @@ def _multiply_argb_opacity(argb, opacity):
 
 
 def _with_group_opacity(item, opacity):
+    if not isinstance(item, (VectorLinearGradient, VectorRadialGradient)):
+        return _uncached_with_group_opacity(item, opacity)
+    work = _extraction_work.get()
+    if work is None:
+        return _uncached_with_group_opacity(item, opacity)
+    cache = work[2]
+    key = (id(item), opacity)
+    if key in cache:
+        return cache[key][1]
+    result = _uncached_with_group_opacity(item, opacity)
+    if len(cache) < 2048:
+        cache[key] = (item, result)
+    return result
+
+
+def _uncached_with_group_opacity(item, opacity):
     if isinstance(item, VectorImage):
+        if opacity == 1.0:
+            return item
         return replace(item, opacity=item.opacity * opacity)
     if isinstance(item, (VectorLinearGradient, VectorRadialGradient)):
+        if opacity == 1.0:
+            return item
         return replace(item, stops=tuple(
             (position, _multiply_argb_opacity(argb, opacity))
             for position, argb in item.stops))
     if isinstance(item, VectorPath):
         if item.fill_argb is not None and item.stroke_argb is not None:
             raise ValueError("non-isolated group opacity has combined fill and stroke")
+        if opacity == 1.0:
+            return item
         fill = (_multiply_argb_opacity(item.fill_argb, opacity)
                 if item.fill_argb is not None else None)
         stroke = (_multiply_argb_opacity(item.stroke_argb, opacity)
@@ -1181,7 +1214,11 @@ def _flatten_nonisolated_groups(items):
                                           VectorRadialGradient))]
                 shading_only = _is_shading_only_group(children)
                 opaque_vector_only = _is_opaque_vector_only_group(children)
-                disjoint = _drawings_are_disjoint(children)
+                # Overlap only affects knockout handling. Shading-only and
+                # opaque-vector groups already take their dedicated branches.
+                disjoint = (item.knockout and len(drawing_indexes) > 1
+                            and not shading_only and not opaque_vector_only
+                            and _drawings_are_disjoint(children))
                 if item.knockout and len(drawing_indexes) > 1 and not (
                         shading_only or opaque_vector_only or disjoint):
                     if (not item.isolated or item.blend_mode != 0 or
@@ -1986,17 +2023,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 if pixmap.n != 1 or not pixmap.alpha:
                     raise ValueError("decoded stencil is not an alpha mask")
                 pixmap = self._downsample_pixmap(pixmap, ctm)
-                red = (argb >> 16) & 0xff
-                green = (argb >> 8) & 0xff
-                blue = argb & 0xff
-                bgra = bytearray(pixmap.width * pixmap.height * 4)
-                for index, opacity in enumerate(pixmap.samples):
-                    offset = index * 4
-                    bgra[offset:offset + 4] = (
-                        (blue * opacity + 127) // 255,
-                        (green * opacity + 127) // 255,
-                        (red * opacity + 127) // 255,
-                        opacity)
+                bgra = _alpha_to_premul_bgra(pixmap.samples, argb)
                 cached = self._store_image_bytes(
                     key, bytes(bgra), pixmap.width, pixmap.height,
                     pixmap.width * 4)
@@ -2026,7 +2053,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 if pixmap.n != 1 or not pixmap.alpha:
                     raise ValueError("decoded clip mask is not an alpha mask")
                 pixmap = self._downsample_pixmap(pixmap, ctm)
-                if pixmap.samples and min(pixmap.samples) == 255:
+                samples = pixmap.samples
+                if samples and samples.count(255) == len(samples):
                     self._features.add("opaque-image-mask")
                     self._append_item(ClipPush(
                         UNIT_RECT_COMMANDS, transform=transform,
@@ -2035,11 +2063,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                     self._features.add("clip-mask")
                     self._features.add("vector-clip")
                     return
-                bgra = bytearray(pixmap.width * pixmap.height * 4)
-                for index, opacity in enumerate(pixmap.samples):
-                    offset = index * 4
-                    bgra[offset:offset + 4] = (
-                        opacity, opacity, opacity, opacity)
+                bgra = _alpha_to_premul_bgra(samples)
                 cached = self._store_image_bytes(
                     key, bytes(bgra), pixmap.width, pixmap.height,
                     pixmap.width * 4)
@@ -2390,7 +2414,7 @@ def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
         *, aggressive_band_merge=False):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
-    token = _extraction_work.set(({}, {}))
+    token = _extraction_work.set(({}, {}, {}))
     try:
         return _vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,

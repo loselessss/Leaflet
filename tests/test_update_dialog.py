@@ -16,7 +16,7 @@ class UpdateDialogLayoutTests(unittest.TestCase):
     def test_update_dialog_has_aligned_actions_and_readable_progress(self):
         update = SimpleNamespace(
             version="1.17.1", release_notes="Update notes\n" * 20,
-            release_url="https://github.com/loselessss/sPDF/releases",
+            release_url="https://github.com/loselessss/Leaflet/releases",
             asset=SimpleNamespace(name="sPDF_Setup_1.17.1.exe",
                                   size=150000000, sha256="a" * 64))
         dialog = UpdateDialog(SimpleNamespace(current_version="1.17.0"), update)

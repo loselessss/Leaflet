@@ -11,7 +11,7 @@ from .gpu_raster import vector_page_from_pymupdf, refine_page_images, VectorPage
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="sPDF GPU scene worker")
+    parser = argparse.ArgumentParser(prog="Leaflet GPU scene worker")
     parser.add_argument("snapshot")
     parser.add_argument("result")
     parser.add_argument("--scale", type=float, default=1.0)

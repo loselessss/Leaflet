@@ -118,8 +118,8 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("Tasks: desktopreader", installer)
         self.assertIn("Tasks: desktopeditor", installer)
         self.assertIn("Flags: unchecked", installer)
-        self.assertIn("korean.ReaderShortcut=sPDF 리더", installer)
-        self.assertIn("korean.EditorShortcut=sPDF 편집기", installer)
+        self.assertIn("korean.ReaderShortcut=Leaflet 리더", installer)
+        self.assertIn("korean.EditorShortcut=Leaflet 편집기", installer)
         self.assertNotIn("Tasks: desktopicon", installer)
         for target in ("{group}", "{autodesktop}"):
             self.assertIn(

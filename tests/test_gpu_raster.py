@@ -648,6 +648,32 @@ class GpuRasterSceneTests(unittest.TestCase):
                     g.vector_page_from_pymupdf(pdf[0])
             self.assertIsNone(g._extraction_work.get())
 
+    def test_mask_lut_matches_integer_reference_for_all_alpha_values(self):
+        from pdfeditor import gpu_raster as g
+        samples = bytes(range(256))
+        for color in (0xffffffff, 0xff123456, 0xff000000, 0xff01fe7f):
+            expected = bytes(value for alpha in samples for value in (
+                ((color & 255) * alpha + 127) // 255,
+                (((color >> 8) & 255) * alpha + 127) // 255,
+                (((color >> 16) & 255) * alpha + 127) // 255, alpha))
+            self.assertEqual(g._alpha_to_premul_bgra(samples, color), expected)
+        self.assertEqual(g._alpha_to_premul_bgra(b""), b"")
+
+    def test_gradient_opacity_reuses_only_same_item_and_opacity_within_job(self):
+        from pdfeditor import gpu_raster as g
+        item = g.VectorLinearGradient((), (0, 0), (1, 0),
+                                      ((0, 0xff123456), (1, 0x80765432)))
+        token = g._extraction_work.set(({}, {}, {}))
+        try:
+            first = g._with_group_opacity(item, 0.5)
+            self.assertIs(first, g._with_group_opacity(item, 0.5))
+            self.assertEqual(first, g._uncached_with_group_opacity(item, 0.5))
+            self.assertNotEqual(first, g._with_group_opacity(item, 0.25))
+            self.assertIs(item, g._with_group_opacity(item, 1.0))
+        finally:
+            g._extraction_work.reset(token)
+        self.assertIsNone(g._extraction_work.get())
+
     def test_repeated_gradient_conversion_is_reused_without_scene_change(self):
         from pdfeditor import gpu_raster as g
         with fitz.open(stream=linear_gradient_pdf_bytes(), filetype="pdf") as pdf:
@@ -1247,7 +1273,9 @@ class GpuRasterSceneTests(unittest.TestCase):
         m.fz_show_glyph(text, font, matrix, font.fz_encode_character(ord("f")),
                        ord("f"), 0, 0, 0, 0)
         device = _DisplayListDevice((0, 0, 200, 200))
-        ctm = m.FzMatrix(1, 0, 0, 1, 0, 0).internal()
+        # Keep the native owner alive while its borrowed internal view is used.
+        identity = m.FzMatrix(1, 0, 0, 1, 0, 0)
+        ctm = identity.internal()
         expected = device._text_outlines(text.m_internal, ctm)
         self.assertTrue(expected)
         # Both encodable and unencodable continuation characters have no ink.

@@ -93,7 +93,7 @@ jobs:
             Add-Content -Encoding utf8 -LiteralPath release-notes.md
           gh release view $tag --json id 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release edit $tag --title "sPDF $version" `
+            gh release edit $tag --title "Leaflet $version" `
               --notes-file release-notes.md
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             gh release upload $tag $installer $latestInstaller $sourceArchive `
@@ -101,7 +101,7 @@ jobs:
           } else {
             gh release create $tag $installer $latestInstaller $sourceArchive `
               "$sourceArchive.sha256" $dependencySources `
-              --verify-tag --title "sPDF $version" `
+              --verify-tag --title "Leaflet $version" `
               --notes-file release-notes.md
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -2,14 +2,14 @@
 
 ## Get the matching version / 같은 버전 받기
 
-Open **Help → Open-source Licenses → Source code** in sPDF. The link points to
+Open **Help → Open-source Licenses → Source code** in Leaflet. The link points to
 the release for the version you are running, not to the moving `main` branch:
 
-- [All sPDF releases](https://github.com/loselessss/sPDF/releases)
+- [All Leaflet releases](https://github.com/loselessss/Leaflet/releases)
 - Under the same release's Assets, download `sPDF_Source_VERSION.zip` and
   `sPDF_Dependency_Sources_VERSION.md` together. GitHub-generated tag ZIPs alone
   do not contain the build inventory and dependency-source directions.
-- The ZIP contains the tagged sPDF source, build scripts and the actual build
+- The ZIP contains the tagged Leaflet source, build scripts and the actual build
   environment's package versions and notices. Unrelated project files and
   personal/untracked files are excluded.
 - Dependency sources are provided through exact-version upstream source
@@ -19,13 +19,13 @@ the release for the version you are running, not to the moving `main` branch:
   still available; do not assume their complete binary-source correspondence
   or licensing has been audited retroactively.
 
-sPDF의 **도움말 → 오픈소스 라이선스 → 소스 코드**에서 실행 중인 버전의 릴리스로
+Leaflet의 **도움말 → 오픈소스 라이선스 → 소스 코드**에서 실행 중인 버전의 릴리스로
 이동할 수 있습니다. 같은 릴리스의 Assets에서 소스 ZIP과 의존성 소스 안내를
 함께 받으세요.
-ZIP에는 해당 태그의 sPDF 소스·빌드 스크립트·실제 빌드 환경의 패키지 버전·고지가
-들어갑니다. sPDF와 무관한 프로젝트 파일과 개인·미추적 파일은 제외합니다.
+ZIP에는 해당 태그의 Leaflet 소스·빌드 스크립트·실제 빌드 환경의 패키지 버전·고지가
+들어갑니다. Leaflet와 무관한 프로젝트 파일과 개인·미추적 파일은 제외합니다.
 외부 라이브러리 원본은 의존성 안내의 **같은 버전 소스 링크**에서 받을 수 있으며,
-sPDF ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은 아닙니다.
+Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은 아닙니다.
 이전 릴리스의 소스 대응·라이선스까지 소급 검증한 것은 아닙니다.
 
 ## Rebuild on Windows / Windows에서 빌드
@@ -40,14 +40,14 @@ sPDF ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은 �
    environment's Python on PATH. Outputs appear in `dist/` and `Output/`.
 5. To change a dependency, obtain its source from the dependency document,
    follow its included build instructions, install your rebuilt wheel, and
-   rebuild sPDF. For PyMuPDF, retain its matching MuPDF source/configuration;
+   rebuild Leaflet. For PyMuPDF, retain its matching MuPDF source/configuration;
    for PyQt5, retain the matching Qt source and PyQt build tooling.
 
 소스 ZIP을 풀고 `third-party/build-environment.json`의 Python 환경과
 `third-party/build-requirements.txt`의 패키지 버전을 사용합니다.
 테스트 후 `build_exe.bat` → `build_installer.bat` 순서로 실행하세요.
 라이브러리 자체를 수정하려면 해당 소스의 빌드 설명을 따라 새 패키지를 만든 뒤
-sPDF를 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.
+Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.
 이 안내는 빌드 절차를 제공하며, 서명·타임스탬프까지 동일한 실행 파일 생성을
 보장한다는 뜻은 아닙니다.
 
