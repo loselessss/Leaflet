@@ -53,12 +53,12 @@ def app_icon():
 def ocr_command():
     """OCR 자식 프로세스를 띄우는 명령 리스트.
 
-    프로즌이면 별도 실행 파일 ocr\\spdf-ocr.exe (PyQt5 없이 빌드해 Qt DLL
+    프로즌이면 별도 실행 파일 ocr\\leaflet-ocr.exe (PyQt5 없이 빌드해 Qt DLL
     충돌을 피한 것). 개발이면 python -m 으로 모듈 실행.
     """
     if is_frozen():
         exe_dir = os.path.dirname(sys.executable)
-        return [os.path.join(exe_dir, "ocr", "spdf-ocr.exe")]
+        return [os.path.join(exe_dir, "ocr", "leaflet-ocr.exe")]
     return [sys.executable, "-m", "pdfeditor.ocr_subprocess"]
 
 

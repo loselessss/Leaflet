@@ -46,6 +46,29 @@ def release_payload(tag="v1.6.1", content=b"installer", url=None,
 
 
 class UpdateServiceTests(unittest.TestCase):
+    def test_leaflet_installer_is_preferred_and_downloadable(self):
+        payload = json.loads(release_payload())
+        legacy = payload["assets"][0]
+        renamed = dict(legacy,
+                       name=legacy["name"].replace("sPDF", "Leaflet"),
+                       browser_download_url=legacy["browser_download_url"].replace("sPDF", "Leaflet"))
+        payload["assets"].append(renamed)
+        with tempfile.TemporaryDirectory() as directory:
+            def opener(request, timeout):
+                return FakeResponse(
+                    b"installer" if "/download/" in request.full_url
+                    else json.dumps(payload).encode())
+            service = GitHubUpdateService("1.6.0", opener=opener,
+                                          download_root=directory)
+            update = service.check()
+            self.assertEqual(update.asset.name, "Leaflet_Setup_1.6.1.exe")
+            path = service.download(update)
+            self.assertEqual(path.read_bytes(), b"installer")
+            with patch("pdfeditor.update_service.subprocess.Popen") as launch:
+                service.launch_installer(path)
+                self.assertEqual(launch.call_args.args[0][0], str(path.resolve()))
+            self.assertEqual(service.cleanup_downloads(), 1)
+
     def test_localized_release_notes_selects_requested_language(self):
         body = (
             "## English\n\n<!-- spdf-release-notes:start:en -->\n"

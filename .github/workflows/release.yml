@@ -51,28 +51,31 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          $installer = "Output\sPDF_Setup_$version.exe"
+          $installer = "Output\Leaflet_Setup_$version.exe"
           if (-not (Test-Path -LiteralPath $installer)) {
             throw "Installer was not created: $installer"
           }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
-          "$hash  sPDF_Setup_$version.exe" |
+          "$hash  Leaflet_Setup_$version.exe" |
             Set-Content -Encoding ascii -LiteralPath "$installer.sha256"
-          $latestInstaller = "Output\sPDF_Setup_latest.exe"
+          $latestInstaller = "Output\Leaflet_Setup_latest.exe"
           Copy-Item -LiteralPath $installer -Destination $latestInstaller
-          "$hash  sPDF_Setup_latest.exe" |
+          # Older installed versions only recognize the sPDF installer name.
+          Copy-Item -LiteralPath $installer -Destination "Output\sPDF_Setup_$version.exe"
+          "$hash  Leaflet_Setup_latest.exe" |
             Set-Content -Encoding ascii -LiteralPath "$latestInstaller.sha256"
 
       - name: Preserve release files as workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: sPDF-${{ github.ref_name }}-windows
+          name: Leaflet-${{ github.ref_name }}-windows
           path: |
+            Output/Leaflet_Setup_*.exe
             Output/sPDF_Setup_*.exe
-            Output/sPDF_Setup_*.exe.sha256
-            Output/sPDF_Source_*.zip
-            Output/sPDF_Source_*.zip.sha256
-            Output/sPDF_Dependency_Sources_*.md
+            Output/Leaflet_Setup_*.exe.sha256
+            Output/Leaflet_Source_*.zip
+            Output/Leaflet_Source_*.zip.sha256
+            Output/Leaflet_Dependency_Sources_*.md
           compression-level: 0
 
       - name: Publish GitHub release
@@ -82,24 +85,25 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $version = $tag.TrimStart("v")
-          $installer = "Output\sPDF_Setup_$version.exe"
-          $latestInstaller = "Output\sPDF_Setup_latest.exe"
-          $sourceArchive = "Output\sPDF_Source_$version.zip"
-          $dependencySources = "Output\sPDF_Dependency_Sources_$version.md"
+          $installer = "Output\Leaflet_Setup_$version.exe"
+          $latestInstaller = "Output\Leaflet_Setup_latest.exe"
+          $legacyInstaller = "Output\sPDF_Setup_$version.exe"
+          $sourceArchive = "Output\Leaflet_Source_$version.zip"
+          $dependencySources = "Output\Leaflet_Dependency_Sources_$version.md"
           python release_notes.py --version $version --release-notes RELEASE_NOTES.md --release-notes-ko RELEASE_NOTES.ko.md --output release-notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
-          "`nInstallers and matching source files are available together under Assets. / 설치 파일과 대응 소스는 아래 Assets에서 함께 받을 수 있습니다.`n`nSHA-256 (both installers): ``$hash``" |
+          "`nDownload Leaflet_Setup_$version.exe. The sPDF installer is an identical alias for older automatic updaters. / Leaflet_Setup_$version.exe를 받으세요. sPDF 설치 파일은 기존 버전 자동 업데이트용이며 내용은 같습니다.`n`nSHA-256 (all installers): ``$hash``" |
             Add-Content -Encoding utf8 -LiteralPath release-notes.md
           gh release view $tag --json id 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release edit $tag --title "Leaflet $version" `
               --notes-file release-notes.md
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $installer $latestInstaller $sourceArchive `
+            gh release upload $tag $installer $latestInstaller $legacyInstaller $sourceArchive `
               "$sourceArchive.sha256" $dependencySources --clobber
           } else {
-            gh release create $tag $installer $latestInstaller $sourceArchive `
+            gh release create $tag $installer $latestInstaller $legacyInstaller $sourceArchive `
               "$sourceArchive.sha256" $dependencySources `
               --verify-tag --title "Leaflet $version" `
               --notes-file release-notes.md

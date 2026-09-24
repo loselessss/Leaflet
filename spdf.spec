@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 스펙 — 실행 파일 두 개(원폴더 빌드).
 
-  dist\\sPDF\\sPDF.exe          GUI (PyQt5, onnxruntime 미포함)
-  dist\\sPDF\\ocr\\spdf-ocr.exe  OCR 워커 (onnxruntime, PyQt5 미포함)
+  dist\\Leaflet\\Leaflet.exe          GUI (PyQt5, onnxruntime 미포함)
+  dist\\Leaflet\\ocr\\leaflet-ocr.exe  OCR 워커 (onnxruntime, PyQt5 미포함)
 
 왜 둘로 나누나: 같은 프로세스/같은 폴더에서 Qt DLL과 onnxruntime가
 공존하면 onnxruntime DLL 초기화가 깨진다(dev·frozen 공통). GUI가 OCR을
-이 별도 실행 파일로 shell-out 해서 완전히 격리한다. 워커를 sPDF\\ocr\\
+이 별도 실행 파일로 shell-out 해서 완전히 격리한다. 워커를 Leaflet\\ocr\\
 하위 폴더에 두어 _internal(DLL 폴더)이 서로 겹치지 않게 한다.
 
 OCR 모델(korean_PP-OCRv5 등)은 번들 안 함 — 첫 OCR 때 사용자 폴더로
@@ -79,7 +79,7 @@ pyz_ocr = PYZ(a_ocr.pure)
 exe_ocr = EXE(
     pyz_ocr, a_ocr.scripts, [],
     exclude_binaries=True,
-    name="spdf-ocr",
+    name="leaflet-ocr",
     console=True,   # 콘솔 워커(창은 CREATE_NO_WINDOW로 숨김)
     icon="assets/spdf.ico",
     version=ocr_version_info,
@@ -99,13 +99,13 @@ pyz_gui = PYZ(a_gui.pure)
 exe_gui = EXE(
     pyz_gui, a_gui.scripts, [],
     exclude_binaries=True,
-    name="sPDF",
+    name="Leaflet",
     console=False,
     icon="assets/spdf.ico",
     version=gui_version_info,
 )
 
-# 각각 별도 dist 폴더로 수집(DLL 격리). 설치 시 sPDF-ocr\* 를 {app}\ocr 로,
-# 로컬 테스트는 sPDF-ocr\ 를 sPDF\ocr\ 로 복사해 확인한다.
-coll_gui = COLLECT(exe_gui, a_gui.binaries, a_gui.datas, name="sPDF")
-coll_ocr = COLLECT(exe_ocr, a_ocr.binaries, a_ocr.datas, name="sPDF-ocr")
+# 각각 별도 dist 폴더로 수집(DLL 격리). 설치 시 Leaflet-ocr\* 를 {app}\ocr 로,
+# 로컬 테스트는 Leaflet-ocr\ 를 Leaflet\ocr\ 로 복사해 확인한다.
+coll_gui = COLLECT(exe_gui, a_gui.binaries, a_gui.datas, name="Leaflet")
+coll_ocr = COLLECT(exe_ocr, a_ocr.binaries, a_ocr.datas, name="Leaflet-ocr")

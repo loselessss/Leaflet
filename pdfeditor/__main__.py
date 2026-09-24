@@ -12,7 +12,7 @@ def main():
     from .windows_integration import set_current_process_app_id
     set_current_process_app_id()
 
-    # OCR은 별도 실행 파일(spdf-ocr.exe)이 처리한다 — 같은 프로세스에서
+    # OCR은 별도 실행 파일(leaflet-ocr.exe)이 처리한다 — 같은 프로세스에서
     # Qt와 onnxruntime를 함께 로드하면 DLL 초기화가 깨지기 때문(paths.py).
     # 개발 모드에서 `--ocr-worker`로 직접 호출하는 경우만 지원(테스트용).
     if "--ocr-worker" in sys.argv:

@@ -6,8 +6,8 @@ Open **Help → Open-source Licenses → Source code** in Leaflet. The link poin
 the release for the version you are running, not to the moving `main` branch:
 
 - [All Leaflet releases](https://github.com/loselessss/Leaflet/releases)
-- Under the same release's Assets, download `sPDF_Source_VERSION.zip` and
-  `sPDF_Dependency_Sources_VERSION.md` together. GitHub-generated tag ZIPs alone
+- Under the same release's Assets, download `Leaflet_Source_VERSION.zip` and
+  `Leaflet_Dependency_Sources_VERSION.md` together. GitHub-generated tag ZIPs alone
   do not contain the build inventory and dependency-source directions.
 - The ZIP contains the tagged Leaflet source, build scripts and the actual build
   environment's package versions and notices. Unrelated project files and

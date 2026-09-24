@@ -1,4 +1,4 @@
-"""탐색기 '연결 프로그램'에 sPDF 등록/해제 (설계 §8).
+"""탐색기 '연결 프로그램'에 Leaflet 등록/해제 (설계 §8).
 
 현재 사용자(HKCU)에만 쓰므로 관리자 권한이 필요 없고, 기본 PDF 뷰어를
 빼앗지도 않는다 — 우클릭 '연결 프로그램' 후보로만 나타난다. 기본 앱
@@ -13,7 +13,7 @@ import winreg
 
 PROG_ID = "sPDF.Document"
 LEGACY_PROG_ID = "PDFEditor.Document"
-APP_NAME = "sPDF"
+from pdfeditor.meta import APP_NAME
 EXTENSIONS = (".pdf", ".ai")
 HERE = os.path.dirname(os.path.abspath(__file__))
 

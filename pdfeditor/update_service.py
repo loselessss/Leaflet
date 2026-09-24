@@ -20,7 +20,7 @@ GITHUB_API_URL = (
     "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPOSITORY)
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")
 _INSTALLER_RE = re.compile(
-    r"^sPDF_Setup_(\d+\.\d+\.\d+)\.exe$", re.IGNORECASE)
+    r"^(?:Leaflet|sPDF)_Setup_(\d+\.\d+\.\d+)\.exe$", re.IGNORECASE)
 _SHA256_RE = re.compile(r"^sha256:([0-9a-fA-F]{64})$")
 _MAX_RELEASE_JSON_BYTES = 2 * 1024 * 1024
 _LOCALIZED_NOTES_RE = re.compile(
@@ -142,7 +142,7 @@ class GitHubUpdateService:
             GITHUB_API_URL,
             headers={
                 "Accept": "application/vnd.github+json",
-                "User-Agent": "sPDF/%s" % self.current_version,
+                "User-Agent": "Leaflet/%s" % self.current_version,
                 "X-GitHub-Api-Version": "2022-11-28",
             })
         try:
@@ -179,10 +179,11 @@ class GitHubUpdateService:
     def _select_installer(self, assets, version):
         if not isinstance(assets, list):
             return None
-        expected = "sPDF_Setup_%s.exe" % version
+        expected = ("Leaflet_Setup_%s.exe" % version,
+                    "sPDF_Setup_%s.exe" % version)
         candidates = [
-            item for item in assets if isinstance(item, dict)
-            and str(item.get("name", "")).casefold() == expected.casefold()]
+            item for name in expected for item in assets if isinstance(item, dict)
+            and str(item.get("name", "")).casefold() == name.casefold()]
         if not candidates:
             return None
         item = candidates[0]
@@ -215,7 +216,7 @@ class GitHubUpdateService:
         started = time.monotonic()
         request = Request(
             asset.download_url,
-            headers={"User-Agent": "sPDF/%s" % self.current_version})
+            headers={"User-Agent": "Leaflet/%s" % self.current_version})
         try:
             with self._open(request, timeout=60) as response, \
                     partial.open("wb") as stream:

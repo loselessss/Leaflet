@@ -43,7 +43,7 @@ def clean_source_status(status):
 
 
 def read_json(url):
-    request = Request(url, headers={"User-Agent": "sPDF-source-release"})
+    request = Request(url, headers={"User-Agent": "Leaflet-source-release"})
     with urlopen(request, timeout=30) as response:
         return json.load(response)
 
@@ -81,7 +81,7 @@ def source_record(package, fetch=read_json):
 
 
 def check_source_access(record):
-    request = Request(record["url"], method="HEAD", headers={"User-Agent": "sPDF-source-release"})
+    request = Request(record["url"], method="HEAD", headers={"User-Agent": "Leaflet-source-release"})
     with urlopen(request, timeout=30) as response:
         if response.status != 200:
             raise ValueError("Source archive is unavailable: " + record["name"])
@@ -105,7 +105,7 @@ def dependency_document(version, records):
 
 
 def write_archive(destination, archive_bytes, legal_root, document, records, version):
-    prefix = "sPDF-%s/" % version
+    prefix = "Leaflet-%s/" % version
     # Exclusive creation prevents accidental replacement of existing release assets.
     with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as output:
         with zipfile.ZipFile(io.BytesIO(archive_bytes)) as source:
@@ -153,12 +153,12 @@ def prepare_source_release(root, version):
     document = dependency_document(version, records)
     output = root / "Output"
     output.mkdir(exist_ok=True)
-    archive_path = output / ("sPDF_Source_%s.zip" % version)
+    archive_path = output / ("Leaflet_Source_%s.zip" % version)
     write_archive(archive_path, git("archive", "--format=zip", "HEAD"), legal, document, records, version)
     digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     with Path(str(archive_path) + ".sha256").open("x", encoding="ascii") as stream:
         stream.write(digest + "  " + archive_path.name + "\n")
-    with (output / ("sPDF_Dependency_Sources_%s.md" % version)).open("x", encoding="utf-8") as stream:
+    with (output / ("Leaflet_Dependency_Sources_%s.md" % version)).open("x", encoding="utf-8") as stream:
         stream.write(document)
     return archive_path
 

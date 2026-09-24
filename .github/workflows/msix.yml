@@ -48,7 +48,7 @@ jobs:
       - name: Preserve unsigned package for signing and installation tests
         uses: actions/upload-artifact@v6
         with:
-          name: sPDF-unsigned-msix
+          name: Leaflet-unsigned-msix
           path: Output/*_unsigned.msix
           if-no-files-found: error
           compression-level: 0

@@ -1,13 +1,13 @@
 ﻿; sPDF 설치 스크립트 (Inno Setup 6)
-; 빌드: build_installer.bat  (먼저 build_exe.bat로 dist\sPDF 생성)
+; 빌드: build_installer.bat  (먼저 build_exe.bat로 dist\Leaflet 생성)
 ;
 ; 버전은 bandwagon 방식대로 수동 동기화 — pdfeditor\meta.py의 APP_VERSION과
 ; 아래 MyAppVersion을 함께 맞출 것(자동 동기화 안 됨).
 
 #define MyAppName "Leaflet"
-#define MyAppVersion "1.33.6"
+#define MyAppVersion "1.33.7"
 #define MyAppPublisher "Leaflet"
-#define MyAppExeName "sPDF.exe"
+#define MyAppExeName "Leaflet.exe"
 #define MyProgId "sPDF.Document"
 #define MyAppUserModelId "sPDF.Desktop"
 
@@ -19,7 +19,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputBaseFilename=sPDF_Setup_{#MyAppVersion}
+OutputBaseFilename=Leaflet_Setup_{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -60,9 +60,11 @@ Name: "associate\defaultpdf"; Description: "Choose Leaflet as the default PDF ap
 Name: "associate\defaultpdf"; Description: "설치 후 Leaflet을 기본 PDF 앱으로 선택(Windows 설정 열기)"; GroupDescription: "파일 연결:"; Flags: unchecked; Languages: korean
 
 [Files]
-Source: "dist\sPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Leaflet\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Keep existing pinned shortcuts and external launchers working with the new build.
+Source: "dist\Leaflet\Leaflet.exe"; DestDir: "{app}"; DestName: "sPDF.exe"; Flags: ignoreversion
 ; OCR 워커는 Qt DLL과 격리하기 위해 별도 폴더에 (paths.ocr_command 참고)
-Source: "dist\sPDF-ocr\*"; DestDir: "{app}\ocr"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Leaflet-ocr\*"; DestDir: "{app}\ocr"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\spdf_doc.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 ; Keep legal documents accessible without starting sPDF.
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -78,6 +80,7 @@ Name: "{autodesktop}\{cm:ReaderShortcut}"; Filename: "{app}\{#MyAppExeName}"; Pa
 Name: "{autodesktop}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace editor"; AppUserModelID: "{#MyAppUserModelId}"; Tasks: desktopeditor
 
 [InstallDelete]
+Type: files; Name: "{app}\ocr\spdf-ocr.exe"
 ; 업데이트 및 설치 언어 변경 시 이전 바로가기를 정리한 뒤 선택 항목만 다시 만든다.
 Type: files; Name: "{group}\Leaflet Reader.lnk"
 Type: files; Name: "{group}\Leaflet Editor.lnk"

@@ -1,14 +1,14 @@
 @echo off
 chcp 65001 >nul
-REM Build Output\sPDF_Setup_X.X.X.exe with Inno Setup.
-REM Prerequisite: run build_exe.bat first to create dist\sPDF.
+REM Build Output\Leaflet_Setup_X.X.X.exe with Inno Setup.
+REM Prerequisite: run build_exe.bat first to create dist\Leaflet.
 
-if not exist dist\sPDF\sPDF.exe (
-  echo dist\sPDF\sPDF.exe is missing. Run build_exe.bat first.
+if not exist dist\Leaflet\Leaflet.exe (
+  echo dist\Leaflet\Leaflet.exe is missing. Run build_exe.bat first.
   exit /b 1
 )
-if not exist dist\sPDF-ocr\spdf-ocr.exe (
-  echo dist\sPDF-ocr\spdf-ocr.exe is missing. Run build_exe.bat first.
+if not exist dist\Leaflet-ocr\leaflet-ocr.exe (
+  echo dist\Leaflet-ocr\leaflet-ocr.exe is missing. Run build_exe.bat first.
   exit /b 1
 )
 
@@ -21,7 +21,7 @@ if not exist %ISCC% (
 
 %ISCC% installer.iss || goto :err
 echo.
-echo Complete: Output\sPDF_Setup_*.exe
+echo Complete: Output\Leaflet_Setup_*.exe
 goto :eof
 
 :err

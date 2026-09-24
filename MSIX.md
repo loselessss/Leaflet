@@ -14,10 +14,10 @@ install/trust a certificate. Do not distribute that artifact as a signed install
 3. Run the following with **your** identity and certificate subject:
 
 ```powershell
-python build_msix.py --identity-name "YourCompany.sPDF" --publisher "CN=YourCompany" --publisher-display-name "YourCompany"
+python build_msix.py --identity-name "YourCompany.Leaflet" --publisher "CN=YourCompany" --publisher-display-name "YourCompany"
 ```
 
-Output: `Output/sPDF_VERSION_x64_unsigned.msix`. Existing packages are never
+Output: `Output/Leaflet_VERSION_x64_unsigned.msix`. Existing packages are never
 overwritten. Staging is retained in a unique `Output/msix-*` directory for review.
 Windows 10 1809 or later, x64 only. The package includes the native renderer,
 OCR worker and dependency notices. PDF/AI Open With entries come from its manifest;
@@ -25,7 +25,7 @@ default associations are still chosen by the user. MSIX uses the Windows package
 identity and disables the EXE updater. Store submission and install/upgrade/
 uninstall verification are separate steps, not claimed by package creation.
 
-출력 파일은 `Output/sPDF_VERSION_x64_unsigned.msix`입니다. 기존 파일은 덮어쓰지
+출력 파일은 `Output/Leaflet_VERSION_x64_unsigned.msix`입니다. 기존 파일은 덮어쓰지
 않습니다. MSIX에서는 EXE 자동 업데이트를 끄고 패키지 경로로 업데이트합니다.
 새 인증서 신뢰 설정, 스토어 제출, 실제 설치·업그레이드·제거 검증은 별도입니다.
 
@@ -40,8 +40,8 @@ uninstall verification are separate steps, not claimed by package creation.
   Windows certificate store, for example:
 
 ```powershell
-signtool sign /sha1 YOUR_CERTIFICATE_THUMBPRINT /fd SHA256 /tr YOUR_HTTPS_TIMESTAMP_URL /td SHA256 Output\sPDF_VERSION_x64_unsigned.msix
-signtool verify /pa /v Output\sPDF_VERSION_x64_unsigned.msix
+signtool sign /sha1 YOUR_CERTIFICATE_THUMBPRINT /fd SHA256 /tr YOUR_HTTPS_TIMESTAMP_URL /td SHA256 Output\Leaflet_VERSION_x64_unsigned.msix
+signtool verify /pa /v Output\Leaflet_VERSION_x64_unsigned.msix
 ```
 
 After successful signing/verification, rename the signed copy to omit `unsigned`.

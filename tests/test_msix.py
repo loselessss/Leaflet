@@ -26,7 +26,7 @@ class MsixTests(unittest.TestCase):
 
     def make_source(self, root):
         source=root/'dist'
-        for path in ('sPDF.exe','_internal/native/spdf_d2d_renderer.dll',
+        for path in ('Leaflet.exe','_internal/native/spdf_d2d_renderer.dll',
                      '_internal/LICENSE','_internal/LICENSES.md','_internal/SOURCE_CODE.md'):
             file=source/path
             file.parent.mkdir(parents=True,exist_ok=True)
@@ -34,10 +34,10 @@ class MsixTests(unittest.TestCase):
         inventory=source/'_internal/third-party/build-environment.json'
         inventory.parent.mkdir(parents=True)
         inventory.write_text(json.dumps({'app_version':APP_VERSION,'architecture':'AMD64'}))
-        worker=root/'sPDF-ocr/_internal/third-party/build-environment.json'
+        worker=root/'Leaflet-ocr/_internal/third-party/build-environment.json'
         worker.parent.mkdir(parents=True)
         worker.write_bytes(inventory.read_bytes())
-        (root/'sPDF-ocr/spdf-ocr.exe').write_bytes(b'fixture')
+        (root/'Leaflet-ocr/leaflet-ocr.exe').write_bytes(b'fixture')
         return source
 
     def stage(self, source, target):
@@ -49,7 +49,7 @@ class MsixTests(unittest.TestCase):
             root=Path(tmp)
             source=self.make_source(root)
             target=self.stage(source,root/'package')
-            self.assertTrue((target/'app/ocr/spdf-ocr.exe').is_file())
+            self.assertTrue((target/'app/ocr/leaflet-ocr.exe').is_file())
             self.assertTrue((target/'app/_internal/native/spdf_d2d_renderer.dll').is_file())
             self.assertTrue((target/'Assets/Square150x150Logo.png').is_file())
             with self.assertRaises(FileExistsError):
@@ -69,8 +69,8 @@ class MsixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             source=self.make_source(root)
-            shutil.copyfile(sys.executable,source/'sPDF.exe')
-            shutil.copyfile(sys.executable,source.parent/'sPDF-ocr/spdf-ocr.exe')
+            shutil.copyfile(sys.executable,source/'Leaflet.exe')
+            shutil.copyfile(sys.executable,source.parent/'Leaflet-ocr/leaflet-ocr.exe')
             target=self.stage(source,root/'package')
             output=root/'fixture.msix'
             result=subprocess.run([tool,'pack','/d',str(target),'/p',str(output),'/no'],
@@ -78,7 +78,7 @@ class MsixTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             with zipfile.ZipFile(output) as archive:
                 self.assertIn('AppxManifest.xml',archive.namelist())
-                self.assertIn('app/ocr/spdf-ocr.exe',archive.namelist())
+                self.assertIn('app/ocr/leaflet-ocr.exe',archive.namelist())
 
     def test_packaged_identity_does_not_set_legacy_app_id(self):
         from pdfeditor.windows_integration import set_current_process_app_id
@@ -88,7 +88,7 @@ class MsixTests(unittest.TestCase):
     def test_installers_and_sources_share_one_release(self):
         workflow=Path('.github/workflows/release.yml').read_text(encoding='utf-8')
         normal=workflow.split('- name: Publish GitHub release',1)[1]
-        self.assertIn('gh release upload $tag $installer $latestInstaller $sourceArchive',normal)
+        self.assertIn('gh release upload $tag $installer $latestInstaller $legacyInstaller $sourceArchive',normal)
         self.assertIn('$dependencySources --clobber',normal)
         self.assertNotIn('sources-v$version',workflow)
         self.assertNotIn('--prerelease',workflow)

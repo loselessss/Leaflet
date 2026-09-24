@@ -1,4 +1,4 @@
-# sPDF Repository Guide
+# Leaflet Repository Guide
 
 ## Project overview
 
@@ -37,7 +37,7 @@
 - For every user-visible change, update `CHANGELOG.md` in the same change. Keep the newest release first and use Korean section labels such as `새 기능`, `개선`, `성능 개선`, `버그 수정`, and `기타`, omitting empty sections.
 - Whenever the release version changes, update `pdfeditor/meta.py` (`APP_VERSION` and `RELEASE_DATE`), `installer.iss` (`MyAppVersion`), the README release/status entry, and `CHANGELOG.md` together. Search the repository for the previous version before committing and verify that every release reference is intentional.
 - Verify that the application and installer versions match exactly.
-- Installer output names must continue to use `sPDF_Setup_{#MyAppVersion}`.
+- Installer output names use `Leaflet_Setup_{#MyAppVersion}`. Publish a matching `sPDF_Setup_VERSION.exe` compatibility alias so older installed versions can update.
 
 ## Development and verification
 

@@ -50,7 +50,7 @@ def manifest(version, name, publisher, display_name):
     node(deps,'TargetDeviceFamily',Name='Windows.Desktop',MinVersion='10.0.17763.0',
          MaxVersionTested='10.0.26100.0')
     applications = node(root,'Applications')
-    app = node(applications,'Application',Id='sPDF',Executable=r'app\sPDF.exe',
+    app = node(applications,'Application',Id='sPDF',Executable=r'app\Leaflet.exe',
                EntryPoint='Windows.FullTrustApplication')
     ET.SubElement(app,'{'+UAP+'}VisualElements',DisplayName=APP_NAME,Description=APP_NAME+' PDF reader and editor',
         Square150x150Logo=r'Assets\Square150x150Logo.png',
@@ -69,18 +69,18 @@ def manifest(version, name, publisher, display_name):
 
 def stage_package(source, destination, *, version, name, publisher, display_name, icon):
     source, destination = Path(source).resolve(), Path(destination).resolve()
-    ocr_source = source.parent / 'sPDF-ocr'
+    ocr_source = source.parent / 'Leaflet-ocr'
     if source == destination or source in destination.parents:
         raise ValueError('MSIX staging must be outside the application directory')
     manifest_bytes = manifest(version,name,publisher,display_name)
-    for file in ('sPDF.exe','_internal/native/spdf_d2d_renderer.dll',
+    for file in ('Leaflet.exe','_internal/native/spdf_d2d_renderer.dll',
                  '_internal/LICENSE','_internal/LICENSES.md','_internal/SOURCE_CODE.md',
                  '_internal/third-party/build-environment.json'):
         if not (source/file).is_file():
             raise FileNotFoundError('Rebuild with build_exe.bat: missing '+file)
-    for file in ('spdf-ocr.exe','_internal/third-party/build-environment.json'):
+    for file in ('leaflet-ocr.exe','_internal/third-party/build-environment.json'):
         if not (ocr_source/file).is_file():
-            raise FileNotFoundError('Rebuild with build_exe.bat: missing sPDF-ocr/'+file)
+            raise FileNotFoundError('Rebuild with build_exe.bat: missing Leaflet-ocr/'+file)
     inventory=json.loads((source/'_internal/third-party/build-environment.json').read_text(encoding='utf-8'))
     if inventory['app_version'] != version:
         raise ValueError('Existing executable is a different version; rebuild first')
@@ -123,12 +123,12 @@ def main(argv=None):
     parser.add_argument('--identity-name',required=True)
     parser.add_argument('--publisher',required=True)
     parser.add_argument('--publisher-display-name',required=True)
-    parser.add_argument('--source',type=Path,default=ROOT/'dist/sPDF')
+    parser.add_argument('--source',type=Path,default=ROOT/'dist/Leaflet')
     parser.add_argument('--output',type=Path,default=ROOT/'Output')
     args=parser.parse_args(argv)
     makeappx=find_makeappx()
     args.output.mkdir(parents=True,exist_ok=True)
-    package=args.output/('sPDF_%s_x64_unsigned.msix'%APP_VERSION)
+    package=args.output/('Leaflet_%s_x64_unsigned.msix'%APP_VERSION)
     if package.exists():
         raise FileExistsError(package)
     # Retain staging on error for inspection; never remove existing build outputs.

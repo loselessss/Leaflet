@@ -1,5 +1,12 @@
 # Leaflet Release Notes
 
+## 1.33.7 - 2026-09-24
+
+### 개선
+
+- Use Leaflet names for installers, executables, MSIX packages, and source release files.
+- Preserve automatic updates from older versions and existing user settings.
+
 ## 1.33.6 - 2026-09-23
 
 - Add a small Leaflet icon beside the title in reader and editor windows.

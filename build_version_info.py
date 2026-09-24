@@ -51,9 +51,9 @@ def write_version_info_files(directory, version):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     definitions = (
-        ("spdf-version.txt", APP_NAME, "sPDF", "sPDF.exe"),
+        ("spdf-version.txt", APP_NAME, "Leaflet", "Leaflet.exe"),
         ("spdf-ocr-version.txt", "Leaflet OCR 작업 프로세스",
-         "sPDF OCR Worker", "spdf-ocr.exe"),
+         "Leaflet OCR Worker", "leaflet-ocr.exe"),
     )
     paths = []
     for name, description, internal_name, filename in definitions:

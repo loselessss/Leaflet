@@ -92,7 +92,7 @@ class LicensingTests(unittest.TestCase):
             (legal / "build-requirements.txt").write_text("PyQt5==5.15.11\n", encoding="utf-8")
             destination = root / "source.zip"
             write_archive(destination, source.getvalue(), legal, "source directions", [], APP_VERSION)
-            prefix = "sPDF-%s/" % APP_VERSION
+            prefix = "Leaflet-%s/" % APP_VERSION
             with zipfile.ZipFile(destination) as archive:
                 self.assertIn(prefix + "run.py", archive.namelist())
                 self.assertNotIn(prefix + "paperorganizer/core.py", archive.namelist())
@@ -139,7 +139,7 @@ class LicensingTests(unittest.TestCase):
                 self.assertEqual(check.call_count, 4)  # Three dependencies and Python.
                 checksum = Path(str(result) + ".sha256").read_text(encoding="ascii")
                 self.assertEqual(checksum.split()[0], hashlib.sha256(result.read_bytes()).hexdigest())
-                self.assertTrue((root / "Output" / ("sPDF_Dependency_Sources_%s.md" % APP_VERSION)).is_file())
+                self.assertTrue((root / "Output" / ("Leaflet_Dependency_Sources_%s.md" % APP_VERSION)).is_file())
                 environment["commit"] = "old-build"
                 inventory.write_text(json.dumps(environment), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "different build"):
@@ -169,7 +169,7 @@ class LicensingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertLess(workflow.index("python create_source_bundle.py"), workflow.index("gh release create"))
         self.assertIn('$sourceArchive `\n              "$sourceArchive.sha256" $dependencySources', workflow)
-        self.assertIn("Output/sPDF_Source_*.zip", workflow)
+        self.assertIn("Output/Leaflet_Source_*.zip", workflow)
         spec = (ROOT / "spdf.spec").read_text(encoding="utf-8")
         self.assertIn("write_legal_bundle", spec)
         self.assertIn("datas=ocr_datas + legal_datas", spec)
