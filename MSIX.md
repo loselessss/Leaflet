@@ -29,6 +29,19 @@ uninstall verification are separate steps, not claimed by package creation.
 않습니다. MSIX에서는 EXE 자동 업데이트를 끄고 패키지 경로로 업데이트합니다.
 새 인증서 신뢰 설정, 스토어 제출, 실제 설치·업그레이드·제거 검증은 별도입니다.
 
+## Privacy policy / 개인정보 처리방침
+
+The bilingual policy is [PRIVACY.md](PRIVACY.md). After publishing this file to
+the public main branch, verify that the following URL opens without signing in
+and use it in Partner Center's privacy-policy URL field:
+
+https://github.com/loselessss/Leaflet/blob/main/PRIVACY.md
+
+한국어·영어 방침은 [PRIVACY.md](PRIVACY.md)에 있습니다. 공개 main 브랜치에
+게시한 뒤 위 주소가 로그인 없이 열리는지 확인하고 Partner Center의 개인정보
+처리방침 URL에 입력하세요. Store 제출 전 앱 안에서도 방침에 접근할 수 있도록
+연결하고, 실제 게시자 정보와 배포 기능이 방침 내용과 일치하는지 확인하세요.
+
 ## Signing and distribution / 서명·배포
 
 - For Microsoft Store, use the exact Identity Name and Publisher from Partner

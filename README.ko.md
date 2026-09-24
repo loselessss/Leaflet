@@ -1,5 +1,7 @@
 # Leaflet
 
+[개인정보 처리방침 / Privacy policy](PRIVACY.md)
+
 [English](README.md) | 한국어
 
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을

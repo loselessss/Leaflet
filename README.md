@@ -9,6 +9,8 @@ text editing, page organization, annotations, and offline OCR.
 
 ## Download
 
+[Privacy policy / 개인정보 처리방침](PRIVACY.md)
+
 Get the installer from the [latest release](https://github.com/loselessss/Leaflet/releases/latest).
 
 Launch **Leaflet Reader** or **Leaflet Editor** from the Start menu.
