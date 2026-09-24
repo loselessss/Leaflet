@@ -1,5 +1,13 @@
 # Leaflet Release Notes
 
+## 1.33.8 - 2026-09-24
+
+### 성능 개선
+
+- Reuse immutable document snapshots during GPU preparation to avoid copying and recompressing large pages.
+- Open worker input directly from disk to reduce temporary memory use.
+- Export current pages separately for edited or encrypted documents to preserve rendering and isolation.
+
 ## 1.33.7 - 2026-09-24
 
 ### 개선

@@ -360,11 +360,11 @@ class ReaderPageView(QGraphicsView):
         snapshot_path = os.path.join(directory, "page.pdf")
         result_path = os.path.join(directory, "scene.pickle")
         try:
-            with open(snapshot_path, "wb") as stream:
-                stream.write(self._document.gpu_page_snapshot(page))
+            worker_page = self._document.write_gpu_page_snapshot(page, snapshot_path)
             from .paths import gpu_scene_worker_command, is_frozen, resource
             command = gpu_scene_worker_command()
             arguments = [snapshot_path, result_path, "--scale", str(scale),
+                         "--page", str(worker_page),
                          "--timeout", str(DEFERRED_GPU_SCENE_TIMEOUT_SECONDS)]
             cache_key = self._document.gpu_scene_disk_cache_key(page, scale)
             if cache_key:

@@ -347,6 +347,34 @@ class Document:
         finally:
             snapshot.close()
 
+    def write_gpu_page_snapshot(self, index, path):
+        """Write worker input without a whole-page Python bytes buffer.
+
+        An unchanged private snapshot can be linked into the job directory.
+        The link keeps the immutable input alive if the UI closes the document.
+        Edited, annotated, or encrypted input uses a single-page export.
+        Return the page number to read from the worker input.
+        """
+        self._doc[index]  # Validate before handing the page number to a worker.
+        source = getattr(self, "_snapshot", None)
+        if (source is not None and self._doc.name == source.path
+                and not self._doc.is_dirty
+                and not self._password and not self._doc.is_encrypted
+                and not self._doc.metadata.get("encryption")
+                and self._annotation_store is None):
+            try:
+                os.link(source.path, path)
+                return index
+            except OSError:
+                # Cross-volume or unsupported filesystem: export instead.
+                pass
+        with fitz.open() as snapshot:
+            snapshot.insert_pdf(self._doc, from_page=index, to_page=index)
+            # Existing compressed streams stay compressed. Do not spend UI
+            # time recompressing uncompressed images for disposable IPC.
+            snapshot.save(path, garbage=0, deflate=False)
+        return 0
+
     def install_gpu_vector_page(self, index, scene, *, persist=True):
         """Install a scene produced from the current page snapshot."""
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()

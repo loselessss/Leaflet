@@ -1,4 +1,4 @@
-"""Out-of-process GPU scene extraction from an isolated one-page snapshot."""
+"""Out-of-process GPU extraction from an immutable, privately owned PDF."""
 
 import argparse
 import os
@@ -15,31 +15,31 @@ def main(argv=None):
     parser.add_argument("snapshot")
     parser.add_argument("result")
     parser.add_argument("--scale", type=float, default=1.0)
+    parser.add_argument("--page", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--aggressive-band-merge", action="store_true")
     parser.add_argument("--base-scene")
     parser.add_argument("--disk-cache-key")
     args = parser.parse_args(argv)
 
-    with open(args.snapshot, "rb") as stream:
-        data = stream.read()
-    document = pymupdf.open("pdf", data)
+    document = pymupdf.open(args.snapshot, filetype="pdf")
     try:
+        page = document[args.page]
         started = time.monotonic()
         scene = None
         if args.disk_cache_key:
             from .scene_disk_cache import load
-            scene = load(args.disk_cache_key, document[0])
+            scene = load(args.disk_cache_key, page)
         cache_hit = scene is not None
         if scene is None and args.base_scene:
             # This file is written by our parent into the private worker job.
             with open(args.base_scene, "rb") as stream:
                 base = pickle.load(stream)
             if isinstance(base, VectorPage):
-                scene = refine_page_images(document[0], base, args.scale, args.timeout)
+                scene = refine_page_images(page, base, args.scale, args.timeout)
         if scene is None:
             scene = vector_page_from_pymupdf(
-                document[0], args.scale,
+                page, args.scale,
                 timeout_seconds=max(0.0, args.timeout - (time.monotonic() - started)),
                 aggressive_band_merge=args.aggressive_band_merge)
         if args.disk_cache_key and scene.supported and not cache_hit:
