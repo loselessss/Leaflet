@@ -30,11 +30,19 @@ class SceneDiskCacheTests(unittest.TestCase):
         self.settings.stop()
         self.temp.cleanup()
 
+    def ready_hash(self, doc):
+        cache.key(doc, 0, 1, False)
+        job = doc._disk_cache_hash_job
+        job.future.result(timeout=5)
+        self.assertIsNotNone(cache.key(doc, 0, 1, False))
+
     def test_reopen_uses_scene_without_extraction(self):
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         scene = doc.gpu_vector_page(0)
         doc.close()
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             with patch("pdfeditor.meta.APP_VERSION", "app-only-update"), \
                     patch("pdfeditor.gpu_raster.vector_page_from_pymupdf", side_effect=AssertionError):
@@ -44,6 +52,7 @@ class SceneDiskCacheTests(unittest.TestCase):
 
     def test_memory_only_lookup_does_not_restore_disk_scene(self):
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             with patch.object(doc, "_load_disk_gpu_scene") as restore:
                 self.assertIsNone(doc.cached_gpu_vector_page(0, memory_only=True))
@@ -55,6 +64,7 @@ class SceneDiskCacheTests(unittest.TestCase):
         from pdfeditor.gpu_scene_worker import main
         import pickle
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             scene = doc.gpu_vector_page(0)
             key = doc.gpu_scene_disk_cache_key(0)
@@ -70,6 +80,7 @@ class SceneDiskCacheTests(unittest.TestCase):
 
     def test_file_and_version_changes_invalidate(self):
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             first = cache.key(doc, 0, 1, False)
             with patch("pdfeditor.meta.APP_VERSION", "different"):
@@ -87,6 +98,7 @@ class SceneDiskCacheTests(unittest.TestCase):
         with self.path.open("ab") as stream:
             stream.write(b"\n% changed\n")
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             self.assertNotEqual(first, cache.key(doc, 0, 1, False))
         finally:
@@ -112,10 +124,12 @@ class SceneDiskCacheTests(unittest.TestCase):
 
     def test_worker_scene_is_reused_after_reopen(self):
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         scene = VectorPage(True, raster_scale=2, features=("image-downsample",))
         doc.install_gpu_vector_page(0, scene)
         doc.close()
         doc = Document(str(self.path))
+        self.ready_hash(doc)
         try:
             self.assertEqual(doc.cached_gpu_vector_page(0, 2), scene)
             self.assertIsNone(doc.cached_gpu_vector_page(0, 4))

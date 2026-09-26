@@ -154,6 +154,9 @@ class Document:
     # --- 수명 주기 ---------------------------------------------------
 
     def close(self):
+        hash_job = getattr(self, "_disk_cache_hash_job", None)
+        if hash_job is not None:
+            hash_job.cancel()
         if self._doc is not None:
             self._display_cache.clear()
             self._gpu_vector_cache.clear()
@@ -227,6 +230,9 @@ class Document:
         return pix.x, pix.y, pix.width, pix.height, pix.stride, pix.samples
 
     def invalidate_render(self, index=None):
+        hash_job = getattr(self, "_disk_cache_hash_job", None)
+        if hash_job is not None:
+            hash_job.cancel()
         self._render_generation += 1
         if index is None:
             self._display_cache.clear()
@@ -321,10 +327,12 @@ class Document:
             return None
         return self.install_gpu_vector_page(index, scene, persist=False)
 
-    def _save_disk_gpu_scene(self, index, scene):
+    def _save_disk_gpu_scene(self, index, scene, *, background=False):
         from . import scene_disk_cache as disk
         disk.save(disk.key(self, index, scene.raster_scale,
-                           _aggressive_gpu_band_merge_enabled()), scene)
+                           _aggressive_gpu_band_merge_enabled(),
+                           on_ready=lambda key: disk.save(key, scene),
+                           defer_ready=background), scene)
 
     @property
     def render_generation(self):
@@ -375,7 +383,7 @@ class Document:
             snapshot.save(path, garbage=0, deflate=False)
         return 0
 
-    def install_gpu_vector_page(self, index, scene, *, persist=True):
+    def install_gpu_vector_page(self, index, scene, *, persist=True, background=False):
         """Install a scene produced from the current page snapshot."""
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
         key = (index, float(scene.raster_scale), aggressive_band_merge)
@@ -389,7 +397,7 @@ class Document:
             _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
             self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
         if persist:
-            self._save_disk_gpu_scene(index, scene)
+            self._save_disk_gpu_scene(index, scene, background=background)
         return scene
 
     def page_size(self, index):

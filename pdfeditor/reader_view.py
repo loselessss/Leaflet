@@ -31,7 +31,6 @@ VIEWPORT_PIXELS = 6_000_000
 MAX_VISIBLE_TILES = 48
 GPU_SCENE_TIMEOUT_SECONDS = 1.0
 FORCED_GPU_SCENE_TIMEOUT_SECONDS = 10.0
-AUTO_GPU_SCENE_COMPLEXITY_LIMIT = 3000
 DEFERRED_GPU_SCENE_TIMEOUT_SECONDS = 10.0
 GPU_SCENE_WORKER_TIMEOUT_SECONDS = 12.0
 VECTOR_SCENE_REFINE_DELAY_MS = 120
@@ -222,6 +221,7 @@ class ReaderPageView(QGraphicsView):
                         "features": ()}
             if not scene.supported:
                 if scene.reason in (
+                        "GPU scene awaiting first frame",
                         "GPU scene deferred by complexity probe",
                         "GPU scene time budget exceeded"):
                     return {"mode": "pending", "reason": scene.reason,
@@ -248,22 +248,15 @@ class ReaderPageView(QGraphicsView):
 
     def _gpu_vector_page(self, document, page):
         scale = self._vector_raster_scale()
-        # Large on-disk scenes can take over a second to decode and replay
-        # source images. Only inspect the in-memory cache before the cheap
-        # complexity probe; deferred workers restore disk scenes off the UI.
+        # Never parse or extract an uncached scene before the preview is painted.
+        # Even the complexity probe may traverse a large page's display list.
         cached = document.cached_gpu_vector_page(page, scale, memory_only=True)
         if cached is not None:
             return cached
-        if self._render_mode == "auto":
-            score, _operations = document.gpu_scene_complexity(page)
-            if score >= AUTO_GPU_SCENE_COMPLEXITY_LIMIT:
-                from .gpu_raster import VectorPage
-                return VectorPage(
-                    False, reason="GPU scene deferred by complexity probe",
-                    features=("deferred-scene",), raster_scale=scale)
-        return document.gpu_vector_page(
-            page, scale,
-            timeout_seconds=self._gpu_scene_timeout_seconds())
+        from .gpu_raster import VectorPage
+        return VectorPage(
+            False, reason="GPU scene awaiting first frame",
+            features=("deferred-scene",), raster_scale=scale)
 
     def _gpu_scene_timeout_seconds(self):
         return (FORCED_GPU_SCENE_TIMEOUT_SECONDS
@@ -306,8 +299,9 @@ class ReaderPageView(QGraphicsView):
             generation = getattr(self._document, "render_generation", 0)
             key = (generation, page, self._vector_refine_scale)
             deferred = (
-                self._render_mode == "auto" and not scene.supported and
-                scene.reason in ("GPU scene deferred by complexity probe",
+                self._render_mode in ("auto", "gpu") and not scene.supported and
+                scene.reason in ("GPU scene awaiting first frame",
+                                 "GPU scene deferred by complexity probe",
                                  "GPU scene time budget exceeded") and
                 key not in self._vector_refine_attempted)
             image_refine = (
@@ -322,6 +316,9 @@ class ReaderPageView(QGraphicsView):
             self._vector_refine_timer.start(max(0, int(delay)))
 
     def _refresh_next_vector_page(self):
+        if getattr(self, "_gpu_initial_frame_pending", False):
+            # Painting will rearm the queue; do not spin while hidden/occluded.
+            return
         if not self._vector_refine_pages or \
                 self._document is not self._vector_refine_document or \
                 self._vector_raster_scale() != self._vector_refine_scale:
@@ -335,6 +332,7 @@ class ReaderPageView(QGraphicsView):
         scene = self._vector_pages.get(page)
         if self._render_mode in ("auto", "gpu") and scene is not None and (
                 (not scene.supported and scene.reason in (
+                    "GPU scene awaiting first frame",
                     "GPU scene deferred by complexity probe",
                     "GPU scene time budget exceeded")) or
                 (scene.supported and "image-downsample" in scene.features and
@@ -410,6 +408,7 @@ class ReaderPageView(QGraphicsView):
             "document": self._document, "generation": generation,
             "page": page, "scale": scale, "directory": directory,
             "result": result_path,
+            "disk_cache_key": cache_key,
             "deadline": time.monotonic() + GPU_SCENE_WORKER_TIMEOUT_SECONDS,
         }
         self._vector_refine_poll_timer.start()
@@ -453,7 +452,9 @@ class ReaderPageView(QGraphicsView):
                          (usable and
                           "image-downsample" not in scene.features))
         if current and usable:
-            document.install_gpu_vector_page(job["page"], scene, persist=False)
+            document.install_gpu_vector_page(
+                job["page"], scene, persist=not job.get("disk_cache_key"),
+                background=True)
         if current and usable and scale_matches:
             self._discard_native_vector_page(job["page"])
             self._vector_pages[job["page"]] = scene
@@ -981,12 +982,21 @@ class ReaderPageView(QGraphicsView):
                 if self._d2d_surface is not None:
                     self._paint_d2d()
                     event.accept()
+                    self._finish_initial_gpu_frame()
                     return
             except (OSError, RuntimeError, ValueError) as error:
                 # A device-loss or native-load failure must never blank the PDF.
                 self._backend_failure = str(error)
                 self._release_d2d_surface(disable=True)
         super().paintEvent(event)
+        self._finish_initial_gpu_frame()
+
+    def _finish_initial_gpu_frame(self):
+        if getattr(self, "_gpu_initial_frame_pending", False):
+            self._gpu_initial_frame_pending = False
+            # Run on a later event-loop turn, after the completed first paint.
+            if self._d2d_requested:
+                self._schedule_vector_refine(0)
 
     def _verify_gpu(self):
         if self._gpu_surface is not None and not self._gpu_surface.isValid():
@@ -1001,6 +1011,7 @@ class ReaderPageView(QGraphicsView):
 
     def render_document(self, document, pages, active_page):
         self.stop_rendering()
+        self._gpu_initial_frame_pending = self._d2d_requested
         self._rasterized_pages.clear()
         changed = document is not self._document
         if changed:
@@ -1285,6 +1296,7 @@ class ReaderPageView(QGraphicsView):
 
     def stop_rendering(self, *, keep_zoom_animation=False,
                        keep_vector_refine_worker=False):
+        self._gpu_initial_frame_pending = False
         self._refine_timer.stop()
         self._tile_timer.stop()
         self._vector_refine_timer.stop()

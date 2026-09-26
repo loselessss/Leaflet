@@ -1,5 +1,19 @@
 # Leaflet Release Notes
 
+## 1.33.10 - 2026-09-26
+
+### 성능 개선
+
+- Start uncached GPU scene preparation in a separate process after the first preview has been painted.
+- Reuse prepared scenes immediately in automatic and GPU modes, and persist worker results in the background.
+
+## 1.33.9 - 2026-09-26
+
+### 성능 개선
+
+- Calculate whole-file GPU cache hashes in the background without blocking rendering or GPU preparation.
+- Defer cache writes until hashing completes and cancel pending work when a document changes or closes.
+
 ## 1.33.8 - 2026-09-24
 
 ### 성능 개선

@@ -1164,16 +1164,48 @@ class ReaderViewTests(unittest.TestCase):
         first = VectorPage(True, (VectorPath(
             (("move", 10, 10), ("line", 20, 20)),
             stroke_argb=0xff000000),))
-        changed = VectorPage(False, reason="unsupported operation: fill-text")
         self.view._d2d_requested = True
         with patch.object(
-                self.doc, "gpu_vector_page",
-                side_effect=(first, changed)) as vector_page:
+                self.doc, "cached_gpu_vector_page",
+                side_effect=(first, None)) as vector_page, \
+                patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError):
             self.view.render_document(self.doc, [0], 0)
+            self.assertIs(self.view._vector_pages[0], first)
+            self.doc.invalidate_render(0)
             self.view.render_document(self.doc, [0], 0)
         self.assertEqual(vector_page.call_count, 2)
-        self.assertIs(self.view._vector_pages[0], changed)
+        self.assertFalse(self.view._vector_pages[0].supported)
+        self.assertEqual(self.view._vector_pages[0].reason, "GPU scene awaiting first frame")
         self.view._d2d_requested = False
+
+    def test_uncached_gpu_preparation_waits_for_preview_paint_in_both_modes(self):
+        from PyQt5.QtGui import QPaintEvent
+        for mode in ("auto", "gpu"):
+            with self.subTest(mode=mode):
+                self.view._render_mode = mode
+                self.view._d2d_requested = True
+                self.view._d2d_surface = Mock()
+                self.view._d2d_surface.info.driver = "hardware"
+                order = []
+                with patch.object(self.doc, "gpu_scene_complexity", side_effect=AssertionError), \
+                        patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError), \
+                        patch.object(self.doc, "cached_gpu_vector_page", return_value=None), \
+                        patch.object(self.view, "_ensure_d2d"), \
+                        patch.object(self.view, "_paint_d2d", side_effect=lambda: order.append("paint")), \
+                        patch.object(self.view, "_start_vector_refine_worker",
+                                     side_effect=lambda page: order.append("worker")):
+                    self.view.render_document(self.doc, [0], 0)
+                    self.assertIn(0, self.view._previews)
+                    self.assertEqual(self.view.render_diagnostic(0)["mode"], "pending")
+                    self.view._refresh_next_vector_page()
+                    self.assertEqual(order, [])
+                    self.view.paintEvent(QPaintEvent(self.view.viewport().rect()))
+                    self.assertEqual(order, ["paint"])
+                    self.view._refresh_next_vector_page()
+                    self.assertEqual(order, ["paint", "worker"])
+                self.view.stop_rendering()
+                self.view._d2d_surface = None
+                self.view._d2d_requested = False
 
     def test_render_failure_keeps_preview_and_stops_queue(self):
         self.view._plan_tiles()

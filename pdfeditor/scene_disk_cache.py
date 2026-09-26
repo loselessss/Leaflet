@@ -76,7 +76,15 @@ def _connect():
     return db
 
 
-def key(document, page, scale, aggressive):
+def _digest_key(digest, page, scale, aggressive):
+    from .d2d_backend import ABI_VERSION
+    import pymupdf
+    identity = (SCENE_FORMAT_VERSION, ABI_VERSION, pymupdf.VersionBind,
+                digest, page, float(scale), bool(aggressive))
+    return hashlib.sha256(repr(identity).encode()).hexdigest()
+
+
+def key(document, page, scale, aggressive, *, on_ready=None, defer_ready=False):
     # In-memory edits, protected documents and annotation overlays must not
     # share the original file's cache or persist decrypted content.
     try:
@@ -93,19 +101,24 @@ def key(document, page, scale, aggressive):
             return None
         digest = getattr(document, "_disk_cache_digest", None)
         if digest is None:
-            h = hashlib.sha256()
-            with open(path, "rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    h.update(chunk)
-            after = os.stat(path)
-            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != revision:
+            job = getattr(document, "_disk_cache_hash_job", None)
+            if job is None:
+                from .file_digest import FileDigest
+                job = document._disk_cache_hash_job = FileDigest(path, revision)
+            digest = job.value()
+            if digest is None:
+                if on_ready is not None:
+                    # Capture only immutable scene metadata, never the document.
+                    job.defer((page, scale, aggressive), lambda value:
+                              on_ready(_digest_key(value, page, scale, aggressive)))
                 return None
-            digest = document._disk_cache_digest = h.hexdigest()
-        from .d2d_backend import ABI_VERSION
-        import pymupdf
-        identity = (SCENE_FORMAT_VERSION, ABI_VERSION, pymupdf.VersionBind,
-                    digest, page, float(scale), bool(aggressive))
-        return hashlib.sha256(repr(identity).encode()).hexdigest()
+            document._disk_cache_digest = digest
+        result = _digest_key(digest, page, scale, aggressive)
+        if defer_ready and on_ready is not None:
+            document._disk_cache_hash_job.defer(
+                (page, scale, aggressive), lambda _digest: on_ready(result))
+            return None
+        return result
     except (OSError, AttributeError, ValueError):
         return None
 
