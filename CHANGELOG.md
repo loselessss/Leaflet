@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.33.11 - 2026-09-26
+
+### Bug fixes
+
+- Make GitHub release URL validation tolerant of harmless API URL formatting differences.
+
 English | [한국어](CHANGELOG.ko.md)
 
 ## 1.33.10 - 2026-09-26

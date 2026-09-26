@@ -1,5 +1,11 @@
 # Leaflet Release Notes
 
+## 1.33.11 - 2026-09-26
+
+### Bug fixes
+
+- Improve GitHub release URL validation for automatic updates.
+
 ## 1.33.10 - 2026-09-26
 
 ### 성능 개선

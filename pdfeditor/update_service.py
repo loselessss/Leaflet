@@ -72,12 +72,16 @@ def version_tuple(value):
 
 def _trusted_github_url(value, release_asset=False):
     parsed = urlparse(value)
-    if parsed.scheme != "https" or parsed.hostname != "github.com":
+    if parsed.scheme.casefold() != "https" or \
+            (parsed.hostname or "").casefold() != "github.com":
         return False
     expected = "/%s/releases/" % GITHUB_REPOSITORY
-    if not parsed.path.casefold().startswith(expected.casefold()):
+    path = parsed.path.rstrip("/") + "/"
+    if not path.casefold().startswith(expected.casefold()):
         return False
-    return not release_asset or "/download/" in parsed.path.casefold()
+    if release_asset and "/download/" not in path.casefold():
+        return False
+    return not parsed.params and not parsed.query and not parsed.fragment
 
 
 def localized_release_notes(body, language="en"):
@@ -164,9 +168,10 @@ class GitHubUpdateService:
         latest_version = tag_name[1:] if tag_name.startswith("v") else tag_name
         if version_tuple(latest_version) <= version_tuple(self.current_version):
             return None
-        release_url = str(data.get("html_url", ""))
-        if not _trusted_github_url(release_url):
-            raise UpdateError("GitHub 릴리스 주소를 신뢰할 수 없습니다.")
+        if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag_name):
+            raise UpdateError("GitHub 릴리스 태그 형식이 올바르지 않습니다.")
+        release_url = "https://github.com/%s/releases/tag/%s" % (
+            GITHUB_REPOSITORY, tag_name)
         return AvailableUpdate(
             version=latest_version,
             tag_name=tag_name,
