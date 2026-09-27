@@ -8,6 +8,7 @@
 
 ### 개선
 
+- Remove redundant RGBA buffers for opaque images and repeated cache hashing of shared image pixels while preserving rendered output and the GPU path.
 - Smooth enlarged continuous-tone bitmap images on the GPU while preserving binary-image and mask interpolation settings.
 - Distinguish PDF, AI and EPS file icons with extension badges and separate colors.
 

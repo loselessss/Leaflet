@@ -27,37 +27,51 @@ def _types():
         "GroupPush", "GroupPop", "MaskBegin", "MaskEnd")}
 
 
-def _encode(value):
+def _image_digest(pixels, hashes):
+    # Per serialization only: scene/images keep bytes alive, so identities
+    # cannot be reused. Do not hash large bytes again as dictionary keys.
+    identity = id(pixels)
+    if identity not in hashes:
+        hashes[identity] = hashlib.sha256(pixels).hexdigest()
+    return hashes[identity]
+
+
+def _encode(value, image_hashes=None):
+    if image_hashes is None:
+        image_hashes = {}
     if is_dataclass(value):
         referenced = type(value).__name__ == "VectorImage" and value.source_index is not None
         encoded = {"type": type(value).__name__, "fields": {
-            f.name: _encode(getattr(value, f.name)) for f in fields(value)
+            f.name: _encode(getattr(value, f.name), image_hashes) for f in fields(value)
             if not (referenced and f.name == "pixels")}}
         if referenced:
             encoded["fields"]["pixels"] = {
                 "image_ref": value.source_index,
-                "sha256": hashlib.sha256(value.pixels).hexdigest()}
+                "sha256": _image_digest(value.pixels, image_hashes)}
         return encoded
     if isinstance(value, bytes):
         return {"bytes": base64.b64encode(value).decode("ascii")}
     if isinstance(value, (tuple, list)):
-        return [_encode(v) for v in value]
+        return [_encode(v, image_hashes) for v in value]
     return value
 
 
-def _decode(value, types, images=None):
+def _decode(value, types, images=None, image_hashes=None):
+    if image_hashes is None:
+        image_hashes = {}
     if isinstance(value, list):
-        return tuple(_decode(v, types, images) for v in value)
+        return tuple(_decode(v, types, images, image_hashes) for v in value)
     if isinstance(value, dict):
         if "image_ref" in value:
             pixels = images[value["image_ref"]]
-            if hashlib.sha256(pixels).hexdigest() != value["sha256"]:
+            if _image_digest(pixels, image_hashes) != value["sha256"]:
                 raise ValueError("source image changed")
             return pixels
         if set(value) == {"bytes"}:
             return base64.b64decode(value["bytes"], validate=True)
         cls = types[value["type"]]
-        return cls(**{k: _decode(v, types, images) for k, v in value["fields"].items()})
+        return cls(**{k: _decode(v, types, images, image_hashes)
+                      for k, v in value["fields"].items()})
     return value
 
 

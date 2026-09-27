@@ -646,6 +646,18 @@ def _bbox_area(box):
         max(0.0, float(box[3]) - float(box[1]))
 
 
+def _rgb_to_bgra(samples, width, height):
+    """Pack opaque RGB directly, without allocating an intermediate RGBA pixmap."""
+    count = int(width) * int(height)
+    if len(samples) < count * 3:
+        raise ValueError("rasterized image data is incomplete")
+    bgra = bytearray(count * 4)
+    for target, source in ((0, 2), (1, 1), (2, 0)):
+        bgra[target::4] = samples[source:count * 3:3]
+    bgra[3::4] = b"\xff" * count
+    return bytes(bgra)
+
+
 def _rgba_to_premul_bgra(samples, width, height):
     cost = int(width) * int(height) * 4
     if len(samples) < cost:
@@ -1928,16 +1940,15 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 if pixmap.n - pixmap.alpha != 3:
                     # PDF images may be Gray/CMYK/ICC-based; Direct2D receives BGRA.
                     pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
-                if not pixmap.alpha and pixmap.n == 3:
-                    pixmap = pymupdf.Pixmap(pixmap, 1)
                 pixmap = self._downsample_pixmap(pixmap, ctm)
-                rgba = pixmap.samples
-                cost = pixmap.width * pixmap.height * 4
-                if pixmap.n != 4 or not pixmap.alpha or len(rgba) < cost:
-                    raise ValueError("decoded image is not RGBA")
-                bgra = _rgba_to_premul_bgra(rgba, pixmap.width, pixmap.height)
+                if pixmap.n == 3 and not pixmap.alpha:
+                    bgra = _rgb_to_bgra(pixmap.samples, pixmap.width, pixmap.height)
+                elif pixmap.n == 4 and pixmap.alpha:
+                    bgra = _rgba_to_premul_bgra(pixmap.samples, pixmap.width, pixmap.height)
+                else:
+                    raise ValueError("decoded image is not RGB or RGBA")
                 cached = self._store_image_bytes(
-                    key, bytes(bgra), pixmap.width, pixmap.height,
+                    key, bgra, pixmap.width, pixmap.height,
                     pixmap.width * 4)
             pixels, width, height, stride = cached
             self._append_item(VectorImage(

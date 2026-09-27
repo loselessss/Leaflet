@@ -12,6 +12,25 @@ from pdfeditor.gpu_raster import VectorPage, VectorImage
 
 
 class SceneDiskCacheTests(unittest.TestCase):
+    def test_repeated_image_hashes_once_but_validates_each_reference(self):
+        import hashlib
+        import copy
+        pixels = bytes((20, 30, 40, 255)) * 1024
+        images = [VectorImage(pixels, 32, 32, 128, (32, 0, 0, 32, i, 0),
+                              source_index=i) for i in range(5)]
+        with patch.object(cache.hashlib, "sha256", wraps=hashlib.sha256) as digest:
+            encoded = cache._encode(images)
+            self.assertEqual(digest.call_count, 1)
+        sources = {i: pixels for i in range(5)}
+        with patch.object(cache.hashlib, "sha256", wraps=hashlib.sha256) as digest:
+            decoded = cache._decode(encoded, cache._types(), sources)
+            self.assertEqual(digest.call_count, 1)
+        self.assertEqual(decoded, tuple(images))
+        corrupted = copy.deepcopy(encoded)
+        corrupted[-1]["fields"]["pixels"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "source image changed"):
+            cache._decode(corrupted, cache._types(), sources)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

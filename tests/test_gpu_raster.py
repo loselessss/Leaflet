@@ -547,6 +547,18 @@ def small_overlapping_nonisolated_group_pdf_bytes():
 
 
 class GpuRasterSceneTests(unittest.TestCase):
+    def test_direct_rgb_pack_matches_old_rgba_pipeline_after_shrink(self):
+        from pdfeditor.gpu_raster import _rgb_to_bgra, _rgba_to_premul_bgra
+        samples = bytes((i * 73 + i // 7) % 256 for i in range(127 * 93 * 3))
+        for factor in (0, 1, 2, 3):
+            rgb = fitz.Pixmap(fitz.csRGB, 127, 93, samples, False)
+            old = fitz.Pixmap(rgb, 1)
+            if factor:
+                rgb.shrink(factor)
+                old.shrink(factor)
+            self.assertEqual(_rgb_to_bgra(rgb.samples, rgb.width, rgb.height),
+                             _rgba_to_premul_bgra(old.samples, old.width, old.height))
+
     def test_continuous_tone_images_smooth_without_pdf_interpolate(self):
         from pdfeditor.gpu_raster import VectorImage, vector_page_from_pymupdf
         with fitz.open(stream=cmyk_image_pdf_bytes(), filetype="pdf") as pdf:
