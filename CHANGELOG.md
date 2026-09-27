@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.34.0 - 2026-09-27
+
+### 새 기능
+
+- Open EPS files using an installed Ghostscript interpreter and save as PDF while preserving the EPS source.
+
+### 개선
+
+- Smooth enlarged continuous-tone bitmap images on the GPU while preserving binary-image and mask interpolation settings.
+- Distinguish PDF, AI and EPS file icons with extension badges and separate colors.
+
 ## 1.33.12 - 2026-09-27
 
 ### 개선

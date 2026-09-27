@@ -44,7 +44,7 @@ class ReleasePackagingTests(unittest.TestCase):
             'ValueType: string; ValueData: "PDF";', installer)
         registration = (ROOT / "register_filetype.py").read_text(
             encoding="utf-8")
-        self.assertIn('k, "", 0, winreg.REG_SZ, "PDF")', registration)
+        self.assertIn('(".pdf", PROG_ID, "PDF", "spdf_doc.ico")', registration)
         self.assertNotIn("PDF / Illustrator Document", installer)
         self.assertNotIn("PDF / Illustrator Document", registration)
 

@@ -44,7 +44,16 @@ class DocumentSnapshot:
         self.path = os.path.join(self.directory.name, "document.pdf")
         try:
             before = file_revision(source)
-            shutil.copyfile(source, self.path)
+            if os.path.splitext(os.fspath(source))[1].lower() == ".eps":
+                from .eps import convert_eps
+                # Use a private input too: conversion may run in a worker while
+                # the source is replaced by another application.
+                eps_input = os.path.join(self.directory.name, "source.eps")
+                shutil.copyfile(source, eps_input)
+                convert_eps(eps_input, self.path)
+                os.unlink(eps_input)
+            else:
+                shutil.copyfile(source, self.path)
             self.revision = file_revision(source)
             if before != self.revision:
                 raise OSError("Document changed while copying; retry opening it.")

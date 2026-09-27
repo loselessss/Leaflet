@@ -14,6 +14,18 @@ from pdfeditor.meta import APP_VERSION
 
 
 class MsixTests(unittest.TestCase):
+    def test_file_types_have_distinct_logos(self):
+        from build_msix import UAP
+        root = ET.fromstring(manifest(APP_VERSION, 'Example.sPDF', 'CN=Example', 'Example'))
+        associations = root.findall('.//{' + UAP + '}FileTypeAssociation')
+        found = {}
+        for association in associations:
+            extension = association.find('.//{' + UAP + '}FileType').text
+            found[extension] = association.find('{' + UAP + '}Logo').text
+        self.assertEqual(found, {'.pdf': r'Assets\PdfLogo.png',
+                                 '.ai': r'Assets\AiLogo.png',
+                                 '.eps': r'Assets\EpsLogo.png'})
+
     def test_manifest_identity_is_escaped_and_preserves_version(self):
         root=ET.fromstring(manifest(APP_VERSION,'Example.sPDF','CN=Example & Co','Example & Co'))
         identity=root.find('{'+NS+'}Identity')

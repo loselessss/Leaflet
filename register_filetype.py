@@ -14,7 +14,10 @@ import winreg
 PROG_ID = "sPDF.Document"
 LEGACY_PROG_ID = "PDFEditor.Document"
 from pdfeditor.meta import APP_NAME
-EXTENSIONS = (".pdf", ".ai")
+FILE_TYPES = ((".pdf", PROG_ID, "PDF", "spdf_doc.ico"),
+              (".ai", "Leaflet.Illustrator", "AI", "leaflet_ai.ico"),
+              (".eps", "Leaflet.EPS", "EPS", "leaflet_eps.ico"))
+EXTENSIONS = tuple(item[0] for item in FILE_TYPES)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -29,28 +32,30 @@ def register():
     runpyw = os.path.join(HERE, "run.pyw")
     command = '"%s" "%s" "%%1"' % (pythonw, runpyw)
 
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                          r"Software\Classes\%s" % PROG_ID) as k:
-        winreg.SetValueEx(
-            k, "", 0, winreg.REG_SZ, "PDF")
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                          r"Software\Classes\%s\shell\open\command" % PROG_ID) as k:
-        winreg.SetValueEx(k, "", 0, winreg.REG_SZ, command)
+    for extension, prog_id, label, icon in FILE_TYPES:
+        base = r"Software\Classes\%s" % prog_id
+        for suffix, value in (("", label),
+                              (r"\DefaultIcon", '"%s",0' % os.path.join(HERE, "assets", icon)),
+                              (r"\shell\open\command", command)):
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, base + suffix) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, value)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Classes\%s\OpenWithProgids" % extension) as k:
+            if prog_id != PROG_ID:
+                try:
+                    winreg.DeleteValue(k, PROG_ID)
+                except FileNotFoundError:
+                    pass
+            winreg.SetValueEx(k, prog_id, 0, winreg.REG_NONE, b"")
 
-    # 기본값은 덮어쓰지 않고 '연결 프로그램' 후보에만 추가한다.
-    for extension in EXTENSIONS:
-        with winreg.CreateKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Classes\%s\OpenWithProgids" % extension) as k:
-            winreg.SetValueEx(k, PROG_ID, 0, winreg.REG_NONE, b"")
-
-    print("등록 완료. PDF/AI 파일의 '연결 프로그램'에 '%s'가 보입니다." % APP_NAME)
+    print("등록 완료. PDF/AI/EPS 파일의 '연결 프로그램'에 '%s'가 보입니다." % APP_NAME)
     print("명령:", command)
 
 
 def unregister():
-    for prog_id in (PROG_ID, LEGACY_PROG_ID):
+    for prog_id in (*[item[1] for item in FILE_TYPES], LEGACY_PROG_ID):
         for path in (
+                r"Software\Classes\%s\DefaultIcon" % prog_id,
                 r"Software\Classes\%s\shell\open\command" % prog_id,
                 r"Software\Classes\%s\shell\open" % prog_id,
                 r"Software\Classes\%s\shell" % prog_id,

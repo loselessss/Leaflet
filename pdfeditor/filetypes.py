@@ -3,10 +3,10 @@
 import os
 
 
-SUPPORTED_DOCUMENT_EXTENSIONS = (".pdf", ".ai")
+SUPPORTED_DOCUMENT_EXTENSIONS = (".pdf", ".ai", ".eps")
 DOCUMENT_OPEN_FILTER = (
-    "PDF/Illustrator 파일 (*.pdf *.ai);;"
-    "PDF 파일 (*.pdf);;Illustrator 파일 (*.ai)")
+    "PDF/Illustrator/EPS 파일 (*.pdf *.ai *.eps);;"
+    "PDF 파일 (*.pdf);;Illustrator 파일 (*.ai);;EPS 파일 (*.eps)")
 
 
 def is_supported_document(path):
@@ -16,6 +16,10 @@ def is_supported_document(path):
 
 def is_illustrator_document(path):
     return os.path.splitext(str(path))[1].lower() == ".ai"
+
+
+def is_eps_document(path):
+    return os.path.splitext(str(path))[1].lower() == ".eps"
 
 
 def suggested_pdf_path(path):

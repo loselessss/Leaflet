@@ -12,7 +12,7 @@ from dataclasses import fields, is_dataclass
 
 import fitz
 
-from .filetypes import is_illustrator_document
+from .filetypes import is_illustrator_document, is_eps_document
 from .access import document_annotation, document_write
 
 
@@ -80,7 +80,7 @@ class Document:
         # 비밀번호를 들고 있어야 한다.
         self._password = password
         self._snapshot = snapshot
-        if isolated and self._snapshot is None:
+        if (isolated or is_eps_document(path)) and self._snapshot is None:
             from .document_snapshot import DocumentSnapshot
             self._snapshot = DocumentSnapshot(path)
         try:
@@ -141,6 +141,13 @@ class Document:
 
     @staticmethod
     def _open(path, password):
+        if is_eps_document(path):
+            from .eps import convert_eps
+            with tempfile.TemporaryDirectory(prefix="leaflet-eps-") as folder:
+                converted = os.path.join(folder, "document.pdf")
+                convert_eps(path, converted)
+                with open(converted, "rb") as stream:
+                    return fitz.open("pdf", stream.read())
         # PDF-compatible Illustrator files contain a PDF representation, but
         # their .ai extension is not consistently auto-detected by MuPDF.
         doc = fitz.open(path, filetype="pdf") \
@@ -1141,6 +1148,8 @@ class Document:
         순서로 처리한다.
         """
         out_path = os.fspath(out_path)
+        if is_eps_document(out_path):
+            raise ValueError("EPS 원본에 덮어쓸 수 없습니다. PDF로 저장해 주세요.")
         if getattr(self, "_snapshot", None) is not None:
             return self._save_isolated(out_path, backup)
         fd, tmp = tempfile.mkstemp(prefix=".spdf-save-", suffix=".pdf",

@@ -1943,7 +1943,11 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._append_item(VectorImage(
                 pixels, width, height, stride, _matrix(ctm),
                 max(0.0, min(1.0, float(alpha))),
-                bool(source.interpolate()), source_index,
+                # PDF defaults /Interpolate to false. For continuous-tone
+                # images that makes enlarged photos visibly blocky. Smooth
+                # them on the GPU, but preserve binary art and mask semantics.
+                bool(source.interpolate()) or
+                (int(source.bpc()) > 1 and not self._mask_depth), source_index,
                 ("image", source_index)))
         except Exception as error:
             self._set_failure(str(error))

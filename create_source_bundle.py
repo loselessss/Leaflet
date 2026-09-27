@@ -38,6 +38,7 @@ def clean_source_status(status):
     # build_exe regenerates these derived assets from the tagged make_icons.py.
     # Font/Pillow differences can change their bytes on the build server.
     allowed = {b" M assets/spdf.ico", b" M assets/spdf_doc.ico",
+               b" M assets/leaflet_ai.ico", b" M assets/leaflet_eps.ico",
                b" M native/bin/spdf_d2d_renderer.dll"}
     return all(line in allowed for line in status.splitlines())
 

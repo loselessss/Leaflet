@@ -56,12 +56,13 @@ def manifest(version, name, publisher, display_name):
         Square150x150Logo=r'Assets\Square150x150Logo.png',
         Square44x44Logo=r'Assets\Square44x44Logo.png',BackgroundColor='transparent')
     extensions = node(app,'Extensions')
-    extension = ET.SubElement(extensions,'{'+UAP+'}Extension',Category='windows.fileTypeAssociation')
-    association = ET.SubElement(extension,'{'+UAP+'}FileTypeAssociation',Name='spdf.pdf')
-    ET.SubElement(association,'{'+UAP+'}DisplayName').text='PDF'
-    supported = ET.SubElement(association,'{'+UAP+'}SupportedFileTypes')
-    for extension in ('.pdf','.ai'):
-        ET.SubElement(supported,'{'+UAP+'}FileType').text=extension
+    for suffix, label, logo in (('.pdf', 'PDF', 'PdfLogo'), ('.ai', 'AI', 'AiLogo'), ('.eps', 'EPS', 'EpsLogo')):
+        extension = ET.SubElement(extensions,'{'+UAP+'}Extension',Category='windows.fileTypeAssociation')
+        association = ET.SubElement(extension,'{'+UAP+'}FileTypeAssociation',Name='spdf'+suffix)
+        ET.SubElement(association,'{'+UAP+'}DisplayName').text=label
+        ET.SubElement(association,'{'+UAP+'}Logo').text='Assets\\'+logo+'.png'
+        supported = ET.SubElement(association,'{'+UAP+'}SupportedFileTypes')
+        ET.SubElement(supported,'{'+UAP+'}FileType').text=suffix
     capabilities = node(root,'Capabilities')
     ET.SubElement(capabilities,'{'+RESCAP+'}Capability',Name='runFullTrust')
     return ET.tostring(root,encoding='utf-8',xml_declaration=True)
@@ -104,6 +105,9 @@ def stage_package(source, destination, *, version, name, publisher, display_name
         image=image.convert('RGBA')
         for label,size in [('StoreLogo',50),('Square44x44Logo',44),('Square150x150Logo',150)]:
             image.resize((size,size),Image.Resampling.LANCZOS).save(assets/(label+'.png'))
+    for label, filename in [('PdfLogo', 'spdf_doc.ico'), ('AiLogo', 'leaflet_ai.ico'), ('EpsLogo', 'leaflet_eps.ico')]:
+        with Image.open(Path(icon).parent / filename) as image:
+            image.convert('RGBA').resize((44,44),Image.Resampling.LANCZOS).save(assets/(label+'.png'))
     return destination
 
 

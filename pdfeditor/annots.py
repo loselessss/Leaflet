@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 from .i18n import localize, tr
 from .access import annotation_command, saving_command
 
-from .filetypes import is_illustrator_document, suggested_pdf_path
+from .filetypes import is_illustrator_document, is_eps_document, suggested_pdf_path
 
 from .icons import fluent_icon
 
@@ -101,7 +101,7 @@ class AnnotMixin:
             return False
         if self.doc.annotation_mode:
             return self._save_annotations()
-        if (is_illustrator_document(self.doc.path) or
+        if (is_illustrator_document(self.doc.path) or is_eps_document(self.doc.path) or
                 getattr(self, "_recovered_unsaved", False)):
             return self.save_as_dialog()
         try:

@@ -237,6 +237,19 @@ class D2DBackendTests(unittest.TestCase):
                     0x00, 0x00, 0xff, 0xff, 0x00, 0xff, 0x00, 0xff,
                     0xff, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff))
                 bitmap = surface.create_bitmap_bgra(pixels, 2, 2)
+                # Magnified continuous-tone images should gain intermediate
+                # colors instead of four large nearest-neighbor blocks.
+                color_counts = []
+                for interpolate in (False, True):
+                    surface.begin_frame()
+                    surface.draw_bitmap(bitmap, 0, 0, 64, 64,
+                                        interpolate=interpolate)
+                    rendered = surface.read_pixels_bgra(64, 64)
+                    color_counts.append(len({rendered[i:i + 4]
+                                             for i in range(0, len(rendered), 4)}))
+                    surface.end_frame()
+                self.assertEqual(color_counts[0], 4)
+                self.assertGreater(color_counts[1], 100)
                 path = surface.create_path([
                     ("move", 6, 6), ("line", 58, 6),
                     ("line", 58, 58), ("line", 6, 58), ("close",)])

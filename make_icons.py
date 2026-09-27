@@ -1,4 +1,4 @@
-"""아이콘 생성 — Leaflet 앱 아이콘 + PDF 문서 연결 아이콘.
+"""아이콘 생성 — Leaflet 앱 아이콘 + PDF/AI/EPS 문서 아이콘.
 
 외부 이미지 없이 Pillow로 그린다(재생성 가능해야 로고 수정이 쉬움).
 결과: assets/spdf.ico (앱), assets/spdf_doc.ico (연결된 PDF 파일용)
@@ -12,15 +12,17 @@ from PIL import Image, ImageDraw, ImageFont
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 
-# 브랜드 색 — 문서는 흰 종이, 강조는 차분한 파랑(Acrobat 빨강과 구분)
+# 앱은 초록, 문서는 확장자별 색으로 구분한다.
 PAPER = (255, 255, 255, 255)
 EDGE = (203, 213, 225, 255)
 FOLD = (226, 232, 240, 255)
 ACCENT = (16, 112, 88, 255)
-DOC_ACCENT = ACCENT
+DOC_ACCENT = (190, 48, 62, 255)
+AI_ACCENT = (166, 88, 10, 255)
+EPS_ACCENT = (109, 70, 173, 255)
 
 
-def draw_app_icon(px):
+def draw_app_icon(px, accent=ACCENT, label=None):
     """A folded white leaflet and a green leaf; no text at small sizes."""
     scale = px * 4 / 256
     img = Image.new("RGBA", (px * 4, px * 4))
@@ -30,11 +32,12 @@ def draw_app_icon(px):
         return [(round(x * scale), round(y * scale)) for x, y in coords]
 
     d.rounded_rectangle(points([(12, 12), (244, 244)]),
-                        radius=round(54 * scale), fill=ACCENT)
+                        radius=round(54 * scale), fill=accent)
     d.polygon(points([(65, 43), (151, 43), (192, 84),
                       (192, 212), (65, 212)]), fill=PAPER)
     d.polygon(points([(151, 43), (151, 84), (192, 84)]),
-              fill=(183, 220, 206, 255))
+              fill=((183, 220, 206, 255) if label is None else
+                    tuple(round(v * 0.3 + 255 * 0.7) for v in accent[:3]) + (255,)))
     # Two cubic curves form a leaf pointing towards the folded corner.
     leaf = []
     for a, b, c, e in [((85, 175), (67, 121), (111, 102), (170, 102)),
@@ -44,9 +47,15 @@ def draw_app_icon(px):
             leaf.append(tuple((1-t)**3*a[j] + 3*(1-t)**2*t*b[j]
                               + 3*(1-t)*t*t*c[j] + t**3*e[j]
                               for j in (0, 1)))
-    d.polygon(points(leaf), fill=ACCENT)
+    d.polygon(points(leaf), fill=accent)
     d.line(points([(83, 184), (142, 126)]), fill=PAPER,
            width=max(1, round(7 * scale)))
+    if label:
+        box = points([(82, 181), (235, 237)])
+        d.rounded_rectangle(box, radius=round(10 * scale), fill=accent,
+                            outline=PAPER, width=max(1, round(4 * scale)))
+        _centered(d, (*box[0], *box[1]), label,
+                  _font(round(39 * scale)), PAPER)
     return img.resize((px, px), Image.Resampling.LANCZOS)
 
 
@@ -68,41 +77,8 @@ def _centered(d, box, text, font, fill):
 
 
 def draw_icon(px, label, accent):
-    """종이 + 접힌 모서리 + 하단 배지. 큰 캔버스에 그리고 축소해 계단현상 완화."""
-    S = px * 4
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    m = int(S * 0.12)          # 여백
-    fold = int(S * 0.26)       # 접힌 모서리 크기
-    x0, y0, x1, y1 = m, int(S * 0.06), S - m, S - int(S * 0.06)
-
-    # 종이(접힌 모서리를 뺀 다각형)
-    d.polygon([(x0, y0), (x1 - fold, y0), (x1, y0 + fold), (x1, y1), (x0, y1)],
-              fill=PAPER, outline=EDGE, width=max(1, S // 128))
-    # 접힌 모서리
-    d.polygon([(x1 - fold, y0), (x1, y0 + fold), (x1 - fold, y0 + fold)],
-              fill=FOLD, outline=EDGE, width=max(1, S // 128))
-
-    # 본문 줄 — 작은 크기에선 뭉개지므로 생략
-    if px >= 32:
-        lw = max(2, S // 42)
-        for i in range(3):
-            ly = y0 + int(S * 0.30) + i * int(S * 0.11)
-            d.line([(x0 + int(S * 0.14), ly), (x1 - int(S * 0.16), ly)],
-                   fill=(148, 163, 184, 255), width=lw)
-
-    # 하단 배지 + 라벨
-    bh = int(S * 0.30)
-    by1 = y1 - int(S * 0.03)
-    by0 = by1 - bh
-    bx0, bx1 = x0 + int(S * 0.05), x1 - int(S * 0.05)
-    r = int(bh * 0.22)
-    d.rounded_rectangle([bx0, by0, bx1, by1], radius=r, fill=accent)
-    _centered(d, (bx0, by0, bx1, by1), label,
-              _font(int(bh * 0.62)), (255, 255, 255, 255))
-
-    return img.resize((px, px), Image.LANCZOS)
+    """Use the Leaflet mark with a contrasting file-type badge."""
+    return draw_app_icon(px, accent, label)
 
 
 def build(name, label, accent):
@@ -120,7 +96,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     # Retain internal resource paths for existing packaging integrations.
     build("spdf.ico", None, ACCENT)         # Leaflet 앱 실행 파일
-    build("spdf_doc.ico", "PDF", DOC_ACCENT)  # 연결된 PDF 문서
+    build("spdf_doc.ico", "PDF", DOC_ACCENT)
+    build("leaflet_ai.ico", "AI", AI_ACCENT)
+    build("leaflet_eps.ico", "EPS", EPS_ACCENT)
 
 
 if __name__ == "__main__":

@@ -218,8 +218,8 @@ EN = {
     "PDF 열기": "Open PDF",
     "PDF 파일 (*.pdf)": "PDF Files (*.pdf)",
     "PDF/Illustrator 파일 열기": "Open PDF/Illustrator File",
-    "PDF/Illustrator 파일 (*.pdf *.ai);;PDF 파일 (*.pdf);;Illustrator 파일 (*.ai)":
-        "PDF/Illustrator Files (*.pdf *.ai);;PDF Files (*.pdf);;Illustrator Files (*.ai)",
+    "PDF/Illustrator/EPS 파일 (*.pdf *.ai *.eps);;PDF 파일 (*.pdf);;Illustrator 파일 (*.ai);;EPS 파일 (*.eps)":
+        "PDF/Illustrator/EPS Files (*.pdf *.ai *.eps);;PDF Files (*.pdf);;Illustrator Files (*.ai);;EPS Files (*.eps)",
     "PDF 파일 여러 개 선택": "Select PDF Files",
     "저장할 PDF": "Save PDF",
     "모든 파일 (*)": "All Files (*)",

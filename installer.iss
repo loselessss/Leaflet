@@ -5,10 +5,12 @@
 ; 아래 MyAppVersion을 함께 맞출 것(자동 동기화 안 됨).
 
 #define MyAppName "Leaflet"
-#define MyAppVersion "1.33.12"
+#define MyAppVersion "1.34.0"
 #define MyAppPublisher "Leaflet"
 #define MyAppExeName "Leaflet.exe"
 #define MyProgId "sPDF.Document"
+#define MyAiProgId "Leaflet.Illustrator"
+#define MyEpsProgId "Leaflet.EPS"
 #define MyAppUserModelId "sPDF.Desktop"
 
 [Setup]
@@ -52,8 +54,8 @@ Name: "desktopreader"; Description: "{cm:ReaderDesktopShortcut}"; GroupDescripti
 Name: "desktopeditor"; Description: "{cm:EditorDesktopShortcut}"; GroupDescription: "{cm:AdditionalShortcuts}"; Flags: unchecked
 ; PDF/Illustrator 연결은 '연결 프로그램 후보'로만 등록(기본값을 강제로 뺏지 않음).
 ; 사용자가 나중에 Windows '기본 앱'에서 sPDF를 직접 고를 수 있다.
-Name: "associate"; Description: "Add Leaflet to the Open with list for PDF and Illustrator files"; GroupDescription: "File associations:"; Languages: english
-Name: "associate"; Description: "PDF 및 Illustrator 파일의 연결 프로그램 목록에 Leaflet 추가"; GroupDescription: "파일 연결:"; Languages: korean
+Name: "associate"; Description: "Add Leaflet to the Open with list for PDF, Illustrator and EPS files"; GroupDescription: "File associations:"; Languages: english
+Name: "associate"; Description: "PDF, Illustrator 및 EPS 파일의 연결 프로그램 목록에 Leaflet 추가"; GroupDescription: "파일 연결:"; Languages: korean
 ; Windows 8 이상에서는 설치 프로그램이 기본 앱을 직접 바꿀 수 없다.
 ; 선택 시 설치 완료 후 Windows 기본 앱 설정을 열어 사용자가 확정한다.
 Name: "associate\defaultpdf"; Description: "Choose Leaflet as the default PDF app after installation (opens Windows Settings)"; GroupDescription: "File associations:"; Flags: unchecked; Languages: english
@@ -66,6 +68,8 @@ Source: "dist\Leaflet\Leaflet.exe"; DestDir: "{app}"; DestName: "sPDF.exe"; Flag
 ; OCR 워커는 Qt DLL과 격리하기 위해 별도 폴더에 (paths.ocr_command 참고)
 Source: "dist\Leaflet-ocr\*"; DestDir: "{app}\ocr"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\spdf_doc.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "assets\leaflet_ai.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+Source: "assets\leaflet_eps.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 ; Keep legal documents accessible without starting sPDF.
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -108,18 +112,27 @@ Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: none; ValueName
 Root: HKA; Subkey: "Software\sPDF"; ValueType: string; ValueName: "UILanguage"; ValueData: "{code:GetUiLanguage}"; Flags: uninsdeletevalue
 ; --- ProgId: sPDF로 PDF를 열었을 때의 아이콘/실행 명령 ---
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}"; ValueType: string; ValueData: "PDF"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyAiProgId}"; ValueType: string; ValueData: "AI"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#MyEpsProgId}"; ValueType: string; ValueData: "EPS"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}\DefaultIcon"; ValueType: string; ValueData: "{app}\assets\spdf_doc.ico"
+Root: HKA; Subkey: "Software\Classes\{#MyAiProgId}\DefaultIcon"; ValueType: string; ValueData: "{app}\assets\leaflet_ai.ico"
+Root: HKA; Subkey: "Software\Classes\{#MyEpsProgId}\DefaultIcon"; ValueType: string; ValueData: "{app}\assets\leaflet_eps.ico"
 Root: HKA; Subkey: "Software\Classes\{#MyProgId}\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\{#MyAiProgId}\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\{#MyEpsProgId}\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 ; --- .pdf/.ai의 '연결 프로그램' 후보 목록에 추가(기본값은 안 건드림) ---
 Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: none; ValueName: "{#MyProgId}"; Flags: uninsdeletevalue; Tasks: associate
-Root: HKA; Subkey: "Software\Classes\.ai\OpenWithProgids"; ValueType: none; ValueName: "{#MyProgId}"; Flags: uninsdeletevalue; Tasks: associate
+Root: HKA; Subkey: "Software\Classes\.ai\OpenWithProgids"; ValueType: none; ValueName: "{#MyProgId}"; Flags: deletevalue; Tasks: associate
+Root: HKA; Subkey: "Software\Classes\.ai\OpenWithProgids"; ValueType: none; ValueName: "{#MyAiProgId}"; Flags: uninsdeletevalue; Tasks: associate
+Root: HKA; Subkey: "Software\Classes\.eps\OpenWithProgids"; ValueType: none; ValueName: "{#MyEpsProgId}"; Flags: uninsdeletevalue; Tasks: associate
 
 ; --- Windows '기본 앱' 목록에 sPDF가 나타나도록 Capabilities 등록 ---
 Root: HKA; Subkey: "Software\sPDF\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey; Tasks: associate
 Root: HKA; Subkey: "Software\sPDF\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Lightweight PDF viewer, annotation, OCR, and editing tool"; Tasks: associate
 Root: HKA; Subkey: "Software\sPDF\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "{#MyProgId}"; Tasks: associate
-Root: HKA; Subkey: "Software\sPDF\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ai"; ValueData: "{#MyProgId}"; Tasks: associate
+Root: HKA; Subkey: "Software\sPDF\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ai"; ValueData: "{#MyAiProgId}"; Tasks: associate
+Root: HKA; Subkey: "Software\sPDF\Capabilities\FileAssociations"; ValueType: string; ValueName: ".eps"; ValueData: "{#MyEpsProgId}"; Tasks: associate
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: "Software\sPDF\Capabilities"; Flags: uninsdeletevalue; Tasks: associate
 
 [Run]

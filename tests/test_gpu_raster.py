@@ -547,6 +547,33 @@ def small_overlapping_nonisolated_group_pdf_bytes():
 
 
 class GpuRasterSceneTests(unittest.TestCase):
+    def test_continuous_tone_images_smooth_without_pdf_interpolate(self):
+        from pdfeditor.gpu_raster import VectorImage, vector_page_from_pymupdf
+        with fitz.open(stream=cmyk_image_pdf_bytes(), filetype="pdf") as pdf:
+            for xref in range(1, pdf.xref_length()):
+                if pdf.xref_get_key(xref, "Subtype")[1] == "/Image":
+                    pdf.xref_set_key(xref, "Interpolate", "false")
+            scene = vector_page_from_pymupdf(pdf[0])
+        self.assertTrue(scene.supported, scene.reason)
+        images = [item for item in scene.drawables if isinstance(item, VectorImage)]
+        self.assertTrue(images)
+        self.assertTrue(all(item.interpolate for item in images))
+
+    def test_binary_images_preserve_nearest_neighbor(self):
+        from pdfeditor.gpu_raster import VectorImage, vector_page_from_pymupdf
+        with fitz.open(stream=cmyk_image_pdf_bytes(), filetype="pdf") as pdf:
+            for xref in range(1, pdf.xref_length()):
+                if pdf.xref_get_key(xref, "Subtype")[1] == "/Image":
+                    pdf.xref_set_key(xref, "ColorSpace", "/DeviceGray")
+                    pdf.xref_set_key(xref, "BitsPerComponent", "1")
+                    pdf.xref_set_key(xref, "Interpolate", "false")
+                    pdf.update_stream(xref, b"\x80\x40")
+            scene = vector_page_from_pymupdf(pdf[0])
+        self.assertTrue(scene.supported, scene.reason)
+        images = [item for item in scene.drawables if isinstance(item, VectorImage)]
+        self.assertTrue(images)
+        self.assertTrue(all(not item.interpolate for item in images))
+
     def test_move_only_fill_is_ignored_without_falling_back(self):
         from pdfeditor import gpu_raster as g
         with fitz.open() as pdf:
