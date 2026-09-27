@@ -4,13 +4,13 @@
 
 ### 새 기능
 
-- Open EPS files using an installed Ghostscript interpreter and save as PDF while preserving the EPS source.
+- Open EPS files with an installed Ghostscript interpreter. Save edited results as PDF while preserving the EPS source.
+- Ghostscript is not bundled. Install it separately to use EPS files.
 
 ### 개선
 
-- Eliminate the extra full-image buffer copy before GPU upload to reduce temporary memory and preparation time.
-- Remove redundant RGBA buffers for opaque images and repeated cache hashing of shared image pixels while preserving rendered output and the GPU path.
-- Smooth enlarged continuous-tone bitmap images on the GPU while preserving binary-image and mask interpolation settings.
+- Smooth enlarged photos and bitmap images on the GPU to reduce blocky pixels.
+- Remove unnecessary pixel copies before GPU upload, redundant RGBA buffers for opaque images, and repeated hashing of shared image pixels.
 - Distinguish PDF, AI and EPS file icons with extension badges and separate colors.
 
 ## 1.33.12 - 2026-09-27
