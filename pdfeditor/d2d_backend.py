@@ -249,7 +249,10 @@ class D2DSurface:
         if width <= 0 or height <= 0 or stride < width * 4 or \
                 len(data) < stride * height:
             raise ValueError("invalid BGRA bitmap dimensions or stride")
-        buffer = (c_ubyte * len(data)).from_buffer_copy(data)
+        # CreateBitmap synchronously copies from const void*. Keep immutable
+        # bytes alive through the call instead of copying the whole image into
+        # a ctypes array first. bytes() above still snapshots mutable callers.
+        buffer = ctypes.cast(ctypes.c_char_p(data), POINTER(c_ubyte))
         handle = c_void_p()
         result = self._library.spdf_d2d_create_bitmap(
             self._handle, buffer, width, height, stride, byref(handle))

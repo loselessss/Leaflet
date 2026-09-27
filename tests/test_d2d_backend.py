@@ -250,6 +250,18 @@ class D2DBackendTests(unittest.TestCase):
                     surface.end_frame()
                 self.assertEqual(color_counts[0], 4)
                 self.assertGreater(color_counts[1], 100)
+                # The native bitmap owns its upload after this function
+                # returns, including for mutable input containing NUL bytes.
+                mutable = bytearray((0, 0, 255, 255)) * 4
+                uploaded = surface.create_bitmap_bgra(mutable, 2, 2)
+                mutable[:] = b"\0" * len(mutable)
+                surface.begin_frame()
+                surface.draw_bitmap(uploaded, 0, 0, 64, 64)
+                retained = surface.read_pixels_bgra(64, 64)
+                surface.end_frame()
+                self.assertEqual(retained[(32 * 64 + 32) * 4:][:4],
+                                 bytes((0, 0, 255, 255)))
+                uploaded.close()
                 path = surface.create_path([
                     ("move", 6, 6), ("line", 58, 6),
                     ("line", 58, 58), ("line", 6, 58), ("close",)])
