@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.33.12 - 2026-09-27
+
+### 개선
+
+- Replace app and installer icons with a paper-and-leaf Leaflet mark and match the PDF file icon color.
+
 ## 1.33.11 - 2026-09-26
 
 ### Bug fixes

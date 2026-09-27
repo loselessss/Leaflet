@@ -1,4 +1,4 @@
-"""아이콘 생성 — sPDF 앱 아이콘 + PDF 문서 연결 아이콘.
+"""아이콘 생성 — Leaflet 앱 아이콘 + PDF 문서 연결 아이콘.
 
 외부 이미지 없이 Pillow로 그린다(재생성 가능해야 로고 수정이 쉬움).
 결과: assets/spdf.ico (앱), assets/spdf_doc.ico (연결된 PDF 파일용)
@@ -16,8 +16,38 @@ SIZES = [16, 24, 32, 48, 64, 128, 256]
 PAPER = (255, 255, 255, 255)
 EDGE = (203, 213, 225, 255)
 FOLD = (226, 232, 240, 255)
-ACCENT = (37, 99, 235, 255)      # 앱: 파랑 배지
-DOC_ACCENT = (220, 38, 38, 255)  # 문서: 빨강 배지(PDF 관례)
+ACCENT = (16, 112, 88, 255)
+DOC_ACCENT = ACCENT
+
+
+def draw_app_icon(px):
+    """A folded white leaflet and a green leaf; no text at small sizes."""
+    scale = px * 4 / 256
+    img = Image.new("RGBA", (px * 4, px * 4))
+    d = ImageDraw.Draw(img)
+
+    def points(coords):
+        return [(round(x * scale), round(y * scale)) for x, y in coords]
+
+    d.rounded_rectangle(points([(12, 12), (244, 244)]),
+                        radius=round(54 * scale), fill=ACCENT)
+    d.polygon(points([(65, 43), (151, 43), (192, 84),
+                      (192, 212), (65, 212)]), fill=PAPER)
+    d.polygon(points([(151, 43), (151, 84), (192, 84)]),
+              fill=(183, 220, 206, 255))
+    # Two cubic curves form a leaf pointing towards the folded corner.
+    leaf = []
+    for a, b, c, e in [((85, 175), (67, 121), (111, 102), (170, 102)),
+                       ((170, 102), (170, 158), (130, 193), (85, 175))]:
+        for i in range(33):
+            t = i / 32
+            leaf.append(tuple((1-t)**3*a[j] + 3*(1-t)**2*t*b[j]
+                              + 3*(1-t)*t*t*c[j] + t**3*e[j]
+                              for j in (0, 1)))
+    d.polygon(points(leaf), fill=ACCENT)
+    d.line(points([(83, 184), (142, 126)]), fill=PAPER,
+           width=max(1, round(7 * scale)))
+    return img.resize((px, px), Image.Resampling.LANCZOS)
 
 
 def _font(px):
@@ -76,7 +106,8 @@ def draw_icon(px, label, accent):
 
 
 def build(name, label, accent):
-    frames = [draw_icon(s, label, accent) for s in SIZES]
+    frames = [draw_app_icon(s) if label is None else draw_icon(s, label, accent)
+              for s in SIZES]
     path = os.path.join(OUT, name)
     frames[-1].save(path, format="ICO",
                     sizes=[(s, s) for s in SIZES], append_images=frames[:-1])
@@ -87,7 +118,8 @@ def build(name, label, accent):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    build("spdf.ico", "sPDF", ACCENT)       # 앱 실행 파일
+    # Retain internal resource paths for existing packaging integrations.
+    build("spdf.ico", None, ACCENT)         # Leaflet 앱 실행 파일
     build("spdf_doc.ico", "PDF", DOC_ACCENT)  # 연결된 PDF 문서
 
 
