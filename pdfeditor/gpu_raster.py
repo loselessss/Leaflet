@@ -1208,6 +1208,30 @@ def _tile_repeat_offsets(state):
             yield ix * state.xstep, iy * state.ystep
 
 
+def _normal_group_contents(items):
+    """Source-over children can be isolated without changing their backdrop."""
+    return all(not isinstance(item, GroupPush) or
+               (item.blend_mode == 0 and not item.knockout)
+               for item in items)
+
+
+def _single_masked_drawing(items):
+    """Mask construction is coverage data, not another painted source."""
+    mask_depth = 0
+    drawings = 0
+    for item in items:
+        if isinstance(item, GroupPush):
+            return False
+        if isinstance(item, MaskBegin):
+            mask_depth += 1
+        elif isinstance(item, MaskEnd):
+            mask_depth -= 1
+        elif not mask_depth and isinstance(item, (
+                VectorPath, VectorImage, VectorLinearGradient, VectorRadialGradient)):
+            drawings += 1
+    return mask_depth == 0 and drawings == 1
+
+
 def _flatten_nonisolated_groups(items):
     def parse(index, stop_at_group=False):
         flattened = []
@@ -1219,6 +1243,9 @@ def _flatten_nonisolated_groups(items):
                 return flattened, index + 1
             if isinstance(item, GroupPush):
                 children, index = parse(index + 1, True)
+                if item.knockout and _single_masked_drawing(children):
+                    # Coverage construction is not a sibling to knock out.
+                    item = replace(item, knockout=False)
                 drawing_indexes = [
                     position for position, child in enumerate(children)
                     if isinstance(child, (VectorPath, VectorImage,
@@ -1256,7 +1283,8 @@ def _flatten_nonisolated_groups(items):
                 if item.blend_mode != 0:
                     if item.blend_mode <= 11 and (
                             len(drawing_indexes) == 1 or
-                            shading_only or opaque_vector_only):
+                            shading_only or opaque_vector_only or
+                            _single_masked_drawing(children)):
                         flattened.append(replace(
                             item, isolated=True))
                         flattened.extend(children)
@@ -1280,6 +1308,11 @@ def _flatten_nonisolated_groups(items):
                     if item.knockout and disjoint:
                         flattened.extend(_with_drawing_group_opacity(
                             children, item.opacity))
+                        continue
+                    if not item.knockout and _normal_group_contents(children):
+                        flattened.append(replace(item, isolated=True))
+                        flattened.extend(children)
+                        flattened.append(GroupPop())
                         continue
                     raise ValueError(
                         "unsupported non-isolated transparency group contents")

@@ -1,5 +1,10 @@
 # Leaflet Release Notes
 
+## 1.34.1 - 2026-09-28
+
+- More transparent artwork now renders on the GPU, reducing CPU rasterization.
+- Fixed missing shapes in nested transparency groups.
+
 ## 1.34.0 - 2026-09-27
 
 - Smoother photo and bitmap enlargement.

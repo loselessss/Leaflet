@@ -253,6 +253,40 @@ def isolated_group_pdf_bytes(blend_mode="Normal", background=False, clip=False):
     return bytes(data)
 
 
+def nonisolated_masked_image_pdf_bytes(blend_mode="Multiply", knockout=False):
+    with fitz.open(stream=isolated_group_pdf_bytes(blend_mode, background=True),
+                   filetype="pdf") as pdf:
+        mask = pdf.get_new_xref()
+        pdf.update_object(mask,
+            "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+            "/ColorSpace /DeviceGray /BitsPerComponent 8 >>")
+        pdf.update_stream(mask, bytes((0, 64, 128, 255)))
+        image = pdf.get_new_xref()
+        pdf.update_object(image,
+            "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask {mask} 0 R >>")
+        pdf.update_stream(image, bytes((40, 180, 100)) * 4)
+        pdf.xref_set_key(5, "Group/I", "false")
+        pdf.xref_set_key(5, "Group/K", "true" if knockout else "false")
+        pdf.xref_set_key(5, "Resources", f"<< /XObject << /Im {image} 0 R >> >>")
+        pdf.update_stream(5, b"q 240 0 0 160 30 40 cm /Im Do Q")
+        return pdf.tobytes()
+
+
+def nested_knockout_clip_pdf_bytes():
+    with fitz.open(stream=isolated_group_pdf_bytes(background=True), filetype="pdf") as pdf:
+        inner = pdf.get_new_xref()
+        pdf.update_object(inner,
+            "<< /Type /XObject /Subtype /Form /BBox [0 0 300 240] "
+            "/Group << /S /Transparency /I true >> /Resources << >> >>")
+        pdf.update_stream(inner, b"0 0 1 rg 160 80 100 120 re f")
+        pdf.xref_set_key(5, "Group/K", "true")
+        pdf.xref_set_key(5, "Resources", f"<< /XObject << /Inner {inner} 0 R >> >>")
+        pdf.update_stream(5, b"1 0 0 rg 20 20 180 140 re f "
+                          b"q 80 40 200 180 re W n /Inner Do Q")
+        return pdf.tobytes()
+
+
 def blended_mask_pdf_bytes(blend_mode="SoftLight", luminosity=True,
                            mask_blend=False, color=(.5, .5, .5), image=False):
     """A real PDF with a mask applied to a blended, isolated form."""
@@ -1052,28 +1086,42 @@ class GpuRasterSceneTests(unittest.TestCase):
                              not item.isolated
                              for item in scene.drawables))
 
-    def test_nonisolated_group_opacity_still_falls_back(self):
+    def test_nonisolated_normal_group_opacity_stays_on_gpu(self):
         from pdfeditor.gpu_raster import vector_page_from_pymupdf
         with fitz.open(stream=isolated_group_pdf_bytes(background=True),
                        filetype="pdf") as pdf:
             pdf.xref_set_key(5, "Group/I", "false")
             scene = vector_page_from_pymupdf(pdf[0])
-        self.assertFalse(scene.supported)
-        self.assertIn("non-isolated", scene.reason)
+        self.assertTrue(scene.supported, scene.reason)
+        self.assertNotIn("cpu-island", scene.features)
 
-    def test_self_contained_nonisolated_group_becomes_cpu_island(self):
+    def test_self_contained_nonisolated_group_stays_vector(self):
         from pdfeditor.gpu_raster import GroupPush, VectorImage, vector_page_from_pymupdf
         with fitz.open(stream=isolated_group_pdf_bytes(),
                        filetype="pdf") as pdf:
             pdf.xref_set_key(5, "Group/I", "false")
             scene = vector_page_from_pymupdf(pdf[0])
         self.assertTrue(scene.supported, scene.reason)
-        self.assertIn("cpu-island", scene.features)
-        self.assertTrue(any(isinstance(item, VectorImage)
+        self.assertNotIn("cpu-island", scene.features)
+        self.assertFalse(any(isinstance(item, VectorImage)
                             for item in scene.drawables))
         self.assertFalse(any(isinstance(item, GroupPush) and
                              not item.isolated
                              for item in scene.drawables))
+
+    def test_nonisolated_masked_image_uses_gpu_blend(self):
+        from pdfeditor.gpu_raster import GroupPush, vector_page_from_pymupdf
+        for mode in ("Normal", "Multiply", "SoftLight"):
+            for knockout in (False, True):
+                with self.subTest(mode=mode, knockout=knockout), fitz.open(
+                        stream=nonisolated_masked_image_pdf_bytes(mode, knockout),
+                        filetype="pdf") as pdf:
+                    scene = vector_page_from_pymupdf(pdf[0])
+                    self.assertTrue(scene.supported, scene.reason)
+                    self.assertNotIn("cpu-island", scene.features)
+                    self.assertFalse(any(isinstance(item, GroupPush) and
+                                         (not item.isolated or item.knockout)
+                                         for item in scene.drawables))
 
     def test_small_overlapping_knockout_group_becomes_approximate_cpu_island(self):
         from pdfeditor.gpu_raster import (VectorImage, VectorPath,

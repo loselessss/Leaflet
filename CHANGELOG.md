@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.34.1 - 2026-09-28
+
+### 개선
+
+- Render more overlapping transparency and masked images on the GPU instead of rasterizing their regions on the CPU.
+- Fix missing artwork in nested GPU transparency groups.
+
 ## 1.34.0 - 2026-09-27
 
 ### 새 기능

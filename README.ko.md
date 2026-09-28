@@ -7,7 +7,7 @@
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을
 사용할 수 있는 Windows PDF 리더·편집기입니다.
 
-**현재 버전: 1.34.0** · Windows · 한국어·영어
+**현재 버전: 1.34.1** · Windows · 한국어·영어
 
 EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html)가 설치되어 있어야 합니다. 임시 PDF로 변환해 열고 편집 결과는 PDF로 저장합니다. Ghostscript는 설치 파일에 포함되지 않습니다.
 

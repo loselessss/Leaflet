@@ -25,6 +25,8 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
+struct Scene;
+
 HRESULT create_d3d_device(
     D3D_DRIVER_TYPE driver_type,
     ComPtr<ID3D11Device>& device,
@@ -932,9 +934,11 @@ public:
             d2d_context_->SetTransform(adjusted);
         }
         if (clip == nullptr) d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
-        if (knockout) {
-            d2d_context_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
-        }
+        // Offscreen captures have their own compositing state. Inheriting COPY
+        // here makes nested bitmaps erase earlier content in the capture.
+        // The parent's state is restored when this capture closes.
+        d2d_context_->SetPrimitiveBlend(knockout
+            ? D2D1_PRIMITIVE_BLEND_COPY : D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
         return S_OK;
     }
 
@@ -1519,7 +1523,20 @@ public:
         return S_OK;
     }
 
+    HRESULT draw_cached_scene(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+
 private:
+    struct SceneRaster {
+        std::shared_ptr<char> identity;
+        ComPtr<ID2D1Bitmap1> bitmap;
+        SpdfD2DTransform transform{};
+        float dpi = 96.0f;
+        float padding = 0;
+        std::uint64_t bytes = 0;
+        std::uint64_t used = 0;
+    };
+    std::vector<SceneRaster> scene_rasters_;
+    std::uint64_t raster_clock_ = 0;
     struct CompositeCapture {
         ComPtr<ID2D1Bitmap1> previous;
         ComPtr<ID2D1Bitmap1> source;
@@ -1676,6 +1693,7 @@ struct SceneCommand {
 
 struct Scene {
     Surface* owner = nullptr;
+    std::shared_ptr<char> identity = std::make_shared<char>();
     std::vector<SceneCommand> commands;
     ComPtr<ID2D1CommandList> display_list;
     bool recordable = true;

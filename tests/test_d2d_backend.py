@@ -405,7 +405,9 @@ class D2DBackendTests(unittest.TestCase):
                     ClipPush, ClipPop, GroupPush, GroupPop, VectorPath, VectorImage,
                     MaskBegin, MaskEnd,
                     vector_page_from_pymupdf)
-                from tests.test_gpu_raster import isolated_group_pdf_bytes, blended_mask_pdf_bytes
+                from tests.test_gpu_raster import (
+                    isolated_group_pdf_bytes, blended_mask_pdf_bytes,
+                    nonisolated_masked_image_pdf_bytes, nested_knockout_clip_pdf_bytes)
                 pdf_cases = [("%s clipped=%s" % (name, clipped),
                               isolated_group_pdf_bytes(name, background=True, clip=clipped))
                              for name, clipped in itertools.product(("Multiply", "Screen", "Overlay", "Darken", "Lighten",
@@ -419,17 +421,28 @@ class D2DBackendTests(unittest.TestCase):
                         (name, luminosity, mask_blend, color), blended_mask_pdf_bytes(
                             name, luminosity, mask_blend, color)))
                 pdf_cases.append(("bitmap luminosity mask", blended_mask_pdf_bytes(image=True)))
+                for clipped in (False, True):
+                    with pymupdf.open(stream=isolated_group_pdf_bytes(
+                            background=True, clip=clipped), filetype="pdf") as pdf:
+                        pdf.xref_set_key(5, "Group/I", "false")
+                        pdf_cases.append((f"nonisolated normal clipped={clipped}", pdf.tobytes()))
+                for mode, knockout in itertools.product(
+                        ("Normal", "Multiply", "SoftLight"), (False, True)):
+                    pdf_cases.append((f"masked nonisolated {mode} knockout={knockout}",
+                                      nonisolated_masked_image_pdf_bytes(mode, knockout)))
+                pdf_cases.append(("nested knockout clip", nested_knockout_clip_pdf_bytes()))
                 for name, pdf_bytes in pdf_cases:
                     with self.subTest(pdf_blend=name), pymupdf.open(
                             stream=pdf_bytes, filetype="pdf") as pdf:
                         scene = vector_page_from_pymupdf(pdf[0])
                         self.assertTrue(scene.supported, scene.reason)
+                        self.assertNotIn("cpu-island", scene.features)
                         reference = pdf[0].get_pixmap(matrix=pymupdf.Matrix(.2, .2))
                         surface.begin_frame(0xffffffff)
                         frame_paths = []
                         for item in scene.drawables:
                             if isinstance(item, GroupPush):
-                                surface.begin_composite_group(item.blend_mode, item.opacity)
+                                surface.begin_composite_group(item.blend_mode, item.opacity, item.knockout)
                             elif isinstance(item, GroupPop):
                                 surface.end_composite_group()
                             elif isinstance(item, ClipPop):
