@@ -79,13 +79,26 @@ class ReleaseNotesTests(unittest.TestCase):
                 output.read_text(encoding="utf-8"),
                 compose_localized_release_notes("1.7.2", SAMPLE_EN, SAMPLE))
 
-    def test_complete_release_documents_can_be_wrapped(self):
+    def test_release_documents_exclude_previous_versions(self):
         notes = compose_localized_documents(
-            "1.7.2", "# Release Notes\n\n## 1.7.2 Highlights\nEnglish",
-            "# 릴리스 노트\n\n## 1.7.2 주요 변경\n한국어")
-        self.assertIn("# Release Notes", notes)
-        self.assertIn("# 릴리스 노트", notes)
+            "1.7.2", SAMPLE_EN, SAMPLE)
+        self.assertIn("Improved shutdown handling.", notes)
+        self.assertIn("종료 처리를 보강했습니다.", notes)
+        self.assertNotIn("1.7.1", notes)
+        self.assertNotIn("Improved selection.", notes)
+        self.assertNotIn("선택 기능", notes)
         self.assertIn("spdf-release-notes:start:ko", notes)
+
+    def test_release_workflow_cli_excludes_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            english, korean, output = (root / name for name in ('en.md', 'ko.md', 'out.md'))
+            english.write_text(SAMPLE_EN, encoding='utf-8')
+            korean.write_text(SAMPLE, encoding='utf-8')
+            main(['--version', '1.7.2', '--release-notes', str(english),
+                  '--release-notes-ko', str(korean), '--output', str(output)])
+            self.assertEqual(output.read_text(encoding='utf-8'),
+                             compose_localized_release_notes('1.7.2', SAMPLE_EN, SAMPLE))
 
     def test_complete_release_documents_require_current_version(self):
         with self.assertRaisesRegex(ValueError, "1.7.2"):

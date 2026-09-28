@@ -43,25 +43,8 @@ def compose_localized_release_notes(version, english, korean):
 
 
 def compose_localized_documents(version, english, korean):
-    """Wrap complete, curated release-note documents for updater selection."""
-    sections = []
-    for code, title, document in (
-            ("en", "English", english), ("ko", "한국어", korean)):
-        body = str(document).strip()
-        if not body:
-            raise ValueError("%s release notes are empty." % title)
-        if not re.search(
-                r"^##\s+%s(?:\s|$)" % re.escape(version), body,
-                re.MULTILINE):
-            raise ValueError(
-                "%s release notes do not contain version %s."
-                % (title, version))
-        sections.append(
-            "## %s\n\n"
-            "<!-- spdf-release-notes:start:%s -->\n%s\n"
-            "<!-- spdf-release-notes:end:%s -->"
-            % (title, code, body, code))
-    return "\n\n".join(sections) + "\n"
+    """Publish only the requested version, retaining updater language markers."""
+    return compose_localized_release_notes(version, english, korean)
 
 
 def main(argv=None):

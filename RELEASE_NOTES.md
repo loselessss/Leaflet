@@ -2,16 +2,10 @@
 
 ## 1.34.0 - 2026-09-27
 
-### 새 기능
-
-- Open EPS files with an installed Ghostscript interpreter. Save edited results as PDF while preserving the EPS source.
-- Ghostscript is not bundled. Install it separately to use EPS files.
-
-### 개선
-
-- Smooth enlarged photos and bitmap images on the GPU to reduce blocky pixels.
-- Remove unnecessary pixel copies before GPU upload, redundant RGBA buffers for opaque images, and repeated hashing of shared image pixels.
-- Distinguish PDF, AI and EPS file icons with extension badges and separate colors.
+- Smoother photo and bitmap enlargement.
+- Faster GPU preparation with less temporary memory use.
+- Color-coded PDF, AI and EPS file icons with extension labels.
+- Open EPS files and save as PDF. Requires a separate Ghostscript installation.
 
 ## 1.33.12 - 2026-09-27
 
