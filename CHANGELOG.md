@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.34.4 - 2026-09-29
+
+### 버그 수정
+
+- Keep pages with empty font glyphs on the GPU, preserving empty text clipping and visible text.
+
 ## 1.34.3 - 2026-09-29
 
 ### 성능 개선

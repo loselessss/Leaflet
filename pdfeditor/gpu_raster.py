@@ -1924,9 +1924,12 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                             continue
                         raise ValueError("font glyph has no vector outline")
                     commands = _path_commands(outline, allow_empty=True)
-                    if not commands and not _is_invisible_text_codepoint(
-                            item.ucs):
-                        raise ValueError("font glyph has no vector outline")
+                    # A valid but empty outline (including an empty .notdef)
+                    # has no ink regardless of its Unicode mapping. Do not
+                    # turn the whole page into a CPU fallback for it. A null
+                    # outline above still needs fallback for bitmap/Type3 ink.
+                    if not commands:
+                        self._features.add("text-empty-glyph")
                     self._glyphs[key] = commands
                 if commands:
                     outlines.append((commands, _matrix(matrix)))
@@ -2018,7 +2021,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             for outline, transform in self._text_outlines(text, ctm):
                 commands.extend(_transform_commands(outline, transform))
             if not commands:
-                raise ValueError("text clip has no vector outline")
+                # Empty text clips everything out; dropping the clip would
+                # expose drawings that MuPDF correctly hides.
+                commands = [("move", 0.0, 0.0), ("close",)]
             self._append_item(ClipPush(tuple(commands)))
             self._clip_depth += 1
         except Exception as error:
@@ -2033,9 +2038,10 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             for outline, transform in self._text_outlines(text, ctm):
                 commands.extend(_transform_commands(outline, transform))
             if not commands:
-                raise ValueError("stroked text clip has no vector outline")
-            self._append_item(ClipStrokePush(
-                tuple(commands), width, style))
+                self._append_item(ClipPush((("move", 0.0, 0.0), ("close",))))
+            else:
+                self._append_item(ClipStrokePush(
+                    tuple(commands), width, style))
             self._clip_depth += 1
         except Exception as error:
             self._set_failure(str(error))

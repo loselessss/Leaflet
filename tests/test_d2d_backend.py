@@ -440,7 +440,8 @@ class D2DBackendTests(unittest.TestCase):
                     vector_page_from_pymupdf)
                 from tests.test_gpu_raster import (
                     isolated_group_pdf_bytes, blended_mask_pdf_bytes,
-                    nonisolated_masked_image_pdf_bytes, nested_knockout_clip_pdf_bytes)
+                    nonisolated_masked_image_pdf_bytes, nested_knockout_clip_pdf_bytes,
+                    empty_glyph_pdf_bytes)
                 pdf_cases = [("%s clipped=%s" % (name, clipped),
                               isolated_group_pdf_bytes(name, background=True, clip=clipped))
                              for name, clipped in itertools.product(("Multiply", "Screen", "Overlay", "Darken", "Lighten",
@@ -464,6 +465,8 @@ class D2DBackendTests(unittest.TestCase):
                     pdf_cases.append((f"masked nonisolated {mode} knockout={knockout}",
                                       nonisolated_masked_image_pdf_bytes(mode, knockout)))
                 pdf_cases.append(("nested knockout clip", nested_knockout_clip_pdf_bytes()))
+                for mode in (0, 1, 5, 7):
+                    pdf_cases.append((f"empty glyph mode={mode}", empty_glyph_pdf_bytes(mode)))
                 for name, pdf_bytes in pdf_cases:
                     with self.subTest(pdf_blend=name), pymupdf.open(
                             stream=pdf_bytes, filetype="pdf") as pdf:

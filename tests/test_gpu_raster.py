@@ -253,6 +253,28 @@ def isolated_group_pdf_bytes(blend_mode="Normal", background=False, clip=False):
     return bytes(data)
 
 
+def empty_glyph_pdf_bytes(render_mode=0):
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=300, height=240)
+        page.insert_text((20, 100), "A", fontsize=36)
+        font = page.get_fonts()[0][0]
+        pdf.xref_set_key(font, "Encoding", "<< /Type /Encoding /Differences [65 /space] >>")
+        cmap = pdf.get_new_xref()
+        pdf.update_object(cmap, "<< >>")
+        pdf.update_stream(cmap, b"/CIDInit /ProcSet findresource begin 12 dict begin "
+                          b"begincmap /CMapType 2 def /CMapName /EmptyGlyph def "
+                          b"1 begincodespacerange <00> <FF> endcodespacerange "
+                          b"1 beginbfchar <41> <0041> endbfchar endcmap "
+                          b"CMapName currentdict /CMap defineresource pop end end")
+        pdf.xref_set_key(font, "ToUnicode", f"{cmap} 0 R")
+        content = (f"q 0.2 0.4 0.6 rg 0 0 300 240 re f "
+                   f"BT /helv 36 Tf 20 140 Td {render_mode} Tr (A) Tj ET ").encode()
+        if render_mode in (5, 7):
+            content += b"1 0 0 rg 0 0 300 240 re f "
+        pdf.update_stream(page.get_contents()[0], content + b"Q")
+        return pdf.tobytes()
+
+
 def nonisolated_masked_image_pdf_bytes(blend_mode="Multiply", knockout=False):
     with fitz.open(stream=isolated_group_pdf_bytes(blend_mode, background=True),
                    filetype="pdf") as pdf:
@@ -1350,6 +1372,20 @@ class GpuRasterSceneTests(unittest.TestCase):
         self.assertEqual(_encoded_glyph_id(font, ord("f")), 42)
         self.assertEqual(font.codepoint, ord("f"))
 
+    def test_empty_glyph_with_visible_unicode_keeps_gpu_and_empty_text_clips(self):
+        from pdfeditor.gpu_raster import vector_page_from_pymupdf, ClipPush
+        for mode in (0, 1, 5, 7):
+            with self.subTest(mode=mode), fitz.open(
+                    stream=empty_glyph_pdf_bytes(mode), filetype="pdf") as pdf:
+                scene = vector_page_from_pymupdf(pdf[0])
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertIn("text-empty-glyph", scene.features)
+                self.assertNotIn("cpu-island", scene.features)
+                reference = pdf[0].get_pixmap()
+                self.assertEqual(reference.pixel(30, 100), reference.pixel(250, 200))
+                if mode in (5, 7):
+                    self.assertTrue(any(isinstance(item, ClipPush) for item in scene.drawables))
+
     def test_ligature_unicode_continuation_does_not_add_ink(self):
         from pymupdf import mupdf as m
         from pdfeditor.gpu_raster import _DisplayListDevice
@@ -1370,6 +1406,20 @@ class GpuRasterSceneTests(unittest.TestCase):
             m.fz_show_glyph(text, font, matrix, -1, codepoint, 0, 0, 0, 0)
         self.assertEqual(device._text_outlines(text.m_internal, ctm),
                          expected)
+
+    def test_empty_notdef_does_not_hide_following_visible_glyph(self):
+        from pymupdf import mupdf as m
+        from pdfeditor.gpu_raster import _DisplayListDevice
+        font = m.fz_new_base14_font("Helvetica")
+        text = m.FzText()
+        matrix = m.FzMatrix(12, 0, 0, 12, 20, 30)
+        m.fz_show_glyph(text, font, matrix, 0, ord("A"), 0, 0, 0, 0)
+        device = _DisplayListDevice((0, 0, 200, 200))
+        identity = m.FzMatrix()
+        self.assertEqual(device._text_outlines(text.m_internal, identity.internal()), [])
+        m.fz_show_glyph(text, font, matrix, font.fz_encode_character(ord("B")),
+                       ord("B"), 0, 0, 0, 0)
+        self.assertEqual(len(device._text_outlines(text.m_internal, identity.internal())), 1)
 
     def test_missing_cmap_glyph_keeps_cpu_fallback(self):
         from pdfeditor.gpu_raster import _encoded_glyph_id

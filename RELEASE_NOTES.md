@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## 1.34.4 - 2026-09-29
+
+- Fixed unnecessary CPU rendering on pages containing empty font glyphs.
+
 ## 1.34.3 - 2026-09-29
 
 - Prepare nearby pages in your direction of travel while prioritizing the current page.
