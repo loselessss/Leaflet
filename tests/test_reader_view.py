@@ -66,7 +66,7 @@ class ReaderViewTests(unittest.TestCase):
         with patch("pdfeditor.reader_prefetch.render_memory",
                    return_value=RenderMemory(512 * MIB, 4)), \
                 patch.object(self.view, "_start_vector_refine_worker") as worker:
-            self.assertEqual(self.view._nearby_prefetch_pages(), [1, 2, 3])
+            self.assertEqual(self.view._nearby_prefetch_pages(), [1, 2, 3, 4])
             self.view._prefetch_next_page()
             worker.assert_called_once_with(1, speculative=True)
             worker.reset_mock()
@@ -89,6 +89,116 @@ class ReaderViewTests(unittest.TestCase):
             self.assertIs(self.view._gpu_vector_page(self.doc, 1), scene)
         self.view._d2d_requested = False
 
+    def test_prefetch_order_follows_page_turn_direction(self):
+        from pdfeditor.render_memory import RenderMemory, MIB
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(512 * MIB, 4)):
+            self.view.render_document(self.doc, [5], 5)
+            self.assertEqual(self.view._nearby_prefetch_pages(), [6, 4, 7, 3])
+            self.view.render_document(self.doc, [4], 4)
+            self.assertEqual(self.view._nearby_prefetch_pages(), [3, 5, 2, 6])
+
+    def test_prefetched_geometry_survives_zoom_until_images_refine(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=("image-downsample",), raster_scale=1)
+        self.doc.install_gpu_vector_page(1, scene, persist=False, speculative=True)
+        self.view._prefetch_ready[1] = (self.doc.render_generation, id(scene))
+        self.view._d2d_requested = True
+        self.view.zoom = 1.5
+        with patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError("reparse")):
+            self.view.render_document(self.doc, [1], 1)
+            self.assertIs(self.view._vector_pages[1], scene)
+            self.assertEqual(self.view.zoom, 1.5)
+            self.assertIn(1, self.view._vector_refine_pages)
+            self.assertEqual(self.view.prefetch_diagnostic()["prefetch_hit"], 1)
+            self.doc.invalidate_render(1)
+            self.assertIsNot(self.view._gpu_vector_page(self.doc, 1), scene)
+        self.view._d2d_requested = False
+
+    def test_foreground_scene_preempts_speculative_process(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._gpu_initial_frame_pending = False
+        self.view._render_mode = "gpu"
+        self.view._vector_pages[0] = VectorPage(False, reason="GPU scene awaiting first frame")
+        self.view._vector_refine_document = self.doc
+        self.view._vector_refine_scale = self.view._vector_raster_scale()
+        self.view._vector_refine_pages = [0]
+        self.view._vector_refine_process = Mock()
+        self.view._vector_refine_job = {"speculative": True}
+        with patch.object(self.view, "_stop_vector_refine_worker") as stop, \
+                patch.object(self.view, "_start_vector_refine_worker") as start:
+            self.view._refresh_next_vector_page()
+            stop.assert_called_once()
+            start.assert_called_once_with(0)
+        self.view._vector_refine_process = self.view._vector_refine_job = None
+
+    def test_running_prefetch_stops_when_memory_pressure_rises(self):
+        from pdfeditor.render_memory import RenderMemory, MIB
+        self.view._vector_refine_process = Mock(poll=Mock(return_value=None))
+        self.view._vector_refine_job = dict(speculative=True, document=self.doc,
+                                           generation=self.doc.render_generation)
+        with patch("pdfeditor.render_memory.render_memory",
+                   return_value=RenderMemory(16 * MIB, 0)), \
+                patch.object(self.view, "_stop_vector_refine_worker") as stop:
+            self.view._poll_vector_refine_worker()
+            stop.assert_called_once()
+        self.view._vector_refine_process = self.view._vector_refine_job = None
+
+    def test_prefetch_can_be_disabled_for_ab_measurement(self):
+        self.view._d2d_requested = True
+        with patch.dict(os.environ, {"LEAFLET_SCENE_PREFETCH": "0"}), \
+                patch.object(self.view, "_start_vector_refine_worker") as worker:
+            self.view._schedule_page_prefetch()
+            self.assertFalse(self.view._prefetch_timer.isActive())
+            self.view._prefetch_next_page()
+            worker.assert_not_called()
+        self.view._d2d_requested = False
+
+    def test_first_frame_metrics_are_recorded_once_per_switch(self):
+        self.view._page_switch_started = 10.0
+        with patch("pdfeditor.reader_prefetch.time.perf_counter", return_value=10.025):
+            self.view._finish_initial_gpu_frame()
+        self.assertAlmostEqual(self.view.prefetch_diagnostic()["page_switch_to_first_frame_ms"], 25)
+        self.view._finish_initial_gpu_frame()
+        self.assertAlmostEqual(self.view.prefetch_diagnostic()["page_switch_to_first_frame_ms"], 25)
+
+    def _deliver_prefetch_result(self, scene, generation=None, scale=1.0):
+        directory = tempfile.mkdtemp(dir=self.directory.name)
+        result = Path(directory) / "scene.pickle"
+        with result.open("wb") as stream:
+            pickle.dump(scene, stream)
+        self.view._vector_refine_process = Mock(poll=Mock(return_value=0), returncode=0)
+        self.view._vector_refine_job = dict(
+            speculative=True, document=self.doc, page=1, scale=scale,
+            generation=self.doc.render_generation if generation is None else generation,
+            directory=directory, result=str(result))
+        self.view._poll_vector_refine_worker()
+
+    def test_late_prefetch_keeps_zoom_independent_scene_but_rejects_old_revision(self):
+        from pdfeditor.gpu_raster import VectorPage
+        from pdfeditor.render_memory import RenderMemory, MIB
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(256 * MIB, 2)):
+            self.view.zoom = 2
+            self._deliver_prefetch_result(VectorPage(True), scale=1)
+            self.assertTrue(self.doc.cached_gpu_vector_page(1, 2, memory_only=True).supported)
+            generation = self.doc.render_generation
+            self.doc.invalidate_render(1)
+            self._deliver_prefetch_result(VectorPage(True), generation=generation)
+            self.assertIsNone(self.doc.cached_gpu_vector_page(1, 2, memory_only=True))
+
+    def test_structural_fallback_is_reused_only_at_same_revision_and_scale(self):
+        from pdfeditor.gpu_raster import VectorPage
+        from pdfeditor.render_memory import RenderMemory, MIB
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(256 * MIB, 2)):
+            self._deliver_prefetch_result(VectorPage(False, reason="unsupported test operation"))
+            self.assertEqual(self.view._gpu_vector_page(self.doc, 1).reason, "unsupported test operation")
+            self.view.zoom = 2
+            self.assertEqual(self.view._gpu_vector_page(self.doc, 1).reason, "GPU scene awaiting first frame")
+            self.view.zoom = 1
+            self.doc.invalidate_render(1)
+            self.assertEqual(self.view._gpu_vector_page(self.doc, 1).reason, "GPU scene awaiting first frame")
     def test_nearby_native_scene_survives_page_turn_but_not_document_edit(self):
         from pdfeditor.gpu_raster import VectorPage, VectorPath
         from pdfeditor.render_memory import RenderMemory, MIB

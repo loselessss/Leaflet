@@ -155,6 +155,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._vector_refine_job = None
         self._vector_refine_attempted = set()
         self._prefetch_attempted = set()
+        self._init_prefetch_state()
         self._prefetch_timer = QTimer(self)
         self._prefetch_timer.setSingleShot(True)
         self._prefetch_timer.timeout.connect(self._prefetch_next_page)
@@ -256,8 +257,19 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         # Never parse or extract an uncached scene before the preview is painted.
         # Even the complexity probe may traverse a large page's display list.
         cached = document.cached_gpu_vector_page(page, scale, memory_only=True)
+        if cached is None and scale > 1.0:
+            # Keep vector geometry immediately usable; the image refinement
+            # queue replaces only resolution-dependent resources after paint.
+            cached = document.cached_gpu_vector_page(page, 1.0, memory_only=True)
         if cached is not None:
+            prepared = self._prefetch_ready.pop(page, None)
+            if prepared is not None and prepared == (document.render_generation, id(cached)):
+                self._prefetch_metrics["prefetch_hit"] += 1
             return cached
+        failure = self._prefetch_failures.get(page)
+        if (failure is not None and failure[0] == document.render_generation and
+                failure[1] == scale):
+            return failure[2]
         from .gpu_raster import VectorPage
         return VectorPage(
             False, reason="GPU scene awaiting first frame",
@@ -330,9 +342,11 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             self._vector_refine_pages.clear()
             return
         if self._vector_refine_process is not None:
-            # Keep the newest settled-scale request queued while an older
-            # snapshot is still being extracted.
-            return
+            if self._vector_refine_job and self._vector_refine_job.get("speculative"):
+                self._stop_vector_refine_worker()
+            else:
+                # A foreground extraction may finish at its previous scale.
+                return
         page = self._vector_refine_pages.pop(0)
         scene = self._vector_pages.get(page)
         if self._render_mode in ("auto", "gpu") and scene is not None and (
@@ -355,6 +369,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
     def _start_vector_refine_worker(self, page, *, speculative=False):
         if self._document is None or self._vector_refine_process is not None:
             return
+        started = time.perf_counter()
         scale = self._vector_refine_scale
         generation = getattr(self._document, "render_generation", 0)
         key = (generation, page, scale)
@@ -375,6 +390,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 arguments.extend(("--disk-cache-key", cache_key))
             from .gpu_raster import can_refine_images
             base = self._vector_pages.get(page)
+            if speculative and base is None:
+                base = self._document.cached_gpu_vector_page(page, 1.0, memory_only=True)
             if can_refine_images(base) and base.raster_scale < scale:
                 from dataclasses import replace
                 from .gpu_raster import VectorImage
@@ -421,6 +438,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             "result": result_path,
             "disk_cache_key": cache_key,
             "speculative": speculative,
+            "started": started,
             "deadline": time.monotonic() + GPU_SCENE_WORKER_TIMEOUT_SECONDS,
         }
         self._vector_refine_poll_timer.start()
@@ -432,6 +450,16 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             self._vector_refine_poll_timer.stop()
             return
         if process.poll() is None:
+            if job.get("speculative"):
+                from .render_memory import render_memory, MIB
+                document = job["document"]
+                if (document is not self._document or
+                        job["generation"] != document.render_generation or
+                        not self._prefetch_enabled() or not self.isVisible() or
+                        render_memory().prefetch_pages == 0 or
+                        document.gpu_scene_memory_budget() - document._gpu_vector_cache_bytes < 32 * MIB):
+                    self._stop_vector_refine_worker()
+                    return
             if time.monotonic() < job["deadline"]:
                 return
             if not job.get("terminating"):
@@ -454,15 +482,25 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         finally:
             shutil.rmtree(job["directory"], ignore_errors=True)
         document = job["document"]
+        if "started" in job:
+            self._prefetch_metrics["scene_prepare_ms"] = (
+                time.perf_counter() - job["started"]) * 1000
         if job.get("speculative"):
             from .gpu_raster import VectorPage
             if (document is self._document and
                     job["generation"] == document.render_generation and
-                    job["scale"] == self._vector_raster_scale() and
                     job["page"] in self._nearby_prefetch_pages() and
-                    isinstance(scene, VectorPage) and scene.supported):
-                document.install_gpu_vector_page(
-                    job["page"], scene, persist=False, speculative=True)
+                    isinstance(scene, VectorPage)):
+                if scene.supported:
+                    installed = document.install_gpu_vector_page(
+                        job["page"], scene, persist=False, speculative=True)
+                    if installed is not None:
+                        self._prefetch_ready[job["page"]] = (job["generation"], id(installed))
+                elif scene.reason.startswith("unsupported "):
+                    self._prefetch_failures[job["page"]] = (
+                        job["generation"], job["scale"], VectorPage(
+                            False, reason=scene.reason, features=scene.features,
+                            raster_scale=job["scale"]))
             self._schedule_page_prefetch()
             if self._vector_refine_pages:
                 self._vector_refine_timer.start(0)
@@ -505,6 +543,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         process = self._vector_refine_process
         job = self._vector_refine_job
         if job and job.get("speculative"):
+            self._prefetch_metrics["cancelled_jobs"] += 1
             self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
         self._vector_refine_process = None
         self._vector_refine_job = None
@@ -1021,6 +1060,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._finish_initial_gpu_frame()
 
     def _finish_initial_gpu_frame(self):
+        self._record_first_page_frame()
         if getattr(self, "_gpu_initial_frame_pending", False):
             self._gpu_initial_frame_pending = False
             # Run on a later event-loop turn, after the completed first paint.
@@ -1040,6 +1080,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def render_document(self, document, pages, active_page):
         self.stop_rendering()
+        self._begin_page_switch(document, active_page)
         self._gpu_initial_frame_pending = self._d2d_requested
         self._rasterized_pages.clear()
         changed = document is not self._document
@@ -1328,6 +1369,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def stop_rendering(self, *, keep_zoom_animation=False,
                        keep_vector_refine_worker=False):
+        self._page_switch_started = None
         self._prefetch_timer.stop()
         self._gpu_initial_frame_pending = False
         self._refine_timer.stop()
@@ -1342,6 +1384,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def clear(self):
         self.stop_rendering()
+        self._prefetch_ready.clear()
+        self._prefetch_failures.clear()
         self._document = None
         self._previews.clear()
         for _identity, bitmap in tuple(self._d2d_previews.values()):

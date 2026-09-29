@@ -1,5 +1,10 @@
 # Leaflet Release Notes
 
+## 1.34.3 - 2026-09-29
+
+- Prepare nearby pages in your direction of travel while prioritizing the current page.
+- Reuse prepared vector scenes when zoom changes and refine images in the background.
+
 ## 1.34.2 - 2026-09-29
 
 - Adjust rendering caches to available memory and prepare nearby pages in the background while idle.

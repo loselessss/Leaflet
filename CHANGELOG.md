@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.34.3 - 2026-09-29
+
+### 성능 개선
+
+- Prepare nearby pages in the direction of travel and pause background work when the current page or available memory needs priority.
+- Reuse prepared vector scenes across zoom changes while refining image resolution separately.
+
 ## 1.34.2 - 2026-09-29
 
 ### 성능 개선
