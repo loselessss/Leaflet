@@ -184,8 +184,7 @@ class GitHubUpdateService:
     def _select_installer(self, assets, version):
         if not isinstance(assets, list):
             return None
-        expected = ("Leaflet_Setup_%s.exe" % version,
-                    "sPDF_Setup_%s.exe" % version)
+        expected = ("Leaflet_Setup_%s.exe" % version,)
         candidates = [
             item for name in expected for item in assets if isinstance(item, dict)
             and str(item.get("name", "")).casefold() == name.casefold()]

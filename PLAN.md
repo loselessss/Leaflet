@@ -195,6 +195,7 @@ run.py / run.pyw
    - 5단계(1.25.0): 원래 glyph 윤곽을 하나의 텍스트 clip geometry로 결합. 모든 shading 유형은 페이지 범위 안의 2배 해상도 premultiplied BGRA 이미지로 제한해 Direct2D 합성하고 64 MiB 장면 상한을 공유. 일반 혼합 모드의 격리 투명도 그룹은 중첩 opacity layer로 처리
    - 6단계(1.26.0): 알파/광도 소프트 마스크와 이미지 클리핑 마스크를 Direct2D command list·opacity mask로 처리. PDF 점선·선끝·선 연결·miter 설정을 Direct2D stroke style로 변환. 선택형 페이지 진단으로 GPU 직접/GPU 합성/CPU 대체와 원인을 표시
    - 7단계(1.27.0): 윤곽선 글자를 원래 glyph geometry로 GPU rasterize하고, 윤곽선 글자 클리핑과 stroked vector clip은 Direct2D widened geometry로 변환해 GPU layer mask로 적용
+   - 다음 보완 연구: PDF 글꼴이 벡터 윤곽선을 제공하지 않는 누락 글리프를 전체 페이지 CPU 폴백으로 전환하지 않고, 원래 위치·변환·색상·투명도·클리핑을 보존한 선택적 래스터 보정 이미지로 GPU 장면에 삽입. 글리프 단위 시각 비교와 텍스트 선택/검색 보존을 검증하고, 보정 실패 시에만 제한된 CPU island 또는 기존 전체 CPU 폴백을 사용
    - 다음 단계는 특수 혼합 모드·비격리 반투명 그룹·선을 이용한 클리핑과 드문 효과의 지원 범위를 넓히고, 페이지 전체 CPU 전환을 가능한 경우 명령/그룹 단위 대체로 축소하는 것. PDFium/Skia GPU canvas는 별도 비교 시제품 후보로 유지하고, 현재 PyMuPDF CPU Pixmap 경로와 품질·속도·배포 크기·호환성·라이선스를 비교하며 엔진 이름만으로 GPU 지원을 가정하지 않음
    - 동일 장비·문서에서 최대 800% 확대, 다중 개체 변형, 글꼴·투명도 품질, RAM/VRAM 상한과 CPU 대체 경로 확인
    - 하드웨어별 캐시 정책: 기본값은 `자동`, 사용자가 `낮음 / 보통 / 높음`으로 고정 가능. 리더·편집 프로세스가 각자 정책과 자원을 소유하며 다른 프로세스의 여유 메모리를 전제로 하지 않음

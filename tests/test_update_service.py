@@ -29,7 +29,7 @@ def release_payload(tag="v1.6.1", content=b"installer", url=None,
     version = tag.lstrip("v")
     download = url or (
         "https://github.com/loselessss/Leaflet/releases/download/%s/"
-        "sPDF_Setup_%s.exe" % (tag, version))
+        "Leaflet_Setup_%s.exe" % (tag, version))
     return json.dumps({
         "tag_name": tag,
         "name": "sPDF %s" % version,
@@ -37,7 +37,7 @@ def release_payload(tag="v1.6.1", content=b"installer", url=None,
         "html_url": (
             "https://github.com/loselessss/Leaflet/releases/tag/%s" % tag),
         "assets": [{
-            "name": "sPDF_Setup_%s.exe" % version,
+            "name": "Leaflet_Setup_%s.exe" % version,
             "browser_download_url": download,
             "size": len(content),
             "digest": "sha256:%s" % hashlib.sha256(content).hexdigest(),
@@ -101,7 +101,7 @@ class UpdateServiceTests(unittest.TestCase):
                 release_payload()))
         update = service.check()
         self.assertEqual(update.version, "1.6.1")
-        self.assertEqual(update.asset.name, "sPDF_Setup_1.6.1.exe")
+        self.assertEqual(update.asset.name, "Leaflet_Setup_1.6.1.exe")
         self.assertEqual(len(update.asset.sha256), 64)
 
     def test_same_release_is_current(self):
@@ -137,8 +137,8 @@ class UpdateServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "updates"
             root.mkdir()
-            installer = root / "sPDF_Setup_1.6.1.exe"
-            partial = root / "sPDF_Setup_1.6.2.exe.part"
+            installer = root / "Leaflet_Setup_1.6.1.exe"
+            partial = root / "Leaflet_Setup_1.6.2.exe.part"
             unrelated = root / "notes.txt"
             invalid = root / "other_setup.exe"
             for path in (installer, partial, unrelated, invalid):
@@ -153,7 +153,7 @@ class UpdateServiceTests(unittest.TestCase):
 
     def test_installer_launch_does_not_use_shell(self):
         with tempfile.TemporaryDirectory() as temp:
-            installer = Path(temp) / "sPDF_Setup_1.6.1.exe"
+            installer = Path(temp) / "Leaflet_Setup_1.6.1.exe"
             installer.write_bytes(b"MZ")
             service = GitHubUpdateService("1.6.0")
             with patch("pdfeditor.update_service.subprocess.Popen") as popen:
@@ -165,7 +165,7 @@ class UpdateServiceTests(unittest.TestCase):
 
     def test_korean_updater_prefers_korean_installer_language(self):
         with tempfile.TemporaryDirectory() as temp:
-            installer = Path(temp) / "sPDF_Setup_1.6.1.exe"
+            installer = Path(temp) / "Leaflet_Setup_1.6.1.exe"
             installer.write_bytes(b"MZ")
             service = GitHubUpdateService("1.6.0", language="ko")
             with patch("pdfeditor.update_service.subprocess.Popen") as popen:
