@@ -47,6 +47,11 @@ def main(argv=None):
             save(args.disk_cache_key, scene)
     finally:
         document.close()
+    if scene.supported:
+        # Count the immutable scene in the worker, not on the GUI event loop
+        # when a potentially large prefetched result arrives.
+        from .core import _gpu_scene_cost
+        _gpu_scene_cost(scene)
     temporary = args.result + ".tmp"
     try:
         with open(temporary, "wb") as stream:

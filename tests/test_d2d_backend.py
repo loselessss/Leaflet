@@ -155,6 +155,39 @@ class D2DBackendTests(unittest.TestCase):
                 outside = pixels[(10 * 32 + 12) * 4:(10 * 32 + 12) * 4 + 4]
                 self.assertEqual(inside, bytes((0, 0, 255, 255)))
                 self.assertEqual(outside, bytes((255, 255, 255, 255)))
+                # Padding with transparent operations exercises the bounded
+                # complex-scene cache while retaining an uncached reference.
+                path = surface.create_path([
+                    ("move", 4.2, 4.2), ("line", 11.7, 4.2),
+                    ("line", 11.7, 11.7), ("line", 4.2, 11.7), ("close",)])
+                operations = (
+                    ("composite_mask_begin", (4, 4, 12, 12), False, 0),
+                    ("path", path, 0xffffffff, None, 1.0, None, None),
+                    ("composite_mask_end", ()),
+                    ("path", path, 0xffff0000, None, 1.0, None, None),
+                    ("clip_group_pop", None))
+                reference = surface.create_scene(32, 32, operations)
+                cached = surface.create_scene(32, 32, operations + (
+                    ("path", path, 0x00000000, None, 1.0, None, None),) * 256)
+                for dpi in (96, 144):
+                    surface.resize(32, 32, dpi)
+                    for scale, dx, dy in ((1, 0, 0), (1, -4, -2),
+                                          (1, .25, .5), (1, -3.75, -1.5),
+                                          (1.25, 3, 5), (1, 0, 0)):
+                        results = []
+                        for candidate in (reference, cached):
+                            surface.begin_frame(0xff0000ff)
+                            surface.draw_scene(candidate, (scale, 0, 0, scale, dx, dy))
+                            results.append(surface.read_pixels_bgra(32, 32))
+                            surface.end_frame()
+                        differences = [abs(a - b) for a, b in zip(*results)]
+                        if dpi == 96:
+                            self.assertEqual(results[0], results[1], (dpi, scale, dx, dy))
+                        else:
+                            # Fractional-DIP target origins can alter coverage
+                            # rounding at a handful of mask edge pixels.
+                            self.assertLessEqual(max(differences), 16)
+                            self.assertLess(sum(differences) / len(differences), .25)
         finally:
             user32.DestroyWindow(hwnd)
 

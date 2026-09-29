@@ -253,6 +253,15 @@ class WindowChrome(QWidget):
             if visible:
                 handle.raise_()
 
+    def refresh_caption(self):
+        """Repaint the custom caption after the first real layout pass."""
+        self.caption.updateGeometry()
+        self.caption.update()
+        self.bar.updateGeometry()
+        self.bar.update()
+        self.caption_divider.update()
+        self.updateGeometry()
+
     def _button(self, kind, text, callback):
         button = CaptionButton(kind, self.caption)
         button.setToolTip(text)

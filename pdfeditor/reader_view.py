@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidge
 
 from . import settings
 from .d2d_backend import D2DSurface, probe_d2d_backend
+from .reader_prefetch import ReaderPrefetchMixin
 from .widgets import (EDIT_BOX_COLOR, SEARCH_COLOR, SEARCH_CUR_COLOR, SEL_COLOR,
                       PageCanvas, qimage_from_render)
 
@@ -98,7 +99,7 @@ class _ReaderCanvas(PageCanvas):
         return None
 
 
-class ReaderPageView(QGraphicsView):
+class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
     zoom_changed = pyqtSignal(float)
     page_flip = pyqtSignal(int)
     viewport_changed = pyqtSignal()
@@ -153,6 +154,10 @@ class ReaderPageView(QGraphicsView):
         self._vector_refine_process = None
         self._vector_refine_job = None
         self._vector_refine_attempted = set()
+        self._prefetch_attempted = set()
+        self._prefetch_timer = QTimer(self)
+        self._prefetch_timer.setSingleShot(True)
+        self._prefetch_timer.timeout.connect(self._prefetch_next_page)
         self._vector_refine_poll_timer = QTimer(self)
         self._vector_refine_poll_timer.setInterval(30)
         self._vector_refine_poll_timer.timeout.connect(
@@ -347,13 +352,14 @@ class ReaderPageView(QGraphicsView):
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
 
-    def _start_vector_refine_worker(self, page):
+    def _start_vector_refine_worker(self, page, *, speculative=False):
         if self._document is None or self._vector_refine_process is not None:
             return
         scale = self._vector_refine_scale
         generation = getattr(self._document, "render_generation", 0)
         key = (generation, page, scale)
-        self._vector_refine_attempted.add(key)
+        if not speculative:
+            self._vector_refine_attempted.add(key)
         directory = tempfile.mkdtemp(prefix="spdf-gpu-scene-")
         snapshot_path = os.path.join(directory, "page.pdf")
         result_path = os.path.join(directory, "scene.pickle")
@@ -395,11 +401,16 @@ class ReaderPageView(QGraphicsView):
                 command + arguments, cwd=cwd, env=environment,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0) |
+                               (getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+                                if speculative else 0)))
         except Exception as error:
             shutil.rmtree(directory, ignore_errors=True)
-            self._finish_failed_vector_refine(page)
-            self.render_failed.emit(str(error))
+            if not speculative:
+                self._finish_failed_vector_refine(page)
+                self.render_failed.emit(str(error))
+            else:
+                self._schedule_page_prefetch()
             if self._vector_refine_pages:
                 self._vector_refine_timer.start(0)
             return
@@ -409,6 +420,7 @@ class ReaderPageView(QGraphicsView):
             "page": page, "scale": scale, "directory": directory,
             "result": result_path,
             "disk_cache_key": cache_key,
+            "speculative": speculative,
             "deadline": time.monotonic() + GPU_SCENE_WORKER_TIMEOUT_SECONDS,
         }
         self._vector_refine_poll_timer.start()
@@ -442,6 +454,19 @@ class ReaderPageView(QGraphicsView):
         finally:
             shutil.rmtree(job["directory"], ignore_errors=True)
         document = job["document"]
+        if job.get("speculative"):
+            from .gpu_raster import VectorPage
+            if (document is self._document and
+                    job["generation"] == document.render_generation and
+                    job["scale"] == self._vector_raster_scale() and
+                    job["page"] in self._nearby_prefetch_pages() and
+                    isinstance(scene, VectorPage) and scene.supported):
+                document.install_gpu_vector_page(
+                    job["page"], scene, persist=False, speculative=True)
+            self._schedule_page_prefetch()
+            if self._vector_refine_pages:
+                self._vector_refine_timer.start(0)
+            return
         current = (document is self._document and
                    job["generation"] == getattr(
                        document, "render_generation", 0) and
@@ -464,6 +489,8 @@ class ReaderPageView(QGraphicsView):
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
 
+        self._schedule_page_prefetch()
+
     def _finish_failed_vector_refine(self, page):
         # Keep a usable lower-resolution scene when image refinement fails.
         from .gpu_raster import VectorPage
@@ -477,6 +504,8 @@ class ReaderPageView(QGraphicsView):
         self._vector_refine_poll_timer.stop()
         process = self._vector_refine_process
         job = self._vector_refine_job
+        if job and job.get("speculative"):
+            self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
         self._vector_refine_process = None
         self._vector_refine_job = None
         if process is not None and process.poll() is None:
@@ -1016,6 +1045,7 @@ class ReaderPageView(QGraphicsView):
         changed = document is not self._document
         if changed:
             self._vector_refine_attempted.clear()
+            self._prefetch_attempted.clear()
             if (self._document is None or
                     os.path.normcase(os.path.abspath(self._document.path)) !=
                     os.path.normcase(os.path.abspath(document.path))):
@@ -1040,10 +1070,8 @@ class ReaderPageView(QGraphicsView):
             if page not in pages:
                 _identity, bitmap = self._d2d_previews.pop(page)
                 bitmap.close()
-        for page in tuple(self._d2d_vector_paths):
-            if page not in pages:
-                self._discard_native_vector_page(page)
         self._page_sizes = {p: document.page_size(p) for p in pages}
+        self._trim_nearby_native_pages()
         for page in pages:
             if page not in self._previews:
                 w, h = self._page_sizes[page]
@@ -1060,6 +1088,7 @@ class ReaderPageView(QGraphicsView):
         self._schedule_refine()
         self._schedule_vector_refine()
         self._notify_render_device()
+        self._schedule_page_prefetch()
 
     def page_rotation(self, page):
         return self._rotations.get(page, 0)
@@ -1111,6 +1140,7 @@ class ReaderPageView(QGraphicsView):
 
     def _apply_preview_zoom(
             self, zoom, position=None, anchor=_CURRENT_ZOOM_ANCHOR):
+        self._pause_page_prefetch()
         if position is None:
             position = self.viewport().rect().center()
         if anchor is _CURRENT_ZOOM_ANCHOR:
@@ -1137,6 +1167,7 @@ class ReaderPageView(QGraphicsView):
         self.viewport_changed.emit()
         if self.zoom != old_zoom:
             self.zoom_changed.emit(self.zoom)
+        self._schedule_page_prefetch()
 
     def preview_zoom(self, zoom, position=None):
         self._zoom_animation_timer.stop()
@@ -1183,6 +1214,7 @@ class ReaderPageView(QGraphicsView):
     def _viewport_moved(self, *_args):
         if self._updating:
             return
+        self._pause_page_prefetch()
         self.viewport().update()
         self.viewport_changed.emit()
         self._schedule_refine()
@@ -1296,6 +1328,7 @@ class ReaderPageView(QGraphicsView):
 
     def stop_rendering(self, *, keep_zoom_animation=False,
                        keep_vector_refine_worker=False):
+        self._prefetch_timer.stop()
         self._gpu_initial_frame_pending = False
         self._refine_timer.stop()
         self._tile_timer.stop()
@@ -1438,6 +1471,7 @@ class ReaderPageView(QGraphicsView):
             QTimer.singleShot(0, self.viewport().update)
         self._schedule_refine()
         self._schedule_vector_refine()
+        self._schedule_page_prefetch()
 
     def hideEvent(self, event):
         self.stop_rendering()

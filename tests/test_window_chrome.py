@@ -96,6 +96,17 @@ class WindowChromeTests(unittest.TestCase):
             window.close()
             window.deleteLater()
 
+    def test_refresh_caption_updates_caption_and_tab_viewports(self):
+        window = QMainWindow()
+        chrome = WindowChrome(window, QTabBar())
+        window.setMenuWidget(chrome)
+        with patch.object(chrome.caption, "update") as caption_update, \
+                patch.object(chrome.bar, "update") as viewport_update:
+            chrome.refresh_caption()
+        caption_update.assert_called_once_with()
+        viewport_update.assert_called_once_with()
+        window.close()
+
     def test_only_standalone_workspace_has_caption_tabs(self):
         from pdfeditor.app import AppWindow
         embedded = AppWindow()

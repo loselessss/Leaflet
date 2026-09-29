@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.34.2 - 2026-09-29
+
+### 성능 개선
+
+- Adjust rendering caches to available RAM and GPU memory, and prepare nearby pages in a low-priority background process while idle.
+- Reuse GPU-rendered complex pages at the same scale to reduce repeated mask and transparency processing while scrolling. Very large or rotated pages retain direct rendering.
+- Refresh the title bar and tab strip after the first document layout settles.
+
 ## 1.34.1 - 2026-09-28
 
 ### 개선

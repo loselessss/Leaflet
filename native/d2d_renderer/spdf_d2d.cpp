@@ -19,6 +19,7 @@
 #include <d3d11_1.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
@@ -858,7 +859,7 @@ public:
         // Source + temporary backdrop, plus a coverage mask for explicit clips.
         capture.bytes = static_cast<std::uint64_t>(size.width) * size.height * 4 *
             (mask_build ? 4 : (clip == nullptr ? 2 : 3));
-        constexpr std::uint64_t budget = 256ULL * 1024 * 1024;
+        const auto budget = (std::max)(256ULL * 1024 * 1024, scene_cache_budget());
         if (capture.bytes == 0 || composite_bytes_ + capture.bytes > budget) {
             return E_OUTOFMEMORY;
         }
@@ -1526,12 +1527,41 @@ public:
     HRESULT draw_cached_scene(Scene* scene, const SpdfD2DTransform& transform) noexcept;
 
 private:
+    std::uint64_t scene_cache_budget() noexcept {
+        const auto now = GetTickCount64();
+        if (budget_sampled_ && now - budget_sampled_ < 1000) return raster_budget_;
+        budget_sampled_ = now;
+        constexpr std::uint64_t mib = 1024 * 1024;
+        std::uint64_t budget = 128 * mib;
+        MEMORYSTATUSEX memory{};
+        memory.dwLength = sizeof(memory);
+        if (GlobalMemoryStatusEx(&memory)) {
+            budget = (std::min)({1024 * mib, memory.ullTotalPhys / 32,
+                                memory.ullAvailPhys / 8});
+        }
+        ComPtr<IDXGIAdapter> adapter;
+        ComPtr<IDXGIAdapter3> adapter3;
+        DXGI_QUERY_VIDEO_MEMORY_INFO video{};
+        if (SUCCEEDED(dxgi_device_->GetAdapter(&adapter)) &&
+                SUCCEEDED(adapter.As(&adapter3)) &&
+                SUCCEEDED(adapter3->QueryVideoMemoryInfo(
+                    0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &video))) {
+            std::uint64_t owned = 0;
+            for (const auto& entry : scene_rasters_) owned += entry.bytes;
+            const auto others = video.CurrentUsage > owned ? video.CurrentUsage - owned : 0;
+            const auto room = video.Budget > others ? video.Budget - others : 0;
+            budget = (std::min)({budget, video.Budget / 8, room / 4});
+        }
+        raster_budget_ = budget;
+        return budget;
+    }
+    std::uint64_t budget_sampled_ = 0;
+    std::uint64_t raster_budget_ = 128ULL * 1024 * 1024;
     struct SceneRaster {
         std::shared_ptr<char> identity;
         ComPtr<ID2D1Bitmap1> bitmap;
         SpdfD2DTransform transform{};
         float dpi = 96.0f;
-        float padding = 0;
         std::uint64_t bytes = 0;
         std::uint64_t used = 0;
     };
@@ -1836,6 +1866,103 @@ HRESULT replay_scene(
         if (FAILED(result)) return result;
     }
     return surface->set_transform(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
+}
+
+// Complex pages cannot use a command list because their blend operations read
+// the backdrop. Cache their GPU-rendered pixels at the exact scale instead.
+// Integer-pixel translations preserve coverage; other transforms replay normally.
+HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noexcept {
+    const auto budget = scene_cache_budget();
+    scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
+        [](const SceneRaster& entry) { return entry.identity.use_count() == 1; }), scene_rasters_.end());
+    std::uint64_t used = 0;
+    for (const auto& entry : scene_rasters_) used += entry.bytes;
+    while (used > budget && !scene_rasters_.empty()) {
+        auto oldest = std::min_element(scene_rasters_.begin(), scene_rasters_.end(),
+            [](const SceneRaster& a, const SceneRaster& b) { return a.used < b.used; });
+        used -= oldest->bytes;
+        scene_rasters_.erase(oldest);
+    }
+    if (scene->commands.size() < 256 || t.m12 != 0 || t.m21 != 0 ||
+            t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
+            !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
+            layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
+            !mask_captures_.empty()) return replay_scene(this, scene, t);
+    const auto& first = scene->commands.front().command;
+    if (first.type != SPDF_D2D_SCENE_FILL_RECT || first.flags != 0 ||
+            first.uint_values[0] != 0xffffffff || first.values[0] != 0 ||
+            first.values[1] != 0) return replay_scene(this, scene, t);
+    const float ratio = dpi_ / 96.0f;
+    for (auto& cached : scene_rasters_) {
+        const float x = (t.dx - cached.transform.dx) * ratio;
+        const float y = (t.dy - cached.transform.dy) * ratio;
+        if (cached.identity == scene->identity && cached.dpi == dpi_ &&
+                cached.transform.m11 == t.m11 && cached.transform.m22 == t.m22 &&
+                std::abs(x - std::round(x)) < 0.0001f &&
+                std::abs(y - std::round(y)) < 0.0001f) {
+            cached.used = ++raster_clock_;
+            d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(
+                t.dx - cached.transform.dx,
+                t.dy - cached.transform.dy));
+            d2d_context_->DrawBitmap(cached.bitmap.Get(), nullptr, 1.0f,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+        }
+    }
+    // Two pixels protect antialiased page edges. Align to the original pixel
+    // phase so cached and direct output have identical sample positions.
+    const float border = std::ceil(2 * ratio);
+    const float origin_x = (std::floor(t.dx * ratio) - border) / ratio;
+    const float origin_y = (std::floor(t.dy * ratio) - border) / ratio;
+    const float width = std::ceil(first.values[2] * t.m11 * ratio) + 2 * border + 1;
+    const float height = std::ceil(first.values[3] * t.m22 * ratio) + 2 * border + 1;
+    const auto limit = d2d_context_->GetMaximumBitmapSize();
+    if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0 ||
+            width > limit || height > limit || width * height * 4 >
+                (std::min)(128ULL * 1024 * 1024, budget / 4))
+        return replay_scene(this, scene, t);
+    SceneRaster cached;
+    cached.bytes = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4;
+    // Evict expired pages and least recently used scales before allocating.
+    scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
+        [](const SceneRaster& entry) { return entry.identity.use_count() == 1; }), scene_rasters_.end());
+    std::uint64_t total = cached.bytes;
+    for (const auto& entry : scene_rasters_) total += entry.bytes;
+    while (total > budget && !scene_rasters_.empty()) {
+        auto oldest = std::min_element(scene_rasters_.begin(), scene_rasters_.end(),
+            [](const SceneRaster& a, const SceneRaster& b) { return a.used < b.used; });
+        total -= oldest->bytes;
+        scene_rasters_.erase(oldest);
+    }
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+    auto result = d2d_context_->CreateBitmap(D2D1::SizeU(
+        static_cast<UINT32>(width), static_cast<UINT32>(height)), nullptr, 0, properties, &cached.bitmap);
+    if (FAILED(result)) return replay_scene(this, scene, t);
+    ComPtr<ID2D1Image> previous;
+    d2d_context_->GetTarget(&previous);
+    d2d_context_->SetTarget(cached.bitmap.Get());
+    d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+    auto local = t;
+    local.dx -= origin_x;
+    local.dy -= origin_y;
+    result = replay_scene(this, scene, local);
+    if (SUCCEEDED(result)) result = d2d_context_->Flush();
+    d2d_context_->SetTarget(previous.Get());
+    if (FAILED(result)) return result;
+    cached.identity = scene->identity;
+    cached.transform = t;
+    // Store the raster origin directly in the translation fields.
+    cached.transform.dx = t.dx - origin_x;
+    cached.transform.dy = t.dy - origin_y;
+    cached.dpi = dpi_;
+    cached.used = ++raster_clock_;
+    d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(origin_x, origin_y));
+    d2d_context_->DrawBitmap(cached.bitmap.Get(), nullptr, 1.0f,
+        D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    try { scene_rasters_.push_back(std::move(cached)); }
+    catch (const std::bad_alloc&) { /* This frame is still valid without caching. */ }
+    return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
 }
 
 }  // namespace
@@ -2434,7 +2561,7 @@ std::int32_t spdf_d2d_draw_scene(
     auto* retained = static_cast<Scene*>(scene);
     if (retained->owner != context) return static_cast<std::int32_t>(E_INVALIDARG);
     if (!retained->recordable) {
-        return static_cast<std::int32_t>(replay_scene(context, retained, *transform));
+        return static_cast<std::int32_t>(context->draw_cached_scene(retained, *transform));
     }
     if (!retained->display_list) {
         ComPtr<ID2D1Image> previous_target;

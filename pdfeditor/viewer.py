@@ -278,6 +278,13 @@ class ViewerMixin(NavigationMixin):
         self._update_page_label()
         self.update_thumbnail_viewport_marker()
         self._view_ready = True
+        # The frameless caption can be painted before the first document
+        # layout settles. Request one complete caption repaint after the
+        # actual viewport width is known; resizing the sidebar used to fix
+        # the same stale tab underline incidentally.
+        chrome = getattr(self, "_window_chrome", None)
+        if chrome is not None:
+            QTimer.singleShot(0, chrome.refresh_caption)
 
     def refresh_page(self, index):
         """페이지 내용이 바뀌었을 때(주석 등) 렌더 캐시와 썸네일을 무효화."""

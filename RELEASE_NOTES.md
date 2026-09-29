@@ -1,5 +1,11 @@
 # Leaflet Release Notes
 
+## 1.34.2 - 2026-09-29
+
+- Adjust rendering caches to available memory and prepare nearby pages in the background while idle.
+- Reduce repeated mask and transparency processing when scrolling complex GPU-rendered pages at the same scale.
+- Refresh the title bar and tabs after the first document layout settles.
+
 ## 1.34.1 - 2026-09-28
 
 - More transparent artwork now renders on the GPU, reducing CPU rasterization.

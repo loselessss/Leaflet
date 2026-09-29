@@ -60,6 +60,88 @@ class ReaderViewTests(unittest.TestCase):
             self.view._render_next_tile()
             self.view._tile_timer.stop()
 
+    def test_idle_prefetch_prioritizes_next_page_and_obeys_memory(self):
+        from pdfeditor.render_memory import RenderMemory, MIB
+        self.view._d2d_requested = True
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(512 * MIB, 4)), \
+                patch.object(self.view, "_start_vector_refine_worker") as worker:
+            self.assertEqual(self.view._nearby_prefetch_pages(), [1, 2, 3])
+            self.view._prefetch_next_page()
+            worker.assert_called_once_with(1, speculative=True)
+            worker.reset_mock()
+            self.view._vector_refine_pages = [0]
+            self.view._prefetch_next_page()
+            worker.assert_not_called()
+            self.view._vector_refine_pages.clear()
+            self.doc._gpu_vector_cache_bytes = self.doc.gpu_scene_memory_budget()
+            self.view._prefetch_next_page()
+            worker.assert_not_called()
+        self.doc._gpu_vector_cache_bytes = 0
+        self.view._d2d_requested = False
+
+    def test_prefetched_scene_is_available_when_turning_page(self):
+        from pdfeditor.gpu_raster import VectorPage, VectorPath
+        scene = VectorPage(True, items=(VectorPath((("move", 0, 0),)),))
+        self.view._d2d_requested = True
+        self.doc.install_gpu_vector_page(1, scene, persist=False, speculative=True)
+        with patch.object(self.doc, "gpu_vector_page", side_effect=AssertionError("extraction")):
+            self.assertIs(self.view._gpu_vector_page(self.doc, 1), scene)
+        self.view._d2d_requested = False
+
+    def test_nearby_native_scene_survives_page_turn_but_not_document_edit(self):
+        from pdfeditor.gpu_raster import VectorPage, VectorPath
+        from pdfeditor.render_memory import RenderMemory, MIB
+        scene = VectorPage(True, items=(VectorPath((("move", 0, 0),)),))
+        self.doc.install_gpu_vector_page(0, scene, persist=False)
+        resource, retained = Mock(closed=False), Mock(closed=False)
+        self.view._d2d_vector_paths[0] = (scene, (), {resource}, retained)
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(512 * MIB, 2)):
+            self.view.render_document(self.doc, [1], 1)
+            self.assertIn(0, self.view._d2d_vector_paths)
+            retained.close.assert_not_called()
+            self.doc.invalidate_render(0)
+            self.view._trim_nearby_native_pages()
+            self.assertNotIn(0, self.view._d2d_vector_paths)
+            retained.close.assert_called_once()
+            resource.close.assert_called_once()
+
+    def test_scroll_cancels_only_speculative_worker(self):
+        job = {"speculative": True, "generation": 0, "page": 1, "scale": 1.0}
+        self.view._vector_refine_job = job
+        self.view._prefetch_attempted.add((0, 1, 1.0))
+        with patch.object(self.view, "_stop_vector_refine_worker") as stop:
+            self.view._pause_page_prefetch()
+            stop.assert_called_once()
+            self.assertNotIn((0, 1, 1.0), self.view._prefetch_attempted)
+            stop.reset_mock()
+            job["speculative"] = False
+            self.view._pause_page_prefetch()
+            stop.assert_not_called()
+        self.view._vector_refine_job = None
+
+    def test_background_prefetch_installs_real_worker_result_without_changing_view(self):
+        import time
+        from pdfeditor.render_memory import RenderMemory, MIB
+        self.view._d2d_requested = True
+        visible = dict(self.view._vector_pages)
+        with patch("pdfeditor.reader_prefetch.render_memory",
+                   return_value=RenderMemory(512 * MIB, 2)):
+            self.view._prefetch_next_page()
+            self.assertIsNotNone(self.view._vector_refine_process)
+            self.assertTrue(self.view._vector_refine_job["speculative"])
+            deadline = time.monotonic() + 15
+            while self.view._vector_refine_process is not None and time.monotonic() < deadline:
+                self.view._poll_vector_refine_worker()
+                time.sleep(.01)
+            self.assertIsNone(self.view._vector_refine_process)
+            prepared = self.doc.cached_gpu_vector_page(1, 1, memory_only=True)
+            self.assertIsNotNone(prepared)
+            self.assertTrue(prepared.supported)
+            self.assertEqual(self.view._vector_pages, visible)
+        self.view._d2d_requested = False
+
     def test_cpu_diagnostic_retains_native_failure(self):
         self.view._backend_failure = "native renderer ABI mismatch"
         info = self.view.render_diagnostic(0)

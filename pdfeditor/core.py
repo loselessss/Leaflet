@@ -14,10 +14,11 @@ import fitz
 
 from .filetypes import is_illustrator_document, is_eps_document
 from .access import document_annotation, document_write
+from .render_memory import render_memory
 
 
 ANTIALIAS_LEVEL = 8
-GPU_VECTOR_CACHE_BYTES = 128 * 1024 * 1024
+GPU_VECTOR_CACHE_BYTES = 1024 * 1024 * 1024
 
 
 def _aggressive_gpu_band_merge_enabled():
@@ -292,7 +293,7 @@ class Document:
             cost = _gpu_scene_cost(scene)
             self._gpu_vector_cache[key] = scene
             self._gpu_vector_cache_bytes += cost
-            while (self._gpu_vector_cache_bytes > GPU_VECTOR_CACHE_BYTES and
+            while (self._gpu_vector_cache_bytes > self.gpu_scene_memory_budget() and
                    len(self._gpu_vector_cache) > 1):
                 _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
                 self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
@@ -314,6 +315,18 @@ class Document:
                 self._gpu_vector_cache.move_to_end(cached_key)
                 return candidate
         return None if memory_only else self._load_disk_gpu_scene(index, scale)
+
+    def gpu_scene_memory_budget(self):
+        return min(GPU_VECTOR_CACHE_BYTES, render_memory().scene_bytes)
+
+    def trim_gpu_scene_memory(self, protected=()):
+        """Release speculative entries first when available memory shrinks."""
+        budget = self.gpu_scene_memory_budget()
+        for key in tuple(self._gpu_vector_cache):
+            if self._gpu_vector_cache_bytes <= budget:
+                break
+            if key[0] not in protected:
+                self._gpu_vector_cache_bytes -= _gpu_scene_cost(self._gpu_vector_cache.pop(key))
 
     def gpu_scene_disk_cache_key(self, index, raster_scale=1.0):
         from . import scene_disk_cache as disk
@@ -390,16 +403,20 @@ class Document:
             snapshot.save(path, garbage=0, deflate=False)
         return 0
 
-    def install_gpu_vector_page(self, index, scene, *, persist=True, background=False):
+    def install_gpu_vector_page(self, index, scene, *, persist=True, background=False,
+                                speculative=False):
         """Install a scene produced from the current page snapshot."""
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
         key = (index, float(scene.raster_scale), aggressive_band_merge)
+        if speculative and (self._gpu_vector_cache_bytes + _gpu_scene_cost(scene) >
+                            self.gpu_scene_memory_budget()):
+            return None
         previous = self._gpu_vector_cache.pop(key, None)
         if previous is not None:
             self._gpu_vector_cache_bytes -= _gpu_scene_cost(previous)
         self._gpu_vector_cache[key] = scene
         self._gpu_vector_cache_bytes += _gpu_scene_cost(scene)
-        while (self._gpu_vector_cache_bytes > GPU_VECTOR_CACHE_BYTES and
+        while (self._gpu_vector_cache_bytes > self.gpu_scene_memory_budget() and
                len(self._gpu_vector_cache) > 1):
             _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
             self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
