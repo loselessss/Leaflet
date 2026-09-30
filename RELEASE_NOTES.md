@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## 1.34.5 - 2026-09-30
+
+- Fixed CPU fallback for filled text whose font provides no vector outlines, preserving the original font with transparent text images.
+
 ## 1.34.4 - 2026-09-29
 
 - Fixed unnecessary CPU rendering on pages containing empty font glyphs.

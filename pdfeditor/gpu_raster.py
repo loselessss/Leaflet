@@ -1941,12 +1941,55 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         try:
             self._features.add("text")
             argb = _device_color(colorspace, color, alpha, color_params)
-            for commands, transform in self._text_outlines(text, ctm):
+            try:
+                outlines = self._text_outlines(text, ctm)
+            except ValueError as error:
+                if str(error) != "font glyph has no vector outline":
+                    raise
+                self._raster_fill_text(text, ctm, colorspace, color,
+                                       alpha, color_params)
+                return
+            for commands, transform in outlines:
                 self._append_item(VectorPath(
                     commands, fill_argb=argb,
                     transform=transform, groupable=True))
         except Exception as error:
             self._set_failure(str(error))
+
+    def _raster_fill_text(self, text, ctm, colorspace, color, alpha, color_params):
+        """Render one text run with its original font, inside GPU clip scopes."""
+        source = _mupdf.FzText(text)
+        source.thisown = False
+        matrix = _mupdf.FzMatrix(ctm)
+        scale = max(2.0, self._raster_scale)
+        bounds = _mupdf.fz_bound_text(source, _mupdf.FzStrokeState(), matrix)
+        left, top = math.floor(bounds.x0 * scale) - 1, math.floor(bounds.y0 * scale) - 1
+        right, bottom = math.ceil(bounds.x1 * scale) + 1, math.ceil(bounds.y1 * scale) + 1
+        width, height = right - left, bottom - top
+        cost = width * height * 4
+        if width <= 0 or height <= 0 or cost > MAX_GPU_IMAGE_BYTES or self._image_bytes + cost > MAX_GPU_IMAGE_BYTES:
+            raise ValueError("text bitmap exceeds GPU scene limit")
+        pixmap = _mupdf.fz_new_pixmap_with_bbox(
+            _mupdf.fz_device_rgb(), _mupdf.FzIrect(left, top, right, bottom),
+            _mupdf.FzSeparations(), 1)
+        _mupdf.fz_clear_pixmap(pixmap)
+        device = _mupdf.fz_new_draw_device(_mupdf.FzMatrix(scale, 0, 0, scale, 0, 0), pixmap)
+        try:
+            space = _mupdf.FzColorspace(colorspace)
+            space.thisown = False
+            values = [_mupdf.floats_getitem(color, index)
+                      for index in range(_mupdf.fz_colorspace_n(space))]
+            _mupdf.fz_fill_text(device, source, matrix, space, values, alpha,
+                              _mupdf.FzColorParams(color_params))
+        finally:
+            _mupdf.fz_close_device(device)
+        image = pymupdf.Pixmap(pixmap)
+        self._append_item(VectorImage(
+            _rgba_to_premul_bgra(image.samples, width, height), width, height, width * 4,
+            (width / scale, 0, 0, height / scale, left / scale, top / scale)))
+        self._image_bytes += cost
+        self._features.add("text-raster-fallback")
+        self._features.add("image-downsample")
 
     def fill_image(self, _context, image, ctm, alpha, _color_params):
         source_index = self._source_image_index
@@ -2387,6 +2430,8 @@ structure are reused. Callers must reject stale document generations.
     scale = max(1.0, float(raster_scale))
     if scale <= scene.raster_scale:
         return scene
+    if "text-raster-fallback" in scene.features:
+        return vector_page_from_pymupdf(page, scale, timeout_seconds=timeout_seconds)
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
     cookie = _mupdf.FzCookie()
     recorder = _DisplayListDevice(tuple(page.rect), scale, cookie, deadline)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.34.5 - 2026-09-30
+
+### 버그 수정
+
+- Keep filled text without font outlines on the GPU by rendering the original text to transparent images and refreshing their resolution when zooming.
+
 ## 1.34.4 - 2026-09-29
 
 ### 버그 수정

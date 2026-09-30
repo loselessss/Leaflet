@@ -127,3 +127,6 @@ PDF 1.3 이후의 page-piece dictionary와 PDF 1.4 이후 문서 catalog의 `Pie
 여기에는 안정적인 개체 ID, 그룹·스타일·프레임 연결, 안내선, 원본 문자열과 출력 설정처럼 비교적 작은 편집 정보를 넣을 수 있다. 일반 PDF 뷰어는 이를 무시하므로 PDF 열람에는 필요하지 않아야 한다. [Adobe PDF Reference의 Page-Piece Dictionaries](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf)와 [PDF Association의 custom metadata 지침](https://pdfa.org/download-area/publications/Including-custom-metadata-structures-in-PDF.pdf)을 따른다.
 
 `PieceInfo`는 최적화·정리·다른 프로그램의 재저장에서 제거되거나 현재 PDF 내용과 불일치할 수 있다. 따라서 첫 조판 버전의 완전한 재편집 원본은 `*.spdf-layout` 컨테이너로 유지하고, PDF 내부 데이터는 이동이 편한 보조 사본으로 취급한다. 큰 원본 이미지·글꼴·복구 이력은 PDF private stream에 무조건 넣지 않는다. 데이터 크기·압축 해제 상한, 스키마 검증, checksum, 암호 PDF와 전자서명 변경 경고를 적용한다.
+# 윤곽선 없는 채움 텍스트 보정 (1.34.5)
+
+글리프 윤곽선을 얻을 수 없는 채움 텍스트 실행 단위는 MuPDF로 원래 폰트·변환·색상·알파를 보존한 투명 이미지로 만들고, 기존 GPU 클립·마스크·그룹 안에 삽입한다. 전체 페이지를 이미지화하지 않는다. 보정 이미지도 장면 메모리 상한을 공유하며 확대 배율 버킷 변경 시 다시 준비한다. 윤곽선 글자와 텍스트 클리핑의 보정은 후속 항목으로 남긴다.

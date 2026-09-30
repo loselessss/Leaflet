@@ -234,7 +234,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                             "features": scene.features}
                 return {"mode": "fallback", "reason": scene.reason,
                         "features": scene.features}
-            bitmap_features = {"image", "stencil", "raster-shading", "clip-mask", "cpu-island"}
+            bitmap_features = {"image", "stencil", "raster-shading", "clip-mask", "cpu-island", "text-raster-fallback"}
             mode = ("composite" if bitmap_features.intersection(scene.features)
                     else "direct")
             return {"mode": mode, "reason": "",

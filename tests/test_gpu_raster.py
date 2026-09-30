@@ -1386,6 +1386,27 @@ class GpuRasterSceneTests(unittest.TestCase):
                 if mode in (5, 7):
                     self.assertTrue(any(isinstance(item, ClipPush) for item in scene.drawables))
 
+    def test_missing_outline_rasterizes_original_text_and_refines_zoom(self):
+        from pdfeditor.gpu_raster import (
+            _DisplayListDevice, VectorImage, vector_page_from_pymupdf,
+            refine_page_images)
+        with fitz.open() as pdf:
+            page = pdf.new_page(width=200, height=100)
+            page.insert_text((20, 40), "Original font", fontsize=18)
+            with patch.object(_DisplayListDevice, "_text_outlines",
+                              side_effect=ValueError("font glyph has no vector outline")):
+                scene = vector_page_from_pymupdf(page, 1)
+                refined = refine_page_images(page, scene, 4)
+                if refined is None:
+                    refined = vector_page_from_pymupdf(page, 4)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertTrue(refined.supported, refined.reason)
+            self.assertIn("text-raster-fallback", scene.features)
+            first = next(item for item in scene.items if isinstance(item, VectorImage))
+            second = next(item for item in refined.items if isinstance(item, VectorImage))
+            self.assertTrue(any(first.pixels))
+            self.assertGreater(second.width, first.width)
+
     def test_ligature_unicode_continuation_does_not_add_ink(self):
         from pymupdf import mupdf as m
         from pdfeditor.gpu_raster import _DisplayListDevice
