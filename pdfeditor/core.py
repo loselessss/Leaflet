@@ -10,7 +10,7 @@ import tempfile
 import sys
 from dataclasses import fields, is_dataclass
 
-import fitz
+import pymupdf as fitz
 
 from .filetypes import is_illustrator_document, is_eps_document
 from .access import document_annotation, document_write

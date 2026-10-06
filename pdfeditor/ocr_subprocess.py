@@ -469,7 +469,7 @@ def main():
 
     try:
         import numpy as np
-        import fitz
+        import pymupdf as fitz
         ocr = _build_engine(engine)
     except Exception as e:
         _emit({"type": "error", "message": "OCR 초기화 실패: %s" % e})

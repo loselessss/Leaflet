@@ -45,6 +45,7 @@ from .update_service import GitHubUpdateService, UpdateError
 from .viewer import ViewerMixin
 from .widgets import BookmarkTree, PageView, ThumbList
 from .workspaces import WindowWorkspaceMixin, workspace_policy
+from .tab_lifecycle import TabLifecycleMixin
 # Initialize QtNetwork's SIP types before constructing any window. Importing
 # them for the first time during a save can trigger cyclic Qt-widget collection
 # in the middle of extension initialization on Windows. This loads only the
@@ -335,6 +336,12 @@ class TransferTabBar(QTabBar):
                     menu.addSeparator()
                 else:
                     menu.addAction(action)
+            menu.addSeparator()
+            shell = self.window()
+            detach = menu.addAction(localize("Move tab to new window", "탭을 새 창으로 분리"))
+            detach.setEnabled(tab.doc is not None and tab is not shell._presentation_tab)
+            detach.triggered.connect(lambda: shell.detach_tab(tab))
+            menu.addAction(shell._reopen_tab_action)
             menu.exec_(ev.globalPos())
         finally:
             menu.deleteLater()
@@ -1535,7 +1542,7 @@ def show_licenses(parent):
 # AppWindow — 탭들을 담는 셸
 # ======================================================================
 
-class AppWindow(QMainWindow, WindowWorkspaceMixin):
+class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
     """Embeddable window; read_only is fixed for this window's lifetime."""
 
     @property
@@ -1622,6 +1629,9 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
 
         # 시작 페이지(탭 없음)일 때 쓰는 최소 메뉴바. 탭이 활성화되면 그 탭의
         # 메뉴바로 교체(reparent)한다.
+        self._init_tab_lifecycle()
+        from .dpi_refresh import DpiRefreshController
+        self._dpi_refresh = DpiRefreshController(self)
         self._shell_menubar = self._build_shell_menu()
         self._switch_menubar(self._shell_menubar)
         self._show_start()
@@ -1840,6 +1850,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
     def _build_shell_menu(self):
         mb = QMenuBar(self)
         m = mb.addMenu("파일(&F)")
+        m.addAction(self._reopen_tab_action)
         m.addAction(_make_action(
             self, "열기...", "Ctrl+O", self.open_dialog, "open"))
         m.addAction(_make_action(
@@ -2377,11 +2388,13 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin):
         menubar.show()
 
     def close_tab(self, tab):
-        if tab is None or not tab.maybe_save():
+        if tab is None or self._tabs.indexOf(tab) < 0 or not tab.maybe_save():
             return
+        self._remember_closed_tab(tab)
         self._remove_tab(tab)
 
     def _remove_tab(self, tab):
+        self._cancel_pending_reopen(tab)
         if tab is self._presentation_tab:
             self.toggle_presentation(tab)
         # OCR 프로세스에는 즉시 종료 신호를 보내되, wait와 대용량 렌더 캐시

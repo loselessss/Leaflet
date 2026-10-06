@@ -9,7 +9,7 @@ undo/redo: PyMuPDF 저널링이 텍스트 삽입과 함께 쓰면 깨져서(연�
 한 장 찍어두고, 되돌리기는 그 스냅샷으로 복원한다.
 """
 
-import fitz
+import pymupdf as fitz
 from PyQt5.QtCore import QRectF, QPointF
 from PyQt5.QtWidgets import QDialog, QInputDialog, QMessageBox
 from .access import editing_command, history_command

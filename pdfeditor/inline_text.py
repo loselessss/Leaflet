@@ -137,7 +137,7 @@ class InlineTextSession(QObject):
         canvas = view.canvas
         z = view.zoom
         x, y, right, bottom = self.bbox
-        import fitz
+        import pymupdf as fitz
         rotated = fitz.Rect(x, y, right, bottom) * self.document._doc[self.page].rotation_matrix
         x, y, right, bottom = tuple(rotated)
         transforms = getattr(view, '_page_transforms', None)

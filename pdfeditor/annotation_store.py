@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 import uuid
 
-import fitz
+import pymupdf as fitz
 
 
 MAX_SIDECAR_BYTES = 16 * 1024 * 1024

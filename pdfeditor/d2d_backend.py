@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 
-ABI_VERSION = 19
+ABI_VERSION = 20
 DRIVER_NAMES = {0: "none", 1: "hardware", 2: "warp"}
 
 
@@ -408,11 +408,14 @@ class D2DSurface:
                 append(5)
             elif kind == "composite_push":
                 append(6, values=(values[0],),
-                       uint_values=(resource, bool(values[1])))
+                       uint_values=(resource, int(bool(values[1])) |
+                                    (2 if len(values) > 2 and not values[2] else 0)))
             elif kind == "composite_pop":
                 append(7)
             elif kind in ("mask_begin", "composite_mask_begin"):
                 area, luminosity, background_argb = resource, *values
+                if kind == "composite_mask_begin" and luminosity:
+                    self._ensure_luminosity_table()
                 append(10 if kind == "mask_begin" else 12, values=area,
                        uint_values=(bool(luminosity), background_argb))
             elif kind in ("mask_end", "composite_mask_end"):
@@ -529,11 +532,12 @@ class D2DSurface:
             self._library.spdf_d2d_end_mask(self._handle, table, size),
             "Direct2D mask capture end")
 
-    def begin_composite_group(self, mode, opacity, knockout=False):
+    def begin_composite_group(self, mode, opacity, knockout=False, isolated=True):
         if self.closed:
             raise RuntimeError("Direct2D surface is closed")
         _check_hresult(self._library.spdf_d2d_begin_composite_group(
-            self._handle, int(mode), float(opacity), int(bool(knockout))),
+            self._handle, int(mode), float(opacity),
+            int(bool(knockout)) | (0 if isolated else 2)),
             "Direct2D blend group start")
 
     def end_composite_group(self):
@@ -554,17 +558,20 @@ class D2DSurface:
         _check_hresult(self._library.spdf_d2d_end_clip_group(
             self._handle), "Direct2D clip group end")
 
+    def _ensure_luminosity_table(self):
+        from .gpu_color import luminosity_lut
+        signature, edge, data = luminosity_lut()
+        if getattr(self, "_luminosity_profile", None) != signature:
+            buffer = (c_ubyte * len(data)).from_buffer_copy(data)
+            _check_hresult(self._library.spdf_d2d_set_luminosity_lut(
+                self._handle, buffer, len(data), edge), "Direct2D mask color table")
+            self._luminosity_profile = signature
+
     def begin_composite_mask(self, area, luminosity, background_argb):
         if self.closed:
             raise RuntimeError("Direct2D surface is closed")
         if luminosity:
-            from .gpu_color import luminosity_lut
-            signature, edge, data = luminosity_lut()
-            if getattr(self, "_luminosity_profile", None) != signature:
-                buffer = (c_ubyte * len(data)).from_buffer_copy(data)
-                _check_hresult(self._library.spdf_d2d_set_luminosity_lut(
-                    self._handle, buffer, len(data), edge), "Direct2D mask color table")
-                self._luminosity_profile = signature
+            self._ensure_luminosity_table()
         _check_hresult(self._library.spdf_d2d_begin_composite_mask(
             self._handle, *map(float, area), int(bool(luminosity)), int(background_argb)),
             "Direct2D composite mask start")

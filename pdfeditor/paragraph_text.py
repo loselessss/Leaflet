@@ -1,6 +1,6 @@
 """Inline multiline editor using the existing typography palette and history."""
 
-import fitz
+import pymupdf as fitz
 from PyQt5.QtCore import Qt, QEvent, QTimer, QRectF
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import QPlainTextEdit, QDoubleSpinBox, QComboBox, QCheckBox, QLabel, QPushButton

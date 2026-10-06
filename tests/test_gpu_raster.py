@@ -253,6 +253,20 @@ def isolated_group_pdf_bytes(blend_mode="Normal", background=False, clip=False):
     return bytes(data)
 
 
+def nonisolated_nested_blend_pdf_bytes(opacity=0.7, clip=False, blend="Multiply"):
+    with fitz.open(stream=isolated_group_pdf_bytes(background=True, clip=clip),
+                   filetype="pdf") as pdf:
+        pdf.xref_set_key(5, "Group/I", "false")
+        pdf.xref_set_key(6, "ca", str(opacity))
+        pdf.xref_set_key(6, "CA", str(opacity))
+        state = pdf.get_new_xref()
+        pdf.update_object(state, f"<< /Type /ExtGState /BM /{blend} /ca 0.6 >>")
+        pdf.xref_set_key(5, "Resources", f"<< /ExtGState << /Inner {state} 0 R >> >>")
+        pdf.update_stream(5, b"q /Inner gs 0.8 0.2 0.4 rg 20 20 180 140 re f Q "
+                            b"0.1 0.7 0.3 rg 100 80 180 140 re f")
+        return pdf.tobytes()
+
+
 def empty_glyph_pdf_bytes(render_mode=0):
     with fitz.open() as pdf:
         page = pdf.new_page(width=300, height=240)
@@ -603,6 +617,16 @@ def small_overlapping_nonisolated_group_pdf_bytes():
 
 
 class GpuRasterSceneTests(unittest.TestCase):
+    def test_nonisolated_normal_group_preserves_nested_blend_backdrop(self):
+        from pdfeditor.gpu_raster import GroupPush, vector_page_from_pymupdf
+        with fitz.open(stream=nonisolated_nested_blend_pdf_bytes(), filetype="pdf") as pdf:
+            scene = vector_page_from_pymupdf(pdf[0])
+        self.assertTrue(scene.supported, scene.reason)
+        self.assertIn("nonisolated-normal-group", scene.features)
+        self.assertNotIn("cpu-island", scene.features)
+        self.assertTrue(any(isinstance(item, GroupPush) and not item.isolated
+                            and item.blend_mode == 0 for item in scene.drawables))
+
     def test_direct_rgb_pack_matches_old_rgba_pipeline_after_shrink(self):
         from pdfeditor.gpu_raster import _rgb_to_bgra, _rgba_to_premul_bgra
         samples = bytes((i * 73 + i // 7) % 256 for i in range(127 * 93 * 3))

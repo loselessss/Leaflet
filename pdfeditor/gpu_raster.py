@@ -1211,7 +1211,7 @@ def _tile_repeat_offsets(state):
 def _normal_group_contents(items):
     """Source-over children can be isolated without changing their backdrop."""
     return all(not isinstance(item, GroupPush) or
-               (item.blend_mode == 0 and not item.knockout)
+               (item.isolated and item.blend_mode == 0 and not item.knockout)
                for item in items)
 
 
@@ -1292,6 +1292,13 @@ def _flatten_nonisolated_groups(items):
                         continue
                     raise ValueError(
                         "unsupported non-isolated transparency group blend mode")
+                if not item.knockout and not _normal_group_contents(children):
+                    # A nested blend (or another backdrop-dependent group)
+                    # must see the original backdrop, even with one drawing.
+                    flattened.append(item)
+                    flattened.extend(children)
+                    flattened.append(GroupPop())
+                    continue
                 if len(drawing_indexes) != 1:
                     if shading_only:
                         flattened.extend(_with_shading_group_opacity(
@@ -2389,7 +2396,7 @@ def _validate_composite_context(items):
                 return "unbalanced composite mask stack"
             scopes[-1] = "clip"
         elif isinstance(item, GroupPush):
-            if not item.isolated:
+            if not item.isolated and (item.blend_mode != 0 or item.knockout):
                 return "unsupported non-isolated group in blended scene"
             scopes.append("group")
         elif isinstance(item, GroupPop):
@@ -2550,6 +2557,8 @@ def _vector_page_from_pymupdf(
                 items, image_bytes, islanded = _flatten_or_cpu_island_groups(
                     tuple(device.items), page, scale, device._image_bytes)
                 device.items = list(items)
+                if any(isinstance(item, GroupPush) and not item.isolated for item in items):
+                    device._features.add("nonisolated-normal-group")
                 device._image_bytes = image_bytes
                 if islanded:
                     device._features.add("cpu-island")

@@ -4,6 +4,12 @@
 
 상태: Direct2D 타일 합성 및 제한형 PDF 벡터·글자 GPU 래스터화 적용
 
+### 미출시 / ABI v20
+
+- 비격리 Normal 그룹 안의 중첩 혼합은 배경을 복사한 GPU target에서 실행하고, premultiplied 결과와 원래 배경을 그룹 불투명도로 보간한다. 배경을 두 번 합성하지 않으며 CPU 페이지 이미지나 CPU island로 대체하지 않는다. 그룹 자체가 Normal이 아니거나 knockout인 미지원 조합은 기존 CPU 대체 조건을 유지한다.
+- retained scene 생성 시 밝기 마스크 색상표를 준비하여, 즉시 그리기 경로를 거치지 않은 첫 replay도 동일하게 처리한다. 캐시 형식은 10으로 변경하여 이전 추출 결과를 재사용하지 않는다.
+- ABI v20 composite group flags는 bit 0이 knockout, bit 1이 비격리 Normal 그룹이다. 새로운 Python 코드와 x64 DLL을 함께 배포해야 한다.
+
 ### 렌더링 구현 기준: 1.32.2 / ABI v19
 
 - MuPDF 텍스트 항목의 `gid=-1`은 하나의 glyph에 추가로 대응하는 Unicode 정보이므로 별도 윤곽을 그리지 않는다. 실제 glyph 윤곽은 그대로 유지하여 불필요한 CPU 전환과 중복 글자 표시를 막는다.

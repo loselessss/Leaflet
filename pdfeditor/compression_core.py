@@ -3,7 +3,7 @@
 import os
 import tempfile
 
-import fitz
+import pymupdf as fitz
 
 
 COMPRESSION_PRESETS = {

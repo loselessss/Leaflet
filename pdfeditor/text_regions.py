@@ -1,6 +1,6 @@
 """Conservative geometric text grouping and bounded paragraph replacement."""
 
-import fitz
+import pymupdf as fitz
 
 
 def _join(spans):

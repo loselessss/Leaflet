@@ -735,7 +735,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         composite_groups = any(
             isinstance(item, MaskBegin) or
             (isinstance(item, GroupPush) and
-             (item.blend_mode or item.knockout)) for item in items)
+             (item.blend_mode or item.knockout or not item.isolated)) for item in items)
         composite_clips = set()
         if composite_groups:
             open_clips = []
@@ -800,7 +800,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             if isinstance(item, GroupPush):
                 if composite_groups:
                     draws.append(("composite_push", item.blend_mode,
-                                  item.opacity, item.knockout))
+                                  item.opacity, item.knockout, item.isolated))
                 else:
                     draws.append(("group_push", item.opacity))
                 index += 1
@@ -930,7 +930,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 continue
             if kind == "composite_push":
                 self._d2d_surface.begin_composite_group(
-                    resource, values[0], values[1])
+                    resource, values[0], values[1], values[2])
                 continue
             if kind == "composite_pop":
                 self._d2d_surface.end_composite_group()
@@ -1521,6 +1521,16 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self.stop_rendering()
         self._release_d2d_surface()
         super().hideEvent(event)
+
+    def refresh_display_density(self):
+        # A native child surface can retain its old physical dimensions after
+        # Qt changes the top-level backing store. Recreate only native resources;
+        # document scenes, page coordinates and the exact zoom stay unchanged.
+        self._release_d2d_surface()
+        self.viewport().updateGeometry()
+        self.viewport().update()
+        self._schedule_refine()
+        self._schedule_vector_refine()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

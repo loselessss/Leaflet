@@ -13,12 +13,16 @@ Windows SDK, then run:
 native\build_d2d_renderer.bat
 ```
 
-Generated objects, import libraries, PDBs, and `spdf_d2d_renderer.dll` are kept
-under `native\bin` and are not committed.
+Generated objects, import libraries, and PDBs under `native\bin` are not committed.
+The tracked x64 `spdf_d2d_renderer.dll` must match the Python backend ABI.
 
 ## Current ABI
 
-ABI version 17 can:
+ABI version 20 can:
+
+- composite non-isolated Normal groups with nested blends against a GPU backdrop,
+  applying group opacity once to premultiplied pixels (group flag bit 1);
+- replay retained scenes with luminosity-mask color tables prepared before drawing;
 
 - probe a hardware D3D11 device and fall back to WARP;
 - create Direct2D and DirectWrite devices on the same DXGI device;

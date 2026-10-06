@@ -11,7 +11,7 @@ import re
 import uuid
 from contextlib import contextmanager
 
-import fitz
+import pymupdf as fitz
 
 
 def _refs(pdf, xref, key):

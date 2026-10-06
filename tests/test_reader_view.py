@@ -53,6 +53,17 @@ class ReaderViewTests(unittest.TestCase):
         self.app.processEvents()
         self.directory.cleanup()
 
+    def test_density_refresh_keeps_page_zoom_and_scene(self):
+        self.view.zoom = 1.25
+        self.view.render_document(self.doc, [1], 1)
+        preview = self.view._previews[1]
+        with patch.object(self.view, "_release_d2d_surface") as release:
+            self.view.refresh_display_density()
+        release.assert_called_once_with()
+        self.assertEqual(self.view.zoom, 1.25)
+        self.assertEqual(self.view.canvas._active_page, 1)
+        self.assertIs(self.view._previews[1], preview)
+
     def finish_tiles(self):
         self.view._plan_tiles()
         self.view._tile_timer.stop()
@@ -1027,8 +1038,8 @@ class ReaderViewTests(unittest.TestCase):
         self.view._paint_d2d()
         self.assertEqual([call.args for call in
             surface.begin_composite_group.call_args_list],
-            [(0, 1, False), (9, .5, False), (12, .5, False),
-             (13, .5, False), (14, .5, False), (15, .5, False)])
+            [(0, 1, False, True), (9, .5, False, True), (12, .5, False, True),
+             (13, .5, False, True), (14, .5, False, True), (15, .5, False, True)])
         self.assertEqual(surface.end_composite_group.call_count, 6)
         surface.push_opacity_layer.assert_not_called()
         surface.create_bitmap_bgra.assert_not_called()
@@ -1085,7 +1096,7 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_size = (self.view.viewport().size(), ratio)
         try:
             self.view._paint_d2d()
-            surface.begin_composite_group.assert_called_once_with(9, .5, False)
+            surface.begin_composite_group.assert_called_once_with(9, .5, False, True)
             surface.push_clip_path.assert_called_once_with(path)
             surface.pop_clip.assert_called_once_with()
             surface.begin_clip_group.assert_not_called()
@@ -1109,7 +1120,7 @@ class ReaderViewTests(unittest.TestCase):
 
         self.view._paint_d2d()
 
-        surface.begin_composite_group.assert_called_once_with(0, 1, True)
+        surface.begin_composite_group.assert_called_once_with(0, 1, True, True)
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
         self.view._d2d_requested = False

@@ -770,12 +770,14 @@ public:
     HRESULT begin_composite_group(
         std::uint32_t mode, float opacity, Path* clip = nullptr,
         bool mask_build = false, bool knockout = false,
-        const D2D1_RECT_F* capture_bounds = nullptr) noexcept {
+        const D2D1_RECT_F* capture_bounds = nullptr,
+        bool nonisolated = false) noexcept {
         // No implicit layer may cross a target switch. The scene validator
         // rejects these combinations before any page drawing starts.
         if (!drawing_ || layer_depth_ != 0 || axis_clip_depth_ != 0 ||
                 !mask_captures_.empty() ||
                 mode > 15 || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
+                (nonisolated && (mode != 0 || knockout || mask_build || clip != nullptr)) ||
                 (clip != nullptr && (clip->owner != this || !clip->resource))) {
             return E_INVALIDARG;
         }
@@ -870,6 +872,14 @@ public:
         result = d2d_context_->CreateBitmap(
             size, nullptr, 0, properties, &capture.source);
         if (FAILED(result)) return result;
+        if (nonisolated) {
+            result = d2d_context_->Flush();
+            if (FAILED(result)) return result;
+            d2d_context_->SetTarget(nullptr);
+            result = capture.source->CopyFromBitmap(nullptr, capture.previous.Get(), nullptr);
+            d2d_context_->SetTarget(capture.previous.Get());
+            if (FAILED(result)) return result;
+        }
         if (clip != nullptr) {
             result = d2d_context_->CreateBitmap(
                 size, nullptr, 0, properties, &capture.mask);
@@ -924,6 +934,7 @@ public:
         capture.opacity = opacity;
         capture.building_mask = mask_build;
         capture.knockout = knockout;
+        capture.nonisolated = nonisolated;
         capture.previous_blend = d2d_context_->GetPrimitiveBlend();
         composite_bytes_ += capture.bytes;
         composite_captures_.push_back(capture);
@@ -934,7 +945,7 @@ public:
             adjusted._32 -= capture.destination_origin.y;
             d2d_context_->SetTransform(adjusted);
         }
-        if (clip == nullptr) d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+        if (clip == nullptr && !nonisolated) d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
         // Offscreen captures have their own compositing state. Inheriting COPY
         // here makes nested bitmaps erase earlier content in the capture.
         // The parent's state is restored when this capture closes.
@@ -1074,7 +1085,7 @@ public:
         d2d_context_->SetTarget(capture.previous.Get());
         if (FAILED(result)) return result;
         d2d_context_->SetTransform(D2D1::Matrix3x2F::Identity());
-        if (capture.mode == 0 && !clip) {
+        if (capture.mode == 0 && !clip && !capture.nonisolated) {
             d2d_context_->DrawBitmap(capture.source.Get(), nullptr,
                 capture.opacity, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         } else {
@@ -1097,6 +1108,29 @@ public:
                     &destination, capture.previous.Get(),
                     capture.cropped ? &source : nullptr);
                 d2d_context_->SetTarget(capture.previous.Get());
+            }
+            if (capture.nonisolated) {
+                // Normal non-isolated group: its source already contains the
+                // backdrop. Apply group opacity once to the premultiplied
+                // difference, not source-over (which would count it twice).
+                ComPtr<ID2D1Effect> interpolate;
+                if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
+                    CLSID_D2D1ArithmeticComposite, &interpolate);
+                if (SUCCEEDED(result)) {
+                    interpolate->SetInput(0, backdrop.Get());
+                    interpolate->SetInput(1, capture.source.Get());
+                    result = interpolate->SetValue(
+                        D2D1_ARITHMETICCOMPOSITE_PROP_COEFFICIENTS,
+                        D2D1::Vector4F(0, 1.0f - capture.opacity, capture.opacity, 0));
+                }
+                if (SUCCEEDED(result)) {
+                    d2d_context_->DrawImage(interpolate.Get(), D2D1::Point2F(0, 0),
+                        D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                        D2D1_COMPOSITE_MODE_SOURCE_COPY);
+                    result = d2d_context_->Flush();
+                }
+                d2d_context_->SetTransform(capture.previous_transform);
+                return result;
             }
             if (clip) {
                 // premultiplied output = result * mask + backdrop * (1 - mask).
@@ -1581,6 +1615,7 @@ private:
         std::uint32_t mode = 0;
         float opacity = 1.0f;
         bool knockout = false;
+        bool nonisolated = false;
         bool cropped = false;
         D2D1_PRIMITIVE_BLEND previous_blend = D2D1_PRIMITIVE_BLEND_SOURCE_OVER;
         std::uint64_t bytes = 0;
@@ -1791,9 +1826,14 @@ HRESULT replay_scene(
             result = surface->pop_layer();
             break;
         case SPDF_D2D_SCENE_COMPOSITE_PUSH:
+            if ((command.uint_values[1] & ~3U) != 0) {
+                result = E_INVALIDARG;
+                break;
+            }
             result = surface->begin_composite_group(
                 command.uint_values[0], command.values[0], nullptr, false,
-                command.uint_values[1] != 0);
+                (command.uint_values[1] & 1) != 0, nullptr,
+                (command.uint_values[1] & 2) != 0);
             break;
         case SPDF_D2D_SCENE_COMPOSITE_POP:
             result = surface->end_composite_group();
@@ -2258,11 +2298,13 @@ std::int32_t spdf_d2d_end_mask(
 }
 
 std::int32_t spdf_d2d_begin_composite_group(
-    void* surface, std::uint32_t mode, float opacity, std::uint32_t knockout) noexcept {
-    if (surface == nullptr) return static_cast<std::int32_t>(E_INVALIDARG);
+    void* surface, std::uint32_t mode, float opacity, std::uint32_t group_flags) noexcept {
+    if (surface == nullptr || (group_flags & ~3U) != 0)
+        return static_cast<std::int32_t>(E_INVALIDARG);
     return static_cast<std::int32_t>(
         static_cast<Surface*>(surface)->begin_composite_group(
-            mode, opacity, nullptr, false, knockout != 0));
+            mode, opacity, nullptr, false, (group_flags & 1) != 0, nullptr,
+            (group_flags & 2) != 0));
 }
 
 std::int32_t spdf_d2d_end_composite_group(void* surface) noexcept {

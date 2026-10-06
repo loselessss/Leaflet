@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 
-import fitz
+import pymupdf as fitz
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")

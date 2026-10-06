@@ -1,6 +1,6 @@
 """Editor-only object selection, outline preview and numeric placement panel."""
 
-import fitz
+import pymupdf as fitz
 from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtWidgets import (QAction, QDockWidget, QDoubleSpinBox, QFileDialog,

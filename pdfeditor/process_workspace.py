@@ -215,6 +215,7 @@ class WorkspaceBridge(QObject):
         # Popen is deliberately NOT a Qt child process: closing a window or
         # QApplication must not terminate an editor or wait for its shutdown.
         process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                                    close_fds=True, env=process_environment())
         child = EditorProcess(process, path, mode, request, last_seen=time.monotonic())

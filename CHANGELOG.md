@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### 새 기능
+
+- Reopen closed documents with Ctrl+Shift+T, restoring their page and zoom.
+- Move a tab to a new window from its context menu while preserving edits.
+
+### 버그 수정
+
+- Avoid editor startup failures caused by deprecated PDF imports and invalid console output handles.
+- Refresh window layout and native rendering surfaces after display scaling changes, without changing document zoom.
+- Keep nested blends inside non-isolated Normal transparency groups on the GPU, and prepare luminosity masks before the first GPU frame.
+
 ## 1.34.5 - 2026-09-30
 
 ### 버그 수정

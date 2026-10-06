@@ -72,6 +72,94 @@ class EmbeddedModeTests(unittest.TestCase):
             self.assertEqual(len(renders), 1, renders)
             self.assertEqual(renders[0][0], 0)
 
+    def test_reopen_closed_tab_restores_page_and_zoom(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            tab.show_page(1)
+            tab.restore_view_state({"page": 1, "zoom": 1.5})
+            state = tab.capture_view_state()
+            window.close_tab(tab)
+            self.assertEqual(window._tabs.count(), 0)
+            self.assertTrue(window._reopen_tab_action.isEnabled())
+            window.reopen_closed_tab()
+            for _ in range(6):
+                self.app.processEvents()
+            restored = window._tabs.currentWidget()
+            self.assertIsNot(restored, tab)
+            self.assertEqual(restored.page_index, 1)
+            self.assertAlmostEqual(restored.view.zoom, state["zoom"])
+            self.assertFalse(window._closed_tabs)
+            self.assertFalse(window._reopen_tab_action.isEnabled())
+
+    def test_cancel_close_does_not_record_history(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            with patch.object(tab, "maybe_save", return_value=False):
+                window.close_tab(tab)
+            self.assertEqual(window._tabs.count(), 1)
+            self.assertFalse(window._closed_tabs)
+
+    def test_dpi_refresh_preserves_view_state(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            state = tab.capture_view_state()
+            window._dpi_refresh.refresh()
+            self.assertEqual(tab.page_index, state["page"])
+            self.assertEqual(tab.view.zoom, state["zoom"])
+
+    def test_reopen_failure_keeps_history_for_retry(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            window.close_tab(tab)
+            with patch.object(module.DocumentTab, "open_path"):
+                window.reopen_closed_tab()
+                for _ in range(4):
+                    self.app.processEvents()
+            self.assertEqual(window._tabs.count(), 0)
+            self.assertEqual(len(window._closed_tabs), 1)
+            self.assertTrue(window._reopen_tab_action.isEnabled())
+
+    def test_closing_pending_reopen_keeps_shortcut_usable(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            window.close_tab(tab)
+            window.reopen_closed_tab()
+            window.close_tab(window._tabs.currentWidget())
+            self.assertFalse(window._reopening_tab)
+            self.assertTrue(window._reopen_tab_action.isEnabled())
+            self.assertEqual(len(window._closed_tabs), 1)
+
+    def test_detach_preserves_document_and_embedded_policy(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True, annotations_enabled=True,
+                                       autosave_annotations=False)
+            tab = window.open_in_tab(str(source))
+            for _ in range(4):
+                self.app.processEvents()
+            document = tab.doc
+            destination = window.detach_tab(tab)
+            self.assertIs(destination._tabs.currentWidget(), tab)
+            self.assertIs(tab.doc, document)
+            self.assertIs(tab._shell, destination)
+            self.assertEqual(destination.access_policy, window.access_policy)
+            self.assertFalse(destination.updates_enabled)
+            self.assertFalse(window._closed_tabs)
+
     def test_read_only_window_keeps_reading_and_blocks_all_edit_commands(self):
         from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QAction, QAbstractItemView

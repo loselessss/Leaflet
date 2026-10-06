@@ -45,7 +45,7 @@ def pdf_component_blend(mode, backdrop, source):
 
 class D2DBackendTests(unittest.TestCase):
     def test_native_structure_has_stable_abi_layout(self):
-        self.assertEqual(ABI_VERSION, 19)
+        self.assertEqual(ABI_VERSION, 20)
         self.assertEqual(_NativeInfo.adapter_name.offset, 20)
         if os.name == "nt":
             self.assertEqual(ctypes.sizeof(_NativeInfo), 276)
@@ -441,6 +441,7 @@ class D2DBackendTests(unittest.TestCase):
                 from tests.test_gpu_raster import (
                     isolated_group_pdf_bytes, blended_mask_pdf_bytes,
                     nonisolated_masked_image_pdf_bytes, nested_knockout_clip_pdf_bytes,
+                    nonisolated_nested_blend_pdf_bytes,
                     empty_glyph_pdf_bytes)
                 pdf_cases = [("%s clipped=%s" % (name, clipped),
                               isolated_group_pdf_bytes(name, background=True, clip=clipped))
@@ -464,6 +465,10 @@ class D2DBackendTests(unittest.TestCase):
                         ("Normal", "Multiply", "SoftLight"), (False, True)):
                     pdf_cases.append((f"masked nonisolated {mode} knockout={knockout}",
                                       nonisolated_masked_image_pdf_bytes(mode, knockout)))
+                for opacity, clipped, blend in itertools.product(
+                        (0, .3, .7, 1), (False, True), ("Multiply", "Screen", "SoftLight")):
+                    pdf_cases.append((f"nonisolated nested {opacity} {clipped} {blend}",
+                        nonisolated_nested_blend_pdf_bytes(opacity, clipped, blend)))
                 pdf_cases.append(("nested knockout clip", nested_knockout_clip_pdf_bytes()))
                 for mode in (0, 1, 5, 7):
                     pdf_cases.append((f"empty glyph mode={mode}", empty_glyph_pdf_bytes(mode)))
@@ -478,7 +483,8 @@ class D2DBackendTests(unittest.TestCase):
                         frame_paths = []
                         for item in scene.drawables:
                             if isinstance(item, GroupPush):
-                                surface.begin_composite_group(item.blend_mode, item.opacity, item.knockout)
+                                surface.begin_composite_group(
+                                    item.blend_mode, item.opacity, item.knockout, item.isolated)
                             elif isinstance(item, GroupPop):
                                 surface.end_composite_group()
                             elif isinstance(item, ClipPop):
