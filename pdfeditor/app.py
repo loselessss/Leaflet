@@ -42,6 +42,7 @@ from .viewer import ViewerMixin
 from .widgets import BookmarkTree, PageView, ThumbList
 from .workspaces import WindowWorkspaceMixin, workspace_policy
 from .tab_lifecycle import TabLifecycleMixin
+from .file_history import FileHistoryMixin
 from .tab_drag import TransferTabBar, _dragged_tabs, _decode_tab_drag
 # Initialize QtNetwork's SIP types before constructing any window. Importing
 # them for the first time during a save can trigger cyclic Qt-widget collection
@@ -954,6 +955,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
     def open_path(self, path):
         """이 탭에 문서를 연다(탭 생성 직후 한 번). 실패하면 doc=None으로 둔다."""
         from .core import Document, PasswordRequired
+        self._open_error = None
         password = None
         while True:
             try:
@@ -983,7 +985,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                         "켜고 저장한 .ai 파일만 지원합니다.")
                 else:
                     message = "파일을 열 수 없습니다.\n\n%s" % e
-                QMessageBox.critical(self, "열기 실패", message)
+                self._open_error = message
+                if not getattr(self, "_listed_file_open", False):
+                    QMessageBox.critical(self, "열기 실패", message)
                 return
 
         self._set_document(doc, path)
@@ -1356,7 +1360,7 @@ def show_licenses(parent):
 # AppWindow — 탭들을 담는 셸
 # ======================================================================
 
-class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
+class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistoryMixin):
     """Embeddable window; read_only is fixed for this window's lifetime."""
 
     @property
@@ -1415,7 +1419,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
         self._presentation_window_state = None
 
         self._start_page = StartPage()
-        self._start_page.open_file.connect(self.open_in_tab)
+        self._start_page.open_file.connect(self.open_recent)
         self._start_page.browse.connect(self.open_dialog)
         self._start_page.back_to_doc.connect(self._show_tabs_if_any)
 
@@ -1513,6 +1517,9 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
             self._fluent_backdrop_applied = apply_fluent_window_backdrop(self)
 
     def nativeEvent(self, event_type, message):
+        density = getattr(self, "_dpi_refresh", None)
+        if density is not None:
+            density.native_dpi_changed(message)
         if getattr(self, "_window_chrome", None) is not None:
             from .window_chrome import native_frame_event
             result = native_frame_event(self, message)
@@ -2014,19 +2021,10 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
     # --- 파일 열기 (탭으로) --------------------------------------------
 
     def open_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self, "PDF/Illustrator 파일 열기", "", tr(DOCUMENT_OPEN_FILTER))
-        if path:
+        for path in paths:
             self.open_in_tab(path)
-
-    def open_recent(self, path):
-        if not os.path.exists(path):
-            QMessageBox.warning(self, "파일 없음",
-                                "파일이 이동되었거나 삭제되었습니다:\n%s" % path)
-            settings.remove_recent(path)
-            self.refresh_start_page()
-            return
-        self.open_in_tab(path)
 
     def open_in_tab(self, path):
         """파일을 탭으로 연다. 이미 열려 있으면 그 탭으로 전환(중복 방지)."""

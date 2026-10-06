@@ -72,6 +72,42 @@ class EmbeddedModeTests(unittest.TestCase):
             self.assertEqual(len(renders), 1, renders)
             self.assertEqual(renders[0][0], 0)
 
+    def test_open_dialog_opens_multiple_files_and_reuses_pending_tabs(self):
+        with self.document_windows() as (module, source):
+            second = source.with_name("second.pdf")
+            second.write_bytes(source.read_bytes())
+            window = module.new_window(read_only=True)
+            with patch.object(module.QFileDialog, "getOpenFileNames",
+                              return_value=([str(source), str(second), str(source)], "")):
+                window.open_dialog()
+            self.assertEqual(window._tabs.count(), 2)
+            for _ in range(4):
+                self.app.processEvents()
+            self.assertEqual([window._tabs.widget(i).doc.path for i in range(2)],
+                             [str(source), str(second)])
+            self.assertIs(window._tabs.currentWidget(), window._tabs.widget(0))
+
+    def test_open_dialog_cancellation_does_not_create_a_tab(self):
+        with self.document_windows() as (module, _source):
+            window = module.new_window(read_only=True)
+            with patch.object(module.QFileDialog, "getOpenFileNames", return_value=([], "")):
+                window.open_dialog()
+            self.assertEqual(window._tabs.count(), 0)
+
+    def test_open_dialog_failure_does_not_block_other_selected_files(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(read_only=True)
+            missing = str(source.with_name("missing.pdf"))
+            with patch.object(module.QFileDialog, "getOpenFileNames",
+                              return_value=([missing, str(source)], "")), \
+                    patch.object(module.QMessageBox, "critical") as critical:
+                window.open_dialog()
+                for _ in range(4):
+                    self.app.processEvents()
+            critical.assert_called_once()
+            self.assertEqual(window._tabs.count(), 1)
+            self.assertEqual(window._tabs.widget(0).doc.path, str(source))
+
     def test_reopen_closed_tab_restores_page_and_zoom(self):
         with self.document_windows() as (module, source):
             window = module.new_window(read_only=True)

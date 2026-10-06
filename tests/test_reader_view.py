@@ -54,15 +54,21 @@ class ReaderViewTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_density_refresh_keeps_page_zoom_and_scene(self):
+        from pdfeditor.dpi_refresh import refresh_widget_layout
         self.view.zoom = 1.25
         self.view.render_document(self.doc, [1], 1)
         preview = self.view._previews[1]
+        self.view.horizontalScrollBar().setValue(30)
+        self.view.verticalScrollBar().setValue(70)
+        scroll = (self.view.horizontalScrollBar().value(), self.view.verticalScrollBar().value())
         with patch.object(self.view, "_release_d2d_surface") as release:
+            refresh_widget_layout(self.view)
             self.view.refresh_display_density()
         release.assert_called_once_with()
         self.assertEqual(self.view.zoom, 1.25)
         self.assertEqual(self.view.canvas._active_page, 1)
         self.assertIs(self.view._previews[1], preview)
+        self.assertEqual((self.view.horizontalScrollBar().value(), self.view.verticalScrollBar().value()), scroll)
 
     def finish_tiles(self):
         self.view._plan_tiles()

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### 개선
+
+- Select multiple files in the Open dialog and open each in its own tab, reusing existing tabs for already-open files.
+
+### 버그 수정
+
+- Ask before removing files that cannot be opened from Recent Files and Favorites, without deleting the original file.
+- Refresh window layout through the resize path and recreate GPU surfaces after monitor scaling changes, without changing window geometry or document zoom.
+
 ## 1.34.7 - 2026-10-06
 
 ### 새 기능

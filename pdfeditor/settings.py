@@ -77,6 +77,16 @@ def clear_recent():
     _save(d)
 
 
+def remove_file_entry(path):
+    """Remove only a list entry from both lists in one atomic settings write."""
+    target = os.path.normcase(os.path.abspath(path))
+    data = _load()
+    for key in ("recent", "favorites"):
+        data[key] = [p for p in data.get(key, [])
+                     if os.path.normcase(os.path.abspath(p)) != target]
+    _save(data)
+
+
 # --- 사용자 인터페이스 언어 -------------------------------------------
 
 def ui_language():
