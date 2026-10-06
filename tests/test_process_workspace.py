@@ -253,7 +253,7 @@ class ProcessIsolationTests(unittest.TestCase):
         self.assertEqual(self.tab.page_index, state["page"])
         self.assertEqual(self.tab.view.zoom, state["zoom"])
         self.assertAlmostEqual(self.tab.capture_view_state()["vertical"], state["vertical"], places=2)
-        self.assertEqual(Path(str(self.path) + ".bak").read_bytes(), self.original)
+        self.assertFalse(Path(str(self.path) + ".bak").exists())
         self.send(child, "save_as")
         self.assertEqual(self.tab.doc.path, str(self.path))
         self.assertTrue((self.root / "copy.pdf").exists())

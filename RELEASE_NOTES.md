@@ -2,6 +2,7 @@
 
 ## 1.34.7 - 2026-10-06
 
+- Clean up temporary backups after successful saves and remove Windows save-lock files when saving ends.
 - Drag tabs into new windows or merge them into another window. Press Ctrl+Shift+T to reopen closed documents.
 - Preserve fonts, sizes and positions when changing dates or numbers in mixed-format text, and fix false text-box overflow errors.
 - Fix editor startup failures and refresh the display after Windows scaling changes.

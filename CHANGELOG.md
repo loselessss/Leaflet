@@ -10,6 +10,7 @@
 
 ### 버그 수정
 
+- Remove temporary backups after successful saves and automatically remove Windows save-lock files when saving ends.
 - Fix false text-box overflow errors when replacing text that fits the original line box.
 - Preserve original fonts, sizes and positions when editing a fragment within mixed-format text, such as a date or number.
 - Fix failures when starting the editor workspace.

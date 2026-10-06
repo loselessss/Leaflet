@@ -7,6 +7,31 @@ import tempfile
 
 @contextmanager
 def destination_lock(path):
+    if os.name == "nt":
+        # Exclusive handles cannot race with another opener. Windows removes
+        # the sidecar atomically on close, including process termination.
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        create = kernel.CreateFileW
+        create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.HANDLE)
+        create.restype = wintypes.HANDLE
+        close = kernel.CloseHandle
+        close.argtypes = (wintypes.HANDLE,)
+        close.restype = wintypes.BOOL
+        # GENERIC_READ | GENERIC_WRITE | DELETE; OPEN_ALWAYS;
+        # FILE_FLAG_DELETE_ON_CLOSE | FILE_ATTRIBUTE_NORMAL.
+        handle = create(os.path.realpath(path) + ".spdf-save.lock",
+                        0xC0010000, 0, None, 4, 0x04000080, None)
+        if handle == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            close(handle)
+        return
     # Keep the small lock inode: unlinking it permits two simultaneous owners.
     stream = open(os.path.realpath(path) + ".spdf-save.lock", "a+b")
     locked = False
@@ -16,21 +41,14 @@ def destination_lock(path):
             stream.write(b"\0")
             stream.flush()
         stream.seek(0)
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        import fcntl
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         locked = True
         yield
     finally:
         if locked:
             stream.seek(0)
-            if os.name == "nt":
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
         stream.close()
 
 
@@ -45,3 +63,15 @@ def atomic_backup(path):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def discard_backup(path):
+    """Remove the transaction backup only after a successful save.
+
+    A cleanup error must not turn an already completed save into a failure.
+    In particular, a backup held open by another application is left intact.
+    """
+    try:
+        os.unlink(os.fspath(path) + ".bak")
+    except OSError:
+        pass

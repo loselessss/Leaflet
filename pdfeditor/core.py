@@ -1174,11 +1174,13 @@ class Document:
         os.close(fd)
         same_path = os.path.normcase(os.path.abspath(out_path)) == \
             os.path.normcase(os.path.abspath(self.path))
+        backup_created = False
         try:
             self._doc.save(tmp, garbage=3, deflate=True,
                            encryption=fitz.PDF_ENCRYPT_KEEP)
             if backup and os.path.exists(out_path):
                 shutil.copy2(out_path, out_path + ".bak")
+                backup_created = True
             if same_path:
                 self._display_cache.clear()
                 self._gpu_vector_cache.clear()
@@ -1199,6 +1201,9 @@ class Document:
             if same_path:
                 self._doc = self._open(out_path, self._password)
                 self.path = out_path
+            if backup_created:
+                from .save_transaction import discard_backup
+                discard_backup(out_path)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -1211,7 +1216,7 @@ class Document:
         simply fail the save, leaving both the document and pending edits intact.
         """
         from .document_snapshot import file_revision
-        from .save_transaction import destination_lock, atomic_backup
+        from .save_transaction import destination_lock, atomic_backup, discard_backup
         same = os.path.normcase(os.path.realpath(out_path)) == os.path.normcase(os.path.realpath(self.path))
         expected = self._source_revision if same else file_revision(out_path)
         folder = os.path.dirname(os.path.abspath(out_path))
@@ -1237,6 +1242,8 @@ class Document:
                     raise OSError("The PDF changed during backup. Use Save As.")
                 os.replace(temporary, out_path)
                 self._source_revision = file_revision(out_path)
+                if backup and expected is not None:
+                    discard_backup(out_path)
             # Keep editing the private copy; source handles are never reopened.
             self.path = out_path
             return self._source_revision

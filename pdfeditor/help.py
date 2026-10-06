@@ -20,7 +20,7 @@ HELP_HTML = """
 <tr><td><b>Ctrl+O</b> / <b>Ctrl+T</b></td><td>PDF 또는 PDF 호환 Illustrator 파일 열기 — 새 <b>탭</b>으로</td></tr>
 <tr><td><b>Ctrl+Shift+N</b></td><td>새 Leaflet 창</td></tr>
 <tr><td>도움말 → 환경설정</td><td><b>PDF 기본 앱 / 브라우저 설정</b> — Edge·Chrome·Firefox의 PDF 링크를 Leaflet으로 열기</td></tr>
-<tr><td><b>Ctrl+S</b></td><td>저장 (원본은 <code>.bak</code>으로 자동 백업). Illustrator 원본은 덮어쓰지 않고 PDF로 저장</td></tr>
+<tr><td><b>Ctrl+S</b></td><td>안전하게 저장하고 성공하면 임시 백업을 정리합니다. Illustrator 원본은 덮어쓰지 않고 PDF로 저장</td></tr>
 <tr><td><b>Ctrl+Shift+S</b></td><td>다른 이름으로 저장</td></tr>
 <tr><td>파일 → <b>PDF 용량 줄이기</b></td><td>무손실·균형·강한 압축 중에서 선택해 별도 PDF로 저장</td></tr>
 <tr><td>파일 → <b>이미지를 PDF로 / PDF를 이미지로</b></td><td>여러 이미지를 한 PDF로 만들거나 PDF 쪽을 PNG·JPEG로 저장</td></tr>
@@ -175,7 +175,7 @@ HELP_HTML_EN = """
 <table cellpadding="4">
 <tr><td><b>Ctrl+O / Ctrl+T</b></td><td>Open a PDF or PDF-compatible Illustrator file in a new tab</td></tr>
 <tr><td><b>Ctrl+Shift+N</b></td><td>Open a new Leaflet window</td></tr>
-<tr><td><b>Ctrl+S</b></td><td>Save and create a <code>.bak</code> backup. Illustrator sources are exported to PDF instead of being overwritten</td></tr>
+<tr><td><b>Ctrl+S</b></td><td>Save safely and remove the temporary backup after success. Illustrator sources are exported to PDF instead of being overwritten</td></tr>
 <tr><td><b>Ctrl+Shift+S</b></td><td>Save as</td></tr>
 <tr><td>File → <b>Reduce PDF Size</b></td><td>Save a separate PDF using lossless, balanced, or strong compression</td></tr>
 <tr><td>File → <b>Images to PDF / PDF to Images</b></td><td>Combine images into one PDF or export PDF pages as PNG/JPEG</td></tr>
