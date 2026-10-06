@@ -53,10 +53,12 @@ class DpiRefreshController(QObject):
             return
         for index in range(self.window._tabs.count()):
             tab = self.window._tabs.widget(index)
-            refresh = getattr(tab.view, "refresh_display_density", None)
+            refresh = getattr(getattr(tab, "view", None), "refresh_display_density", None)
             if refresh is not None:
                 refresh()
-            tab._schedule_thumbs()
+            schedule_thumbs = getattr(tab, "_schedule_thumbs", None)
+            if schedule_thumbs is not None:
+                schedule_thumbs()
         widgets = [self.window, *self.window.findChildren(QWidget)]
         for widget in widgets:
             layout = QWidget.layout(widget)

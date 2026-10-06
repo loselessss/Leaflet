@@ -100,9 +100,16 @@ class ParagraphTextSession(InlineTextSession):
 
     def options(self):
         name = self.font.currentData()[0]
+        preserve = (not self.unify.isChecked() and not self.fontfile
+                    and self.font.currentIndex() == self.initial_font
+                    and abs(self.size.value()-self.initial_size) < .05
+                    and all(abs(a-b) < 1/255 for a, b in zip(self.rgb(), self.initial_color))
+                    and (self.width.value(), self.height.value()) == self.initial_box
+                    and self.alignment.currentIndex() == 0 and self.leading.value() == 1.2)
         return dict(box=self.bbox, fontname=name,
                     fontfile=self.fontfile if name == 'spdfuser' else None,
-                    align=self.alignment.currentIndex(), lineheight=self.leading.value())
+                    align=self.alignment.currentIndex(), lineheight=self.leading.value(),
+                    preserve_style=preserve)
 
     def unchanged(self):
         rgb = self.rgb()
@@ -149,7 +156,7 @@ class ParagraphTextSession(InlineTextSession):
                                 'Enter: 줄 바꿈 · Ctrl+Enter: 적용 · Esc: 취소')
         try:
             if not self.unchanged():
-                if self.region['mixed'] and not self.unify.isChecked():
+                if self.region['mixed'] and not self.unify.isChecked() and not self.options()['preserve_style']:
                     raise ValueError(localize('Mixed formatting. Confirm formatting unification first.',
                                              '여러 서식이 섞여 있습니다. 서식 통일에 체크해 주세요.'))
                 drawing = layout_region(self.document, self.page, self.region, self.input.text(),

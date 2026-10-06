@@ -6,19 +6,15 @@
 문서가 하나도 없으면 시작 페이지를 보여준다.
 """
 
-import json
 import os
 import subprocess
-import tempfile
-import uuid
 
-from PyQt5.QtCore import QEvent, QMimeData, QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt5.QtGui import QDrag
+from PyQt5.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAction, QActionGroup, QApplication, QCheckBox, QDialog, QDialogButtonBox,
     QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
-    QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabBar, QTabWidget, QToolBar,
+    QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabWidget, QToolBar,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -46,6 +42,7 @@ from .viewer import ViewerMixin
 from .widgets import BookmarkTree, PageView, ThumbList
 from .workspaces import WindowWorkspaceMixin, workspace_policy
 from .tab_lifecycle import TabLifecycleMixin
+from .tab_drag import TransferTabBar, _dragged_tabs, _decode_tab_drag
 # Initialize QtNetwork's SIP types before constructing any window. Importing
 # them for the first time during a save can trigger cyclic Qt-widget collection
 # in the middle of extension initialization on Windows. This loads only the
@@ -296,189 +293,6 @@ def _show_default_app_settings(parent):
         lambda _checked=False: _apply_browser_settings())
     buttons.rejected.connect(dialog.reject)
     dialog.exec_()
-
-
-_TAB_MIME = "application/x-spdf-tab"
-_dragged_tabs = {}
-
-
-def _decode_tab_drag(mime):
-    if not mime.hasFormat(_TAB_MIME):
-        return None
-    try:
-        return json.loads(bytes(mime.data(_TAB_MIME)).decode("utf-8"))
-    except (TypeError, ValueError, UnicodeDecodeError):
-        return None
-
-
-class TransferTabBar(QTabBar):
-    """창 안 재정렬은 Qt에 맡기고, 탭 막대 밖으로 나가면 창 간 드래그한다."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self._pressed_tab = None
-
-    def contextMenuEvent(self, ev):
-        index = self.tabAt(ev.pos())
-        if index < 0:
-            ev.ignore()
-            return
-        tab = self.window()._tabs.widget(index)
-        actions = getattr(tab, "_tab_context_actions", ())
-        if not actions:
-            ev.ignore()
-            return
-        menu = QMenu(self)
-        try:
-            for action in actions:
-                if action is None:
-                    menu.addSeparator()
-                else:
-                    menu.addAction(action)
-            menu.addSeparator()
-            shell = self.window()
-            detach = menu.addAction(localize("Move tab to new window", "탭을 새 창으로 분리"))
-            detach.setEnabled(tab.doc is not None and tab is not shell._presentation_tab)
-            detach.triggered.connect(lambda: shell.detach_tab(tab))
-            menu.addAction(shell._reopen_tab_action)
-            menu.exec_(ev.globalPos())
-        finally:
-            menu.deleteLater()
-        ev.accept()
-
-    def mousePressEvent(self, ev):
-        if ev.button() == Qt.LeftButton:
-            i = self.tabAt(ev.pos())
-            self._pressed_tab = self.window()._tabs.widget(i) if i >= 0 else None
-        super().mousePressEvent(ev)
-
-    def mouseReleaseEvent(self, ev):
-        super().mouseReleaseEvent(ev)
-        self._pressed_tab = None
-
-    def mouseMoveEvent(self, ev):
-        tab = self._pressed_tab
-        if tab is not None and ev.buttons() & Qt.LeftButton and \
-                not self.rect().adjusted(-10, -10, 10, 10).contains(ev.pos()):
-            self._pressed_tab = None
-            self._start_transfer(tab)
-            return
-        super().mouseMoveEvent(ev)
-
-    def _start_transfer(self, tab):
-        shell = self.window()
-        if not isinstance(shell, AppWindow) or shell._tabs.indexOf(tab) < 0 or \
-                tab.doc is None:
-            return
-
-        token = uuid.uuid4().hex
-        snapshot_path = None
-        if tab._dirty:
-            try:
-                fd, snapshot_path = tempfile.mkstemp(
-                    prefix="spdf-tab-", suffix=".pdf")
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(tab.doc.snapshot())
-            except Exception as e:
-                if snapshot_path and os.path.exists(snapshot_path):
-                    os.remove(snapshot_path)
-                tab.statusBar().showMessage(
-                    "탭 이동용 임시 저장에 실패했습니다: %s" % e, 5000)
-                return
-
-        payload = {
-            "pid": os.getpid(),
-            "token": token,
-            "path": tab.doc.path,
-            "dirty": bool(tab._dirty),
-            "read_only": shell.read_only,
-            "annotations_enabled": shell.annotations_enabled,
-            "autosave_annotations": shell.autosave_annotations,
-            "workspace_mode": shell.workspace_mode,
-            "snapshot": snapshot_path,
-        }
-        mime = QMimeData()
-        mime.setData(_TAB_MIME, json.dumps(payload).encode("utf-8"))
-        drag = QDrag(self)
-        drag.setMimeData(mime)
-        i = shell._tabs.indexOf(tab)
-        if i >= 0:
-            drag.setPixmap(self.grab(self.tabRect(i)))
-
-        _dragged_tabs[token] = (shell, tab)
-        try:
-            result = drag.exec_(Qt.MoveAction)
-        finally:
-            _dragged_tabs.pop(token, None)
-
-        # 같은 프로세스면 dropEvent에서 이미 위젯을 떼어 대상 창에 붙인다.
-        # 아직 원래 창에 남아 있으면 다른 Leaflet 프로세스가 경로를 받은 경우다.
-        moved_to_external_process = result == Qt.MoveAction and \
-            shell._tabs.indexOf(tab) >= 0
-        if moved_to_external_process:
-            shell._finish_external_tab_move(tab)
-        elif snapshot_path and os.path.exists(snapshot_path):
-            # 같은 프로세스 이동이나 취소에서는 임시본을 받을 프로세스가 없다.
-            os.remove(snapshot_path)
-
-    def dragEnterEvent(self, ev):
-        if self._can_accept(ev.mimeData()):
-            ev.setDropAction(Qt.MoveAction)
-            ev.accept()
-        else:
-            ev.ignore()
-
-    def dragMoveEvent(self, ev):
-        if self._can_accept(ev.mimeData()):
-            ev.setDropAction(Qt.MoveAction)
-            ev.accept()
-        else:
-            ev.ignore()
-
-    def dropEvent(self, ev):
-        payload = _decode_tab_drag(ev.mimeData())
-        if payload is None:
-            ev.ignore()
-            return
-
-        index = self.tabAt(ev.pos())
-        if index < 0:
-            index = self.count()
-        elif ev.pos().x() > self.tabRect(index).center().x():
-            index += 1
-
-        if self.window()._receive_tab_drop(payload, index):
-            ev.setDropAction(Qt.MoveAction)
-            ev.accept()
-        else:
-            ev.ignore()
-
-    def _can_accept(self, mime):
-        payload = _decode_tab_drag(mime)
-        if not payload or not payload.get("path"):
-            return False
-        if payload.get("pid") == os.getpid():
-            entry = _dragged_tabs.get(payload.get("token"))
-            return entry is not None and entry[0] is not self.window()
-        if not os.path.isfile(payload["path"]):
-            return False
-        if not payload.get("dirty"):
-            return True
-        snapshot = payload.get("snapshot")
-        if not snapshot or not self._is_transfer_snapshot(snapshot):
-            return False
-        return self.window()._find_open_tab(payload["path"]) is None
-
-    @staticmethod
-    def _is_transfer_snapshot(path):
-        try:
-            full = os.path.abspath(path)
-            return os.path.dirname(full) == os.path.abspath(tempfile.gettempdir()) \
-                and os.path.basename(full).startswith("spdf-tab-") \
-                and full.lower().endswith(".pdf") and os.path.isfile(full)
-        except (TypeError, ValueError):
-            return False
 
 
 # ======================================================================
@@ -2332,8 +2146,17 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin):
             if payload.get("pid") == os.getpid() else None
         if entry is not None:
             source, tab = entry
+            source._tabs.tabBar()._local_drop_completed = True
             if source is self:
-                return False
+                source_index = self._tabs.indexOf(tab)
+                if source_index < 0:
+                    return False
+                target = max(0, min(index, self._tabs.count()))
+                if target > source_index:
+                    target -= 1
+                self._tabs.tabBar().moveTab(source_index, target)
+                self._tabs.setCurrentWidget(tab)
+                return True
             return self._adopt_tab(source, tab, index)
         if payload.get("dirty"):
             # 프로세스 경계를 넘으면 QWidget 대신 현재 PDF 스냅샷을 복원한다.

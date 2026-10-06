@@ -1,7 +1,8 @@
 """Window-local closed-tab history and lossless tab separation."""
 from collections import deque
 
-from PyQt5.QtWidgets import QAction
+from PyQt5.QtCore import QPoint, QTimer
+from PyQt5.QtWidgets import QAction, QApplication
 
 from .i18n import localize
 
@@ -63,12 +64,38 @@ class TabLifecycleMixin:
             # shortcut forever. The original history entry remains retryable.
             tab.load_finished.emit(False)
 
-    def detach_tab(self, tab):
+    def detach_tab_at_drop(self, tab, position, hotspot):
+        from .app import AppWindow
+        for window in QApplication.topLevelWidgets():
+            if isinstance(window, AppWindow) and window.isVisible() and \
+                    window.frameGeometry().contains(position):
+                return
+        return self.detach_tab(tab, position, hotspot)
+
+    def detach_tab(self, tab, position=None, hotspot=None):
         if (self._tabs.indexOf(tab) < 0 or tab.doc is None or
                 tab is self._presentation_tab):
             return
+        state = tab.capture_view_state()
         destination = self.new_window()
+        size = self.normalGeometry().size() if self.isMaximized() else self.size()
+        destination.resize(size)
         if not destination._adopt_tab(self, tab, 0):
             destination.close()
             return
+        tab._restore_scroll(state)
+        QTimer.singleShot(0, lambda: tab._restore_scroll(state)
+                          if tab._shell is destination else None)
+        if position is not None:
+            bar = destination._tabs.tabBar()
+            origin = bar.mapTo(destination, QPoint(0, 0))
+            point = position - origin - (hotspot or QPoint())
+            screen = QApplication.screenAt(position) or destination.screen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                point.setX(max(available.left(), min(point.x(),
+                    max(available.left(), available.right() - destination.width() + 1))))
+                point.setY(max(available.top(), min(point.y(),
+                    max(available.top(), available.bottom() - destination.height() + 1))))
+            destination.move(point)
         return destination

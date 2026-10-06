@@ -61,6 +61,23 @@ class TextRegionTests(unittest.TestCase):
                                              fontname='helv', box=box)
             self.assertEqual(self.doc._doc.tobytes(no_new_id=True), before)
 
+    def test_layout_allowance_does_not_draw_outside_requested_box(self):
+        region = self.lines[0]
+        x0, y0, x1, y1 = region['bbox']
+        before = self.doc._doc.tobytes(no_new_id=True)
+        with self.assertRaisesRegex(ValueError, 'overflows'):
+            self.doc.replace_text_region(0, region, 'Edited', 12, (0, 0, 0),
+                fontname='helv', box=(x0, y0, x1, y1 - .5))
+        self.assertEqual(self.doc._doc.tobytes(no_new_id=True), before)
+
+    def test_preserved_edit_can_delete_one_run_without_removing_others(self):
+        region = self.lines[0]
+        self.doc.replace_text_region(0, region, 'Hello ', 12, (0, 0, 0), preserve_style=True)
+        text = self.doc._doc[0].get_text()
+        self.assertIn('Hello', text)
+        self.assertNotIn('world', text)
+        self.assertIn('Other column', text)
+
     def test_rotated_page_keeps_text_in_original_coordinate_space(self):
         self.doc._doc[0].set_rotation(90)
         self.doc.replace_text_region(0, self.region, 'Replacement', 12, (0, 0, 0),

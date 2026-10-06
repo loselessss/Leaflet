@@ -1,5 +1,12 @@
 # Leaflet Release Notes
 
+## 1.34.7 - 2026-10-06
+
+- Drag tabs into new windows or merge them into another window. Press Ctrl+Shift+T to reopen closed documents.
+- Preserve fonts, sizes and positions when changing dates or numbers in mixed-format text, and fix false text-box overflow errors.
+- Fix editor startup failures and refresh the display after Windows scaling changes.
+- Keep more pages with nested transparency and masks on the GPU.
+
 ## 1.34.5 - 2026-09-30
 
 - Fixed CPU fallback for filled text whose font provides no vector outlines, preserving the original font with transparent text images.

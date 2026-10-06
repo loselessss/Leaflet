@@ -22,6 +22,10 @@ class TabContextMenuTests(unittest.TestCase):
         shell._tabs.setTabBar(bar)
         shell.setCentralWidget(shell._tabs)
         first, second = QWidget(), QWidget()
+        first.doc = second.doc = object()
+        shell._presentation_tab = None
+        shell._reopen_tab_action = QAction("Reopen", shell)
+        shell.detach_tab = lambda tab: None
         first._tab_context_actions = (QAction("first", first),)
         second._tab_context_actions = (QAction("second", second),)
         shell._tabs.addTab(first, "First")
@@ -29,13 +33,13 @@ class TabContextMenuTests(unittest.TestCase):
         try:
             event = QContextMenuEvent(QContextMenuEvent.Mouse,
                                       bar.tabRect(1).center())
-            with patch("pdfeditor.app.QMenu") as menu:
+            with patch("pdfeditor.tab_drag.QMenu") as menu:
                 bar.contextMenuEvent(event)
-                menu.return_value.addAction.assert_called_once_with(
+                menu.return_value.addAction.assert_any_call(
                     second._tab_context_actions[0])
                 menu.return_value.exec_.assert_called_once()
             self.assertIs(shell._tabs.currentWidget(), first)
-            with patch("pdfeditor.app.QMenu") as menu:
+            with patch("pdfeditor.tab_drag.QMenu") as menu:
                 bar.contextMenuEvent(QContextMenuEvent(
                     QContextMenuEvent.Mouse, QPoint(-10, -10)))
                 menu.assert_not_called()

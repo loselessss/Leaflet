@@ -1,3 +1,4 @@
+import gc
 import importlib.util
 import json
 import os
@@ -15,6 +16,15 @@ class EditorWorkspaceTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
         cls.application = QApplication.instance() or QApplication([])
         cls.application.setQuitOnLastWindowClosed(False)
+
+    @classmethod
+    def tearDownClass(cls):
+        from PyQt5.QtCore import QCoreApplication, QEvent
+        # Dispose Qt-owned editor objects while QApplication is still alive.
+        gc.collect()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        cls.application.processEvents()
+        gc.collect()
 
     def setUp(self):
         import fitz
@@ -103,6 +113,60 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.assertEqual(tab.doc._doc[0].get_text(), before)
         tab.redo()
         self.assertIn('Replacement paragraph', tab.doc._doc[0].get_text())
+
+    def test_ctrl_enter_replaces_fragmented_line_in_original_box(self):
+        from PyQt5.QtCore import QPointF, Qt
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        tab.open_page_editor()
+        page = tab.doc._doc[0]
+        page.insert_text((35, 80), 'First', fontsize=12)
+        page.insert_text((62, 80), 'word', fontsize=12)
+        tab._show_edit_boxes()
+        tab.edit_span_at(QPointF(40, 75))
+        session = tab._inline_text
+        box = session.bbox
+        before = tab.doc._doc[0].get_text()
+        session.input.setText('Edited')
+        QTest.keyClick(session.input, Qt.Key_Return, Qt.ControlModifier)
+        self.assertIsNone(tab._inline_text)
+        self.assertIn('Edited', tab.doc._doc[0].get_text())
+        self.assertNotIn('First word', tab.doc._doc[0].get_text())
+        span = next(span for span in tab.doc.spans(0) if span['text'] == 'Edited')
+        self.assertAlmostEqual(span['size'], 12)
+        self.assertLessEqual(span['bbox'][3], box[3] + .05)
+        tab.undo()
+        self.assertEqual(tab.doc._doc[0].get_text(), before)
+        tab.redo()
+        self.assertIn('Edited', tab.doc._doc[0].get_text())
+
+    def test_date_digit_edit_preserves_mixed_label_without_unifying_fonts(self):
+        from PyQt5.QtCore import QPointF, Qt
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        tab.open_page_editor()
+        page = tab.doc._doc[0]
+        page.insert_text((35, 80), 'Date:', fontsize=9, fontname='hebo')
+        page.insert_text((60, 80), '2026/10/03', fontsize=9, fontname='helv')
+        tab._show_edit_boxes()
+        tab.edit_span_at(QPointF(65, 77))
+        session = tab._inline_text
+        self.assertTrue(session.region['mixed'])
+        self.assertFalse(session.unify.isChecked())
+        label = next(span for span in tab.doc.spans(0) if span['text'] == 'Date:')
+        original_date = next(span for span in tab.doc.spans(0) if '2026/10/03' in span['text'])
+        session.input.setText(session.input.text().replace('2026/10/03', '2026/10/02'))
+        self.assertTrue(session.validate())
+        QTest.keyClick(session.input, Qt.Key_Return, Qt.ControlModifier)
+        self.assertIsNone(tab._inline_text)
+        self.assertIn(label, tab.doc.spans(0))
+        date = next(span for span in tab.doc.spans(0) if '2026/10/02' in span['text'])
+        self.assertEqual(date['size'], original_date['size'])
+        self.assertEqual(date['origin'], original_date['origin'])
+        tab.undo()
+        self.assertIn('2026/10/03', tab.doc._doc[0].get_text())
+        tab.redo()
+        self.assertIn('2026/10/02', tab.doc._doc[0].get_text())
 
     def test_fragment_click_and_rotated_paragraph_selection(self):
         import fitz

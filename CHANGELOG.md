@@ -1,15 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.34.7 - 2026-10-06
 
 ### 새 기능
 
 - Reopen closed documents with Ctrl+Shift+T, restoring their page and zoom.
 - Move a tab to a new window from its context menu while preserving edits.
+- Drag tabs out into new windows or into another window's tab strip, with insertion markers and Escape cancellation.
 
 ### 버그 수정
 
-- Avoid editor startup failures caused by deprecated PDF imports and invalid console output handles.
+- Fix false text-box overflow errors when replacing text that fits the original line box.
+- Preserve original fonts, sizes and positions when editing a fragment within mixed-format text, such as a date or number.
+- Fix failures when starting the editor workspace.
 - Refresh window layout and native rendering surfaces after display scaling changes, without changing document zoom.
 - Keep nested blends inside non-isolated Normal transparency groups on the GPU, and prepare luminosity masks before the first GPU frame.
 
