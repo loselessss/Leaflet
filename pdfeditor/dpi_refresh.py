@@ -1,7 +1,7 @@
 """Refresh Qt and native rendering together after a screen-density change."""
 import sys
 
-from PyQt5.QtCore import QObject, QEvent, QTimer
+from PyQt5.QtCore import QObject, QEvent, QTimer, Qt
 from PyQt5.QtGui import QResizeEvent
 from PyQt5.QtWidgets import QApplication, QWidget
 
@@ -22,6 +22,9 @@ class DpiRefreshController(QObject):
         self.window = window
         self.handle = None
         self.screen = None
+        self._density = window.devicePixelRatioF()
+        self._remap_pending = False
+        self._in_size_move = False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(50)
@@ -29,7 +32,7 @@ class DpiRefreshController(QObject):
         self.settle_timer = QTimer(self)
         self.settle_timer.setSingleShot(True)
         self.settle_timer.setInterval(250)
-        self.settle_timer.timeout.connect(self.refresh)
+        self.settle_timer.timeout.connect(self.refresh_settled)
         window.installEventFilter(self)
 
     def eventFilter(self, watched, event):
@@ -65,6 +68,10 @@ class DpiRefreshController(QObject):
 
     def schedule(self, *_args):
         # Qt must apply its own DPI geometry first. Never rescale document zoom.
+        density = self.window.devicePixelRatioF()
+        if density != self._density:
+            self._remap_pending = True
+            self._density = density
         self.timer.start()
         self.settle_timer.start()
 
@@ -76,7 +83,42 @@ class DpiRefreshController(QObject):
         from ctypes import wintypes
         msg = wintypes.MSG.from_address(int(message))
         if msg.message == 0x02E0:
+            self._remap_pending = True
             self.schedule()
+        elif msg.message == 0x0231:  # WM_ENTERSIZEMOVE
+            self._in_size_move = True
+        elif msg.message == 0x0232:  # WM_EXITSIZEMOVE
+            self._in_size_move = False
+            if self._remap_pending:
+                self.settle_timer.start()
+
+    def refresh_settled(self):
+        """Remap the complete widget tree, not only the PDF swap chain.
+
+        Synthetic resize events do not remap Qt's native children/backing store.
+        Hide/show asks Qt and Windows to refresh those surfaces at the new DPI.
+        Do not interrupt the native move loop or restore stale pixel geometry.
+        """
+        window = self.window
+        if self._in_size_move or not window.isVisible() or window.isMinimized():
+            return
+        if self._remap_pending:
+            self._remap_pending = False
+            self._density = window.devicePixelRatioF()
+            focus = window.focusWidget()
+            active = window.isActiveWindow()
+            no_activate = window.testAttribute(Qt.WA_ShowWithoutActivating)
+            try:
+                window.setAttribute(Qt.WA_ShowWithoutActivating, True)
+                window.hide()
+                window.show()
+            finally:
+                window.setAttribute(Qt.WA_ShowWithoutActivating, no_activate)
+            if active:
+                window.activateWindow()
+                if focus is not None:
+                    focus.setFocus(Qt.OtherFocusReason)
+        self.refresh()
 
     def refresh(self):
         if not self.window.isVisible():

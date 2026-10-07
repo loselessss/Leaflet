@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.34.8 - 2026-10-07
 
 ### 개선
 
@@ -9,7 +9,7 @@
 ### 버그 수정
 
 - Ask before removing files that cannot be opened from Recent Files and Favorites, without deleting the original file.
-- Refresh window layout through the resize path and recreate GPU surfaces after monitor scaling changes, without changing window geometry or document zoom.
+- Refresh the entire window, including the title bar and child surfaces, after monitor scaling changes and window dragging ends.
 
 ## 1.34.7 - 2026-10-06
 

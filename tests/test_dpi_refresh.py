@@ -8,6 +8,53 @@ from pdfeditor.dpi_refresh import DpiRefreshController, refresh_widget_layout
 
 
 class DpiRefreshTests(unittest.TestCase):
+    def test_settled_refresh_remaps_once_without_changing_geometry(self):
+        from PyQt5.QtCore import Qt
+        window = QMainWindow()
+        controller = DpiRefreshController(window)
+        window.show()
+        self.app.processEvents()
+        geometry = window.geometry()
+        state = window.windowState()
+        controller._remap_pending = True
+        try:
+            with patch.object(window, "hide", wraps=window.hide) as hide, \
+                    patch.object(controller, "refresh"):
+                controller.refresh_settled()
+                controller.refresh_settled()
+                hide.assert_called_once_with()
+            self.assertTrue(window.isVisible())
+            self.assertEqual(window.geometry(), geometry)
+            self.assertEqual(window.windowState(), state)
+            self.assertFalse(window.testAttribute(Qt.WA_ShowWithoutActivating))
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_remap_waits_for_native_move_to_finish(self):
+        import ctypes
+        from ctypes import wintypes
+        window = QMainWindow()
+        controller = DpiRefreshController(window)
+        window.show()
+        controller._remap_pending = True
+        message = wintypes.MSG()
+        try:
+            with patch("pdfeditor.dpi_refresh.sys.platform", "win32"), \
+                    patch.object(window, "hide") as hide:
+                message.message = 0x0231
+                controller.native_dpi_changed(ctypes.addressof(message))
+                controller.refresh_settled()
+                hide.assert_not_called()
+                self.assertTrue(controller._remap_pending)
+                message.message = 0x0232
+                controller.native_dpi_changed(ctypes.addressof(message))
+                self.assertFalse(controller._in_size_move)
+                self.assertTrue(controller.settle_timer.isActive())
+        finally:
+            window.close()
+            window.deleteLater()
+
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

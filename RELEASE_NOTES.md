@@ -1,12 +1,18 @@
 # Leaflet Release Notes
 
-## 1.34.7 - 2026-10-06
+## 1.34.8 - 2026-10-07
 
-- Clean up temporary backups after successful saves and remove Windows save-lock files when saving ends.
+### 1.34.7 highlights
+
 - Drag tabs into new windows or merge them into another window. Press Ctrl+Shift+T to reopen closed documents.
 - Preserve fonts, sizes and positions when changing dates or numbers in mixed-format text, and fix false text-box overflow errors.
-- Fix editor startup failures and refresh the display after Windows scaling changes.
 - Keep more pages with nested transparency and masks on the GPU.
+
+### 1.34.8 fixes
+
+- Refresh the complete window after moving between monitors with different display scaling.
+- Remove unavailable files from Recent Files and Favorites after confirmation, without deleting the original file.
+- Open multiple selected files in separate tabs and reuse tabs for files that are already open.
 
 ## 1.34.5 - 2026-09-30
 
