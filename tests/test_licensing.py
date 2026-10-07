@@ -189,6 +189,8 @@ class LicensingTests(unittest.TestCase):
         self.assertLess(workflow.index("python create_source_bundle.py"), workflow.index("gh release create"))
         self.assertIn('$sourceArchive `\n              "$sourceArchive.sha256" $dependencySources', workflow)
         self.assertIn("Output/Leaflet_Source_*.zip", workflow)
+        self.assertIn('Output/sPDF_Setup_*.exe', workflow)
+        self.assertIn('sPDF_Setup_$version.exe', workflow)
         spec = (ROOT / "spdf.spec").read_text(encoding="utf-8")
         self.assertIn("write_legal_bundle", spec)
         self.assertIn("datas=ocr_datas + legal_datas", spec)
