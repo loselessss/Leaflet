@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased
+
+- Reduce package size without changing PDF rendering or OCR functionality.
+
 ## 1.34.8 - 2026-10-07
 
 ### 1.34.7 highlights

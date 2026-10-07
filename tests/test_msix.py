@@ -100,7 +100,7 @@ class MsixTests(unittest.TestCase):
     def test_installers_and_sources_share_one_release(self):
         workflow=Path('.github/workflows/release.yml').read_text(encoding='utf-8')
         normal=workflow.split('- name: Publish GitHub release',1)[1]
-        self.assertIn('gh release upload $tag $installer $latestInstaller $sourceArchive',normal)
+        self.assertIn('gh release upload $tag $installer $latestInstaller $compatInstaller $sourceArchive',normal)
         self.assertNotIn('$legacyInstaller',normal)
         self.assertIn('$dependencySources --clobber',normal)
         self.assertNotIn('sources-v$version',workflow)

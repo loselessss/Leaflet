@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### 성능 개선
+
+- Reduce installer and MSIX size by omitting unused video libraries, AVIF codecs, Qt web-display components and unused Qt translations while preserving GPU rendering, supported image imports and OCR process isolation.
+- Normalize build dependencies to a single headless OpenCV installation.
+
 ## 1.34.8 - 2026-10-07
 
 ### 개선
