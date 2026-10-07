@@ -12,7 +12,9 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import time
 from urllib.parse import quote, urlparse
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import zipfile
 
@@ -43,9 +45,26 @@ def clean_source_status(status):
     return all(line in allowed for line in status.splitlines())
 
 
+def open_with_retry(request):
+    """Retry transient upstream timeouts without masking permanent failures."""
+    last_error = None
+    for attempt in range(3):
+        try:
+            return urlopen(request, timeout=60)
+        except HTTPError as error:
+            if error.code not in {408, 429} and not 500 <= error.code < 600:
+                raise
+            last_error = error
+        except (TimeoutError, URLError, OSError) as error:
+            last_error = error
+        if attempt < 2:
+            time.sleep(2 ** (attempt + 1))
+    raise last_error
+
+
 def read_json(url):
     request = Request(url, headers={"User-Agent": "Leaflet-source-release"})
-    with urlopen(request, timeout=30) as response:
+    with open_with_retry(request) as response:
         return json.load(response)
 
 
@@ -83,7 +102,7 @@ def source_record(package, fetch=read_json):
 
 def check_source_access(record):
     request = Request(record["url"], method="HEAD", headers={"User-Agent": "Leaflet-source-release"})
-    with urlopen(request, timeout=30) as response:
+    with open_with_retry(request) as response:
         if response.status != 200:
             raise ValueError("Source archive is unavailable: " + record["name"])
 

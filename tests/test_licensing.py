@@ -11,7 +11,8 @@ import zipfile
 
 from build_legal import collect_distributions, is_notice
 from create_source_bundle import (
-    clean_source_status, include_source, prepare_source_release,
+    clean_source_status, include_source, open_with_retry, prepare_source_release,
+    read_json,
     source_record, write_archive,
 )
 from pdfeditor.meta import APP_VERSION
@@ -21,6 +22,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LicensingTests(unittest.TestCase):
+    def test_source_requests_retry_transient_timeouts(self):
+        response = io.BytesIO(b'{"ok": true}')
+        with patch("create_source_bundle.urlopen", side_effect=[TimeoutError(), response]) as request, \
+                patch("create_source_bundle.time.sleep") as pause:
+            self.assertEqual(read_json("https://example.org/metadata"), {"ok": True})
+            self.assertEqual(request.call_count, 2)
+            pause.assert_called_once_with(2)
+
+    def test_source_requests_fail_fast_for_permanent_http_errors(self):
+        from urllib.error import HTTPError
+        error = HTTPError("https://example.org/source", 404, "not found", {}, None)
+        with patch("create_source_bundle.urlopen", side_effect=error) as request, \
+                patch("create_source_bundle.time.sleep") as pause:
+            with self.assertRaises(HTTPError):
+                open_with_retry("https://example.org/source")
+            request.assert_called_once()
+            pause.assert_not_called()
+
     def test_mit_project_license_and_dependency_license_texts_are_present(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
         self.assertTrue(license_text.startswith("MIT License"))
