@@ -1465,13 +1465,31 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def keyPressEvent(self, event):
         controller = getattr(self, "object_controller", None)
-        if (controller is not None and (controller.active or getattr(controller, "auto_selected", False))
-                and event.key() == Qt.Key_Escape):
-            controller.cancel()
-            self.viewport().update()
+        if controller is not None and controller.key(event):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None and controller.key(event, release=True):
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None:
+            controller.restore_hand()
+        super().focusOutEvent(event)
+
+    def leaveEvent(self, event):
+        controller = getattr(self, "object_controller", None)
+        if controller is not None:
+            controller.hovered = None
+            self.viewport().unsetCursor()
+            self.viewport().update()
+        super().leaveEvent(event)
 
     def contextMenuEvent(self, event):
         point = self.canvas._activate_at(self.mapToScene(event.pos()))

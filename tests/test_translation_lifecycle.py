@@ -95,6 +95,38 @@ class TranslationLifecycleTests(unittest.TestCase):
         self.assertEqual(button.reads, 1)
         sip.delete(parent)
 
+    def test_child_first_requests_skip_overlapping_subtree_walks(self):
+        class CountingWidget(QWidget):
+            walks = 0
+
+            def findChildren(self, *args, **kwargs):
+                self.walks += 1
+                return super().findChildren(*args, **kwargs)
+
+        parent = CountingWidget()
+        child = CountingWidget(parent)
+        button = QPushButton("저장", child)
+        self.app.processEvents()
+        parent.walks = child.walks = 0
+        self.translator.schedule(child)
+        self.translator.schedule(parent)
+        self.translator.flush_pending()
+        self.assertEqual(button.text(), "Save")
+        self.assertEqual(parent.walks, 1)
+        self.assertEqual(child.walks, 0)
+        sip.delete(parent)
+
+    def test_reparented_scheduled_child_still_translates(self):
+        parent = QWidget()
+        child = QPushButton("저장", parent)
+        self.translator.schedule(parent)
+        self.translator.schedule(child)
+        child.setParent(None)
+        self.translator.flush_pending()
+        self.assertEqual(child.text(), "Save")
+        sip.delete(child)
+        sip.delete(parent)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -448,6 +448,206 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(tab._undo_stack), 0)
         self.assertEqual(len(tab.doc._doc[0].get_drawings()), 1)
 
+    def test_object_keyboard_focus_and_temporary_hand(self):
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        controller = tab._object_controller
+        controller.add("rectangle")
+        self.settle()
+        view = tab.view
+        view.setFocus()
+        self.settle()
+        original = list(controller.current()["rect"])
+        count = len(tab._undo_stack)
+        QTest.keyClick(view, Qt.Key_Right)
+        self.assertAlmostEqual(controller.current()["rect"][0], original[0] + 1)
+        self.assertEqual(tab.page_index, 0)
+        self.assertEqual(len(tab._undo_stack), count + 1)
+        QTest.keyClick(view, Qt.Key_Down, Qt.ShiftModifier)
+        self.assertAlmostEqual(controller.current()["rect"][1], original[1] + 10)
+        field = controller.fields[0]
+        field.setFocus()
+        self.settle()
+        QTest.keyClick(field, Qt.Key_Delete)
+        self.assertIsNotNone(controller.current())
+        view.setFocus()
+        self.settle()
+        QTest.keyPress(view, Qt.Key_Space)
+        self.assertEqual(view.canvas.interaction_mode, "hand")
+        QTest.keyRelease(view, Qt.Key_Space)
+        self.assertEqual(view.canvas.interaction_mode, "select")
+        self.assertIsNotNone(controller.current())
+        QTest.keyClick(view, Qt.Key_Escape)
+        self.assertIsNone(controller.current())
+
+    def test_image_eight_handles_ratio_resize_and_undo(self):
+        import fitz
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        tab = self.open_editor()
+        controller = tab._object_controller
+        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+        image.clear_with(200)
+        controller.add("image", image.tobytes("png"), 2)
+        self.settle()
+        rect = fitz.Rect(controller.current()["rect"])
+        self.assertTrue(controller.ratio_lock.isChecked())
+        self.assertEqual(len(controller.outlines()), 9)
+        for point, handle in controller._handles(rect):
+            self.assertEqual(controller._handle_at(point, controller.current()), handle)
+        view = tab.view
+        def event(kind, x, y):
+            point = view.mapFromScene(view._page_transforms[0].map(QPointF(x, y)))
+            return QMouseEvent(kind, QPointF(point), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        count = len(tab._undo_stack)
+        controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress, rect.x1, rect.y1))
+        controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, rect.x1 + 20, rect.y1 + 5))
+        self.assertAlmostEqual(controller.preview.width / controller.preview.height, 2)
+        self.assertEqual(len(tab._undo_stack), count)
+        controller.mouse("mouseReleaseEvent", event(QEvent.MouseButtonRelease, rect.x1 + 20, rect.y1 + 5))
+        self.assertEqual(len(tab._undo_stack), count + 1)
+        tab.undo()
+        self.assertEqual(controller.current()["rect"], list(rect))
+
+    def test_rotated_object_screen_axis_move_and_crop_handles(self):
+        import fitz
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        controller = tab._object_controller
+        for rotation in (0, 90, 180, 270):
+            with self.subTest(rotation=rotation):
+                page = tab.doc._doc[0]
+                page.set_rotation(rotation)
+                page.set_cropbox(fitz.Rect(10, 10, 270, 390))
+                controller.add("rectangle")
+                self.settle()
+                rect = fitz.Rect(controller.current()["rect"])
+                view = tab.view
+                view.setFocus()
+                self.settle()
+                before = rect * tab.doc._doc[0].rotation_matrix
+                QTest.keyClick(view, Qt.Key_Right)
+                after = fitz.Rect(controller.current()["rect"]) * tab.doc._doc[0].rotation_matrix
+                self.assertAlmostEqual(after.x0, before.x0 + 1, places=3)
+                self.assertAlmostEqual(after.y0, before.y0, places=3)
+                rect = fitz.Rect(controller.current()["rect"])
+                center = fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+                display = center * tab.doc._doc[0].rotation_matrix
+                def event(kind, dx=0, dy=0):
+                    position = view.mapFromScene(view._page_transforms[0].map(QPointF(display.x + dx, display.y + dy)))
+                    return QMouseEvent(kind, QPointF(position), Qt.LeftButton, Qt.LeftButton, Qt.ShiftModifier)
+                controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress))
+                controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, 20, 5))
+                preview = controller.preview * tab.doc._doc[0].rotation_matrix
+                original = rect * tab.doc._doc[0].rotation_matrix
+                self.assertAlmostEqual(preview.y0, original.y0, places=3)
+                self.assertGreater(preview.x0, original.x0)
+                controller.cancel()
+                for point, handle in controller._handles(rect):
+                    self.assertEqual(controller._handle_at(point, controller.current()), handle)
+
+    def test_resize_handles_keep_opposite_anchor_on_rotated_pages(self):
+        import fitz
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        tab = self.open_editor()
+        controller = tab._object_controller
+        for rotation in (0, 90, 180, 270):
+            tab.doc._doc[0].set_rotation(rotation)
+            controller.add("rectangle")
+            self.settle()
+            page = tab.doc._doc[0]
+            rect = fitz.Rect(controller.current()["rect"])
+            for center, handle in controller._handles(rect):
+                with self.subTest(rotation=rotation, handle=handle):
+                    def event(kind, point):
+                        display = point * page.rotation_matrix
+                        position = tab.view.mapFromScene(tab.view._page_transforms[0].map(
+                            QPointF(display.x, display.y)))
+                        return QMouseEvent(kind, QPointF(position), Qt.LeftButton,
+                                           Qt.LeftButton, Qt.NoModifier)
+                    x, y = handle
+                    target = fitz.Point(center.x + (12 if x == 1 else -12 if x == 0 else 0),
+                                        center.y + (8 if y == 1 else -8 if y == 0 else 0))
+                    controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress, center))
+                    controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, target))
+                    preview = controller.preview
+                    self.assertIsNotNone(preview)
+                    # Resizing keeps the opposite edge or midpoint anchored.
+                    self.assertAlmostEqual(preview.x0 + preview.width * (1 - x),
+                                           rect.x0 + rect.width * (1 - x), places=4)
+                    self.assertAlmostEqual(preview.y0 + preview.height * (1 - y),
+                                           rect.y0 + rect.height * (1 - y), places=4)
+                    self.assertAlmostEqual(preview.width, rect.width + (12 if x != .5 else 0), delta=2)
+                    self.assertAlmostEqual(preview.height, rect.height + (8 if y != .5 else 0), delta=2)
+                    controller.cancel()
+
+    def test_numeric_image_ratio_and_unlocked_transform_setting(self):
+        import fitz
+        tab = self.open_editor()
+        controller = tab._object_controller
+        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+        image.clear_with(200)
+        controller.add("image", image.tobytes("png"), 2)
+        self.settle()
+        controller.fields[2].setValue(30)
+        controller.apply()
+        rect = fitz.Rect(controller.current()["rect"])
+        self.assertAlmostEqual(rect.width / rect.height, 2)
+        controller.fields[3].setValue(20)
+        controller.apply()
+        rect = fitz.Rect(controller.current()["rect"])
+        self.assertAlmostEqual(rect.width / rect.height, 2)
+        controller.ratio_lock.setChecked(False)
+        controller.fields[3].setValue(10)
+        controller.apply()
+        rect = fitz.Rect(controller.current()["rect"])
+        self.assertAlmostEqual(rect.height * 25.4 / 72, 10)
+        self.assertFalse(controller.ratio_lock.isChecked())
+
+    def test_native_image_ratio_setting_and_text_focus_are_independent(self):
+        import fitz
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        from PyQt5.QtTest import QTest
+        tab = self.open_editor()
+        controller = tab._object_controller
+        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+        image.clear_with(200)
+        self.assertTrue(tab._perform_text_edit(lambda: tab.doc._doc[0].insert_image(
+            fitz.Rect(40, 100, 200, 180), stream=image.tobytes("png"))))
+        controller.activate()
+        controller.selected = next(item["id"] for item in controller.items if item["kind"] == "image")
+        controller.refresh()
+        old_id = controller.selected
+        controller.ratio_lock.setChecked(False)
+        controller.fields[2].setValue(40)
+        controller.apply()
+        self.assertNotEqual(controller.selected, old_id)
+        self.assertFalse(controller.ratio_lock.isChecked())
+        tab.open_page_editor()
+        tab.edit_span_at(QPointF(40, 55))
+        self.settle()
+        session = tab._inline_text
+        self.assertIsNotNone(session)
+        count = len(tab._undo_stack)
+        for key in (Qt.Key_Right, Qt.Key_Delete, Qt.Key_Space):
+            QTest.keyClick(session.input, key)
+        self.assertEqual(len(tab._undo_stack), count)
+        self.assertIsNotNone(controller.current())
+        self.assertEqual(tab.view.canvas.interaction_mode, "select")
+        session.cancel()
+        # A text drag crossing an image stays with the canvas.
+        controller.active = False
+        controller.auto_selected = False
+        view = tab.view
+        position = view.mapFromScene(view._page_transforms[0].map(QPointF(100, 130)))
+        event = QMouseEvent(QEvent.MouseMove, QPointF(position), Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+        self.assertFalse(controller.mouse("mouseMoveEvent", event))
+
     def render_grid(self, grid):
         grid.stop_rendering()
         for _ in range(40):

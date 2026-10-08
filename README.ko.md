@@ -52,6 +52,8 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 | Ctrl+E | 편집 창 열기 / 텍스트 편집 켜기·끄기 |
 | Ctrl+Shift+P | 페이지 구성 |
 | Ctrl+Z / Ctrl+Y | 실행 취소 / 다시 실행 |
+| Delete / 방향키 / Shift+방향키 | 편집 캔버스에서 선택한 개체 삭제 / 이동 / 크게 이동 |
+| Esc / Space 누르기 | 조작 취소 또는 개체 선택 해제 / 편집모드에서 임시 화면 이동 |
 | F1 | 도움말 |
 
 ## 개발

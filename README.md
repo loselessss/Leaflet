@@ -52,6 +52,8 @@ images inside groups or clipping scopes and existing vector artwork are not yet 
 | Ctrl+E | Open the editor / toggle text editing |
 | Ctrl+Shift+P | Page organization |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
+| Delete / Arrow keys / Shift+Arrow keys | Delete / move / move farther with an object selected on the editor canvas |
+| Esc / Hold Space | Cancel a gesture or clear object selection / temporarily pan in the editor |
 | F1 | Help |
 
 ## Development

@@ -5,9 +5,11 @@
 Unreleased. Pending changes; the release date will be finalized when publishing.
 
 - Select existing direct PDF images automatically to move, resize or delete them, with undo and redo.
+- Improve object selection feedback, eight-direction resizing, image aspect locking and the right properties panel. Add Delete, arrow-key movement, Esc and temporary panning with Space.
 - Choose document metadata and Leaflet object re-editing information removal independently in Save As; both are off by default.
 - Bundle supporting release files into one ZIP and stop creating sPDF installer and executable aliases.
 - Reduce package size without changing PDF rendering or OCR functionality.
+- Reduce file-opening delay with reader residency and faster tab preparation.
 
 ## 1.34.8 - 2026-10-07
 

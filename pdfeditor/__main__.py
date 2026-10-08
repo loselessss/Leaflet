@@ -34,6 +34,14 @@ def main():
     args.no_updates = args.no_updates or is_packaged()
     workspace = args.workspace or settings.startup_workspace()
 
+    # A launch that only forwards a file needs no QApplication, UI DLLs or
+    # theme initialization. Blocking local-socket waits work before the GUI
+    # event loop exists. Authenticated peer handoffs keep their own channel.
+    if workspace == "reader" and not args.peer and settings.reader_resident():
+        from .reader_launch import forward_to_resident
+        if forward_to_resident(args.path):
+            return
+
     from PyQt5.QtCore import Qt
     from PyQt5.QtGui import QIcon
     from PyQt5.QtWidgets import QApplication
@@ -56,12 +64,6 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app._spdf_standalone_reader = workspace == "reader"
-    # Forward ordinary file launches before importing the document/editor UI.
-    # Peer handoffs retain their authenticated, acknowledged process channel.
-    if workspace == "reader" and not args.peer and settings.reader_resident():
-        from .reader_resident import forward_to_resident
-        if forward_to_resident(args.path):
-            return
     from .app import new_window
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)

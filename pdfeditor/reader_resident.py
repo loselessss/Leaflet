@@ -1,44 +1,15 @@
 """Opt-in, document-free reader residency and per-user launch forwarding."""
 
-import hashlib
 import json
-import os
-import sys
 
 from PyQt5.QtCore import QObject, QTimer
-from PyQt5.QtNetwork import QLocalServer, QLocalSocket
+from PyQt5.QtNetwork import QLocalServer
 from PyQt5.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import settings
 from .i18n import localize
 from .icons import fluent_icon
-
-MAX_REQUEST_BYTES = 32768
-
-
-def server_name():
-    # Separate installations / development interpreters and Windows users.
-    identity = os.path.abspath(settings.PATH) + "|" + os.path.abspath(sys.executable)
-    return "spdf-reader-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-
-
-def forward_to_resident(path=None):
-    socket = QLocalSocket()
-    socket.connectToServer(server_name())
-    if not socket.waitForConnected(200):
-        return False
-    request = json.dumps({"path": os.path.abspath(path) if path else None}).encode("utf-8") + b"\n"
-    if len(request) > MAX_REQUEST_BYTES:
-        socket.abort()
-        return False
-    socket.write(request)
-    socket.flush()
-    socket.waitForBytesWritten(200)
-    received = bytes(socket.readAll())
-    if not received and socket.waitForReadyRead(800):
-        received = bytes(socket.readAll())
-    socket.disconnectFromServer()
-    return received.startswith(b"OK\n")
+from .reader_launch import MAX_REQUEST_BYTES, forward_to_resident, server_name
 
 
 class ReaderResident(QObject):

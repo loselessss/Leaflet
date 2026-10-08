@@ -609,11 +609,17 @@ def install(app, language_code=None):
         return app._spdf_i18n_filter
 
     import weakref
+    from functools import lru_cache
     from PyQt5 import sip
     from PyQt5.QtCore import QEvent, QObject, QTimer
     from PyQt5.QtWidgets import QComboBox, QListWidget, QTabWidget, QLineEdit
 
-    def translate_source_text(text):
+    accessors = {}
+
+    @lru_cache(maxsize=2048)
+    def translate_source_text(text, language_code):
+        # Repeated labels dominate new-tab construction. Include the language
+        # in the key and bound storage for changing titles/status messages.
         translated = tr(text)
         if translated != text:
             return translated
@@ -622,11 +628,17 @@ def install(app, language_code=None):
     def translate_object(obj):
         if sip.isdeleted(obj):
             return
-        for getter, setter in (
+        kind = type(obj)
+        pairs = accessors.get(kind)
+        if pairs is None:
+            pairs = tuple((getter, setter) for getter, setter in (
                 ("text", "setText"), ("title", "setTitle"),
                 ("windowTitle", "setWindowTitle"),
                 ("toolTip", "setToolTip"), ("statusTip", "setStatusTip"),
-                ("placeholderText", "setPlaceholderText")):
+                ("placeholderText", "setPlaceholderText"))
+                if callable(getattr(kind, getter, None)) and callable(getattr(kind, setter, None)))
+            accessors[kind] = pairs
+        for getter, setter in pairs:
             # Editable values (including spin-box editors) are user/model
             # state, not translatable labels. Never replay their initial text.
             if getter == "text" and isinstance(obj, QLineEdit):
@@ -637,11 +649,12 @@ def install(app, language_code=None):
                 try:
                     old = get()
                     property_name = "_spdf_i18n_source_" + getter
-                    source = obj.property(property_name) or old
-                    new = translate_source_text(source)
+                    stored_source = obj.property(property_name)
+                    source = stored_source or old
+                    new = translate_source_text(source, language())
                     if new != old:
                         put(new)
-                    if obj.property(property_name) is None:
+                    if stored_source is None:
                         obj.setProperty(property_name, source)
                 except (RuntimeError, TypeError):
                     pass
@@ -666,6 +679,8 @@ def install(app, language_code=None):
                     obj.setTabText(index, new)
 
     def translate_tree(root, visited=None):
+        if visited is not None and (root, language()) in visited:
+            return
         try:
             children = root.findChildren(QObject)
         except RuntimeError:
@@ -695,7 +710,26 @@ def install(app, language_code=None):
         def flush_pending(self):
             self.flush_scheduled = False
             visited = set()
-            for key in tuple(self.pending):
+            # Translate only the highest queued ancestor in each language.
+            # Child-first Show/Polish events otherwise enumerate overlapping
+            # subtrees even when individual objects are already visited.
+            roots = {}
+            for key, (reference, scheduled_language) in tuple(self.pending.items()):
+                root = reference()
+                if root is not None and not sip.isdeleted(root):
+                    roots[(root, scheduled_language)] = key
+                else:
+                    self.pending.pop(key, None)
+            for (root, scheduled_language), key in roots.items():
+                if sip.isdeleted(root):
+                    self.pending.pop(key, None)
+                    continue
+                parent = root.parent()
+                while parent is not None and (parent, scheduled_language) not in roots:
+                    parent = parent.parent()
+                if parent is not None:
+                    self.pending.pop(key, None)
+                    continue
                 self.flush(key, visited)
 
         def flush(self, key, visited=None):

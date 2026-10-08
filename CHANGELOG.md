@@ -10,9 +10,12 @@ Unreleased. Pending changes; the release date will be finalized when publishing.
 - Bundle source, dependency-source directions and checksums into one release-files ZIP, and stop creating sPDF-named installer and executable aliases.
 - Select existing images placed directly on PDF pages to move, resize, or delete them, with undo and redo. Images inside groups or clipping scopes are excluded.
 - Click an image or editable object in the editor to select it automatically; text clicks continue to edit or select text.
+- Highlight editable objects on hover and resize selections with eight handles, image aspect locking and Shift-constrained movement. Organize position and size controls in the right properties panel.
+- Delete selected objects with Delete, move them with arrow keys, cancel or clear selections with Esc, and hold Space to pan temporarily while keeping the editing state.
 
 ### 성능 개선
 
+- Open files faster when the reader is resident by forwarding launches before GUI initialization and reducing repeated interface translation during tab creation.
 - Reduce installer and MSIX size by omitting unused video libraries, AVIF codecs, Qt web-display components and unused Qt translations while preserving GPU rendering, supported image imports and OCR process isolation.
 - Normalize build dependencies to a single headless OpenCV installation.
 
