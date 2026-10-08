@@ -18,8 +18,10 @@ The tracked x64 `spdf_d2d_renderer.dll` must match the Python backend ABI.
 
 ## Current ABI
 
-ABI version 20 can:
+ABI version 21 can:
 
+- reuse an existing complex-page GPU raster at intermediate zoom scales without
+  allocating new rasters, while keeping settled-scale rendering exact;
 - composite non-isolated Normal groups with nested blends against a GPU backdrop,
   applying group opacity once to premultiplied pixels (group flag bit 1);
 - replay retained scenes with luminosity-mask color tables prepared before drawing;

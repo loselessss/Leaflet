@@ -9,7 +9,7 @@
 #define SPDF_D2D_API extern "C" __declspec(dllimport)
 #endif
 
-constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 20;
+constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 21;
 constexpr std::uint32_t SPDF_D2D_ADAPTER_NAME_LENGTH = 128;
 
 enum SpdfD2DDriver : std::uint32_t {
@@ -261,6 +261,12 @@ SPDF_D2D_API std::int32_t spdf_d2d_create_scene(
     std::uint32_t command_count,
     void** scene) noexcept;
 SPDF_D2D_API std::int32_t spdf_d2d_draw_scene(
+    void* surface,
+    void* scene,
+    const SpdfD2DTransform* transform) noexcept;
+
+// S_OK when an existing complex-scene raster was drawn; S_FALSE otherwise.
+SPDF_D2D_API std::int32_t spdf_d2d_draw_scene_preview(
     void* surface,
     void* scene,
     const SpdfD2DTransform* transform) noexcept;

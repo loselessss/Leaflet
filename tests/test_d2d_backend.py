@@ -45,7 +45,7 @@ def pdf_component_blend(mode, backdrop, source):
 
 class D2DBackendTests(unittest.TestCase):
     def test_native_structure_has_stable_abi_layout(self):
-        self.assertEqual(ABI_VERSION, 20)
+        self.assertEqual(ABI_VERSION, 21)
         self.assertEqual(_NativeInfo.adapter_name.offset, 20)
         if os.name == "nt":
             self.assertEqual(ctypes.sizeof(_NativeInfo), 276)
@@ -148,6 +148,7 @@ class D2DBackendTests(unittest.TestCase):
                     ("rect_clip_pop", None)))
                 path.close()
                 surface.begin_frame(0xff000000)
+                self.assertFalse(surface.draw_scene_preview(scene, (1, 0, 0, 1, 4, 5)))
                 surface.draw_scene(scene, (1, 0, 0, 1, 4, 5))
                 pixels = surface.read_pixels_bgra(32, 32)
                 surface.end_frame()
@@ -169,6 +170,9 @@ class D2DBackendTests(unittest.TestCase):
                 reference = surface.create_scene(32, 32, operations)
                 cached = surface.create_scene(32, 32, operations + (
                     ("path", path, 0x00000000, None, 1.0, None, None),) * 256)
+                surface.begin_frame()
+                self.assertFalse(surface.draw_scene_preview(cached, (1, 0, 0, 1, 0, 0)))
+                surface.end_frame()
                 for dpi in (96, 144):
                     surface.resize(32, 32, dpi)
                     for scale, dx, dy in ((1, 0, 0), (1, -4, -2),
@@ -188,6 +192,19 @@ class D2DBackendTests(unittest.TestCase):
                             # rounding at a handful of mask edge pixels.
                             self.assertLessEqual(max(differences), 16)
                             self.assertLess(sum(differences) / len(differences), .25)
+                        surface.begin_frame(0xff0000ff)
+                        self.assertTrue(surface.draw_scene_preview(
+                            cached, (scale * 1.2, 0, 0, scale * 1.2, dx + 1, dy + 2)))
+                        pixels = surface.read_pixels_bgra(32, 32)
+                        self.assertNotEqual(pixels, bytes((255, 0, 0, 255)) * 1024)
+                        self.assertFalse(surface.draw_scene_preview(
+                            cached, (scale, .1, 0, scale, dx, dy)))
+                        surface.end_frame()
+                        # A preview must not replace the exact-scale cache.
+                        surface.begin_frame(0xff0000ff)
+                        surface.draw_scene(cached, (scale, 0, 0, scale, dx, dy))
+                        self.assertEqual(surface.read_pixels_bgra(32, 32), results[1])
+                        surface.end_frame()
         finally:
             user32.DestroyWindow(hwnd)
 

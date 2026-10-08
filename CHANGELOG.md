@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### 성능 개선
+
+- Reuse the existing GPU raster during animated zoom on pages with complex transparency, then render the settled scale precisely instead of repeating composition at every intermediate scale.
+
 ### 기타
 
 - Add the Microsoft Store download link to both READMEs and recommend it for the stable version.

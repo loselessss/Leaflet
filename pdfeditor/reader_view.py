@@ -889,11 +889,15 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         retained = self._d2d_vector_paths[page][3]
         if retained is not None:
             viewport_origin = self.mapFromScene(QPointF(0, 0))
-            self._d2d_surface.draw_scene(retained, (
+            transform = (
                 page_transform.m11(), page_transform.m12(),
                 page_transform.m21(), page_transform.m22(),
                 page_transform.dx() + viewport_origin.x(),
-                page_transform.dy() + viewport_origin.y()))
+                page_transform.dy() + viewport_origin.y())
+            if (self._zoom_animation_timer.isActive() and
+                    self._d2d_surface.draw_scene_preview(retained, transform)):
+                return
+            self._d2d_surface.draw_scene(retained, transform)
             return
         width, height = self._page_sizes[page]
         self._d2d_surface.fill_rect(0, 0, width, height, 0xffffffff)

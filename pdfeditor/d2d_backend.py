@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 
-ABI_VERSION = 20
+ABI_VERSION = 21
 DRIVER_NAMES = {0: "none", 1: "hardware", 2: "warp"}
 
 
@@ -175,6 +175,9 @@ def _load_library(path):
     library.spdf_d2d_draw_scene.argtypes = [
         c_void_p, c_void_p, POINTER(_Transform)]
     library.spdf_d2d_draw_scene.restype = c_int32
+    library.spdf_d2d_draw_scene_preview.argtypes = [
+        c_void_p, c_void_p, POINTER(_Transform)]
+    library.spdf_d2d_draw_scene_preview.restype = c_int32
     library.spdf_d2d_end_frame.argtypes = [c_void_p]
     library.spdf_d2d_end_frame.restype = c_int32
     library.spdf_d2d_destroy_bitmap.argtypes = [c_void_p]
@@ -456,6 +459,18 @@ class D2DSurface:
         scene = D2DScene(self, handle)
         self._scenes.add(scene)
         return scene
+
+    def draw_scene_preview(self, scene, transform):
+        """Reuse a GPU raster during zoom, without allocating another scale."""
+        if self.closed or scene.closed or scene._surface is not self:
+            raise ValueError("scene does not belong to this Direct2D surface")
+        if len(transform) != 6:
+            raise ValueError("invalid Direct2D scene transform")
+        native = _Transform(*map(float, transform))
+        result = self._library.spdf_d2d_draw_scene_preview(
+            self._handle, scene._handle, byref(native))
+        _check_hresult(result, "Direct2D zoom preview")
+        return result == 0
 
     def draw_scene(self, scene, transform):
         if self.closed or scene.closed or scene._surface is not self:

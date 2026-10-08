@@ -1559,6 +1559,7 @@ public:
     }
 
     HRESULT draw_cached_scene(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_scene_preview(Scene* scene, const SpdfD2DTransform& transform) noexcept;
 
 private:
     std::uint64_t scene_cache_budget() noexcept {
@@ -1906,6 +1907,32 @@ HRESULT replay_scene(
         if (FAILED(result)) return result;
     }
     return surface->set_transform(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
+}
+
+// Animated zoom can temporarily rescale an existing complex-page raster.
+HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noexcept {
+    if (scene->recordable || t.m12 != 0 || t.m21 != 0 ||
+            t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.m11) ||
+            !std::isfinite(t.m22) || !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
+            layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
+            !mask_captures_.empty()) return S_FALSE;
+    SceneRaster* best = nullptr;
+    for (auto& cached : scene_rasters_) {
+        if (cached.identity == scene->identity && cached.dpi == dpi_ &&
+                (!best || cached.used > best->used)) best = &cached;
+    }
+    if (!best) return S_FALSE;
+    const float sx = t.m11 / best->transform.m11;
+    const float sy = t.m22 / best->transform.m22;
+    if (!std::isfinite(sx) || !std::isfinite(sy)) return S_FALSE;
+    // Scale the cached page origin as well as its pixels, preserving the
+    // cursor anchor even when the raster has a fractional-pixel border.
+    d2d_context_->SetTransform(D2D1::Matrix3x2F(sx, 0, 0, sy,
+        t.dx - best->transform.dx * sx, t.dy - best->transform.dy * sy));
+    d2d_context_->DrawBitmap(best->bitmap.Get(), nullptr, 1.0f,
+        D2D1_INTERPOLATION_MODE_LINEAR);
+    best->used = ++raster_clock_;
+    return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
 }
 
 // Complex pages cannot use a command list because their blend operations read
@@ -2590,6 +2617,17 @@ std::int32_t spdf_d2d_create_scene(
     } catch (...) {
         return static_cast<std::int32_t>(E_FAIL);
     }
+}
+
+std::int32_t spdf_d2d_draw_scene_preview(
+    void* surface,
+    void* scene,
+    const SpdfD2DTransform* transform) noexcept {
+    if (!surface || !scene || !transform) return static_cast<std::int32_t>(E_INVALIDARG);
+    auto* context = static_cast<Surface*>(surface);
+    auto* retained = static_cast<Scene*>(scene);
+    if (retained->owner != context) return static_cast<std::int32_t>(E_INVALIDARG);
+    return static_cast<std::int32_t>(context->draw_scene_preview(retained, *transform));
 }
 
 std::int32_t spdf_d2d_draw_scene(

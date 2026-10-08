@@ -752,6 +752,20 @@ class ReaderViewTests(unittest.TestCase):
 
         surface.create_scene.assert_called_once()
         self.assertEqual(surface.draw_scene.call_count, 2)
+        surface.draw_scene_preview.return_value = True
+        self.view._zoom_animation_timer.start(1000)
+        self.view._draw_vector_page(0, scene)
+        surface.draw_scene_preview.assert_called_once()
+        self.assertEqual(surface.draw_scene.call_count, 2)
+        # Missing raster falls back to normal rendering; settled zoom always
+        # draws at the final scale rather than retaining the preview pixels.
+        surface.draw_scene_preview.return_value = False
+        self.view._draw_vector_page(0, scene)
+        self.assertEqual(surface.draw_scene.call_count, 3)
+        self.view._zoom_animation_timer.stop()
+        self.view._draw_vector_page(0, scene)
+        self.assertEqual(surface.draw_scene.call_count, 4)
+        self.assertEqual(surface.draw_scene_preview.call_count, 2)
         surface.fill_path.assert_not_called()
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
