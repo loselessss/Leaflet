@@ -13,7 +13,9 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 
 ## 다운로드
 
-[최신 릴리스](https://github.com/loselessss/Leaflet/releases/latest)에서 설치 파일을 받으세요.
+**안정 버전은 [Microsoft Store](https://apps.microsoft.com/detail/9PCB1BH4WBDT?hl=ko-kr&gl=KR&ocid=pdpshare)에서 설치하세요.**
+
+최신 일반 설치파일은 [GitHub 릴리스](https://github.com/loselessss/Leaflet/releases/latest)에서도 받을 수 있습니다.
 
 시작 메뉴의 **Leaflet 리더** 또는 **Leaflet 편집기**로 실행합니다.
 리더의 **편집 모드**, 편집기의 **리더로 돌아가기** 버튼으로 모드를 전환합니다.

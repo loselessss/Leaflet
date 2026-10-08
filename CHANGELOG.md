@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 기타
+
+- Add the Microsoft Store download link to both READMEs and recommend it for the stable version.
+
 ## 1.35.0 - 2026-10-08
 
 ### 개선

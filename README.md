@@ -13,7 +13,9 @@ EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.h
 
 [Privacy policy / 개인정보 처리방침](PRIVACY.md)
 
-Get the installer from the [latest release](https://github.com/loselessss/Leaflet/releases/latest).
+**For the stable version, install Leaflet from [Microsoft Store](https://apps.microsoft.com/detail/9PCB1BH4WBDT?hl=ko-kr&gl=KR&ocid=pdpshare).**
+
+The latest standalone installer is also available from [GitHub Releases](https://github.com/loselessss/Leaflet/releases/latest).
 
 Launch **Leaflet Reader** or **Leaflet Editor** from the Start menu.
 Use **Edit mode** in the reader or **Back to reader** in the editor to switch.
