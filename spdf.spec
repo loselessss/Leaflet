@@ -24,6 +24,7 @@ sys.path.insert(0, str(spec_root))
 from build_version_info import write_version_info_files
 from build_legal import write_legal_bundle
 from pdfeditor.meta import APP_VERSION
+from build_payload import trim_payload
 
 
 # 작업 관리자가 GUI와 OCR 자식 프로세스를 의미 있는 제품명으로 표시하도록
@@ -73,8 +74,10 @@ a_ocr = Analysis(
     binaries=ocr_bins,
     datas=ocr_datas + legal_datas,
     hiddenimports=ocr_hidden,
-    excludes=["PyQt5", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle"],
+    excludes=["PyQt5", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle",
+              "PIL.AvifImagePlugin"],
 )
+a_ocr.binaries, a_ocr.datas = trim_payload(a_ocr.binaries, a_ocr.datas, gui=False)
 pyz_ocr = PYZ(a_ocr.pure)
 exe_ocr = EXE(
     pyz_ocr, a_ocr.scripts, [],
@@ -95,8 +98,9 @@ a_gui = Analysis(
            ("assets/leaflet_eps.ico", "assets")] + legal_datas,
     hiddenimports=["pdfeditor", "fitz", "pdfeditor.gpu_scene_worker"],
     excludes=["rapidocr", "onnxruntime", "cv2", "onnx", "tensorrt", "paddle",
-              "tkinter", "matplotlib"],
+              "tkinter", "matplotlib", "PIL.AvifImagePlugin"],
 )
+a_gui.binaries, a_gui.datas = trim_payload(a_gui.binaries, a_gui.datas, gui=True)
 pyz_gui = PYZ(a_gui.pure)
 exe_gui = EXE(
     pyz_gui, a_gui.scripts, [],

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - 2026-10-07
+## Unreleased
 
 ### 개선
 
@@ -8,6 +8,11 @@
 - Bundle source, dependency-source directions and checksums into one release-files ZIP, and stop creating sPDF-named installer and executable aliases.
 - Select existing images placed directly on PDF pages to move, resize, or delete them, with undo and redo. Images inside groups or clipping scopes are excluded.
 - Click an image or editable object in the editor to select it automatically; text clicks continue to edit or select text.
+
+### 성능 개선
+
+- Reduce installer and MSIX size by omitting unused video libraries, AVIF codecs, Qt web-display components and unused Qt translations while preserving GPU rendering, supported image imports and OCR process isolation.
+- Normalize build dependencies to a single headless OpenCV installation.
 
 ## 1.34.8 - 2026-10-07
 

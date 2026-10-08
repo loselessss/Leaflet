@@ -1,5 +1,12 @@
 # Leaflet Release Notes
 
+## Unreleased
+
+- Select existing direct PDF images automatically to move, resize or delete them, with undo and redo.
+- Choose document metadata and Leaflet object re-editing information removal independently in Save As; both are off by default.
+- Bundle supporting release files into one ZIP and stop creating sPDF installer and executable aliases.
+- Reduce package size without changing PDF rendering or OCR functionality.
+
 ## 1.34.8 - 2026-10-07
 
 ### Improvements and fixes

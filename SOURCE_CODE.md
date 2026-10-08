@@ -37,7 +37,10 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    Use the Python version and architecture recorded in
    `third-party/build-environment.json` (official builds use 64-bit Python 3.12).
 2. Create a clean virtual environment. Install the exact versions recorded in
-   `third-party/build-requirements.txt` with `python -m pip install -r`.
+   `third-party/build-requirements.txt` with `python -m pip install --no-deps -r`.
+   The inventory includes transitive dependencies. Using `--no-deps` preserves
+   the selected headless OpenCV wheel instead of adding the regular wheel
+   requested by RapidOCR's metadata; both variants provide the same `cv2` import.
 3. Run `python ci_test_runner.py`. Install Inno Setup 6 at the location documented
    by `build_installer.bat`.
 4. Run `build_exe.bat`, then `build_installer.bat`. Run with the virtual
@@ -48,7 +51,9 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    for PyQt5, retain the matching Qt source and PyQt build tooling.
 
 소스 ZIP을 풀고 `third-party/build-environment.json`의 Python 환경과
-`third-party/build-requirements.txt`의 패키지 버전을 사용합니다.
+`third-party/build-requirements.txt`의 패키지 버전을 사용합니다. 모든 하위 의존성이
+기록되어 있으므로 `pip install --no-deps -r`로 설치하여 OpenCV 일반판과 경량판이
+함께 설치되지 않도록 합니다.
 테스트 후 `build_exe.bat` → `build_installer.bat` 순서로 실행하세요.
 라이브러리 자체를 수정하려면 해당 소스의 빌드 설명을 따라 새 패키지를 만든 뒤
 Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.

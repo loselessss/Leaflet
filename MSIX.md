@@ -10,6 +10,14 @@ install/trust a certificate. Do not distribute that artifact as a signed install
 하지 않으며, 일반 릴리스에는 기존 EXE 설치 파일을 제공합니다.
 
 1. Install Python build dependencies and the Windows SDK (MakeAppx and SignTool).
+   After installing RapidOCR, keep only the headless OpenCV wheel (both variants
+   own `cv2`, so restore headless after uninstalling regular OpenCV):
+
+   ```powershell
+   python -m pip uninstall --yes opencv-python
+   python -m pip install --force-reinstall --no-deps opencv-python-headless
+   ```
+
 2. Run `build_exe.bat` first. Both GUI and OCR worker must match the app version.
 3. Run the following with **your** identity and certificate subject:
 
@@ -24,6 +32,13 @@ OCR worker and dependency notices. PDF/AI Open With entries come from its manife
 default associations are still chosen by the user. MSIX uses the Windows package
 identity and disables the EXE updater. Store submission and install/upgrade/
 uninstall verification are separate steps, not claimed by package creation.
+
+Builds omit unused video-I/O DLLs, the AVIF decoder (not an advertised import
+format), Qt web-display plugins and unused Qt translations. PDF rendering,
+PNG/JPEG/BMP/TIFF import, printing, GPU/OpenGL fallback and separate GUI/OCR DLL
+folders are preserved. The build stops if a retained native module depends on
+a DLL selected for removal. Use `--output Output/optimized` to compare a new
+build with an existing package without overwriting it.
 
 출력 파일은 `Output/Leaflet_VERSION_x64_unsigned.msix`입니다. 기존 파일은 덮어쓰지
 않습니다. MSIX에서는 EXE 자동 업데이트를 끄고 패키지 경로로 업데이트합니다.
