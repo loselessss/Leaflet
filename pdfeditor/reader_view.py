@@ -1465,7 +1465,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def keyPressEvent(self, event):
         controller = getattr(self, "object_controller", None)
-        if controller is not None and controller.active and event.key() == Qt.Key_Escape:
+        if (controller is not None and (controller.active or getattr(controller, "auto_selected", False))
+                and event.key() == Qt.Key_Escape):
             controller.cancel()
             self.viewport().update()
             event.accept()

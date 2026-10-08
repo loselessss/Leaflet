@@ -16,6 +16,7 @@ from .access import annotation_command, saving_command
 from .filetypes import is_illustrator_document, is_eps_document, suggested_pdf_path
 
 from .icons import fluent_icon
+from .save_options import choose_save_options
 
 
 def _set_unsaved_button_texts(dialog):
@@ -129,8 +130,12 @@ class AnnotMixin:
         if not path:
             return False
         path = suggested_pdf_path(path)
+        options = choose_save_options(self)
+        if options is None:
+            return False
         try:
-            self._save_document_file(path)
+            self._save_document_file(path, remove_metadata=options[0],
+                                     remove_editing_data=options[1])
         except Exception as e:
             QMessageBox.critical(self, "저장 실패", "저장할 수 없습니다.\n\n%s" % e)
             return False
@@ -144,8 +149,11 @@ class AnnotMixin:
         self.statusBar().showMessage("저장됨: %s" % path, 3000)
         return True
 
-    def _save_document_file(self, path):
-        revision = self.doc.save_as(path)
+    def _save_document_file(self, path, *, remove_metadata=False, remove_editing_data=False):
+        revision = self.doc.save_as(path, remove_metadata=remove_metadata,
+                                    remove_editing_data=remove_editing_data)
+        if remove_editing_data:
+            self.refresh_editor_overview()
         if self._shell.workspace_mode == "editor":
             from .document_snapshot import file_revision
             from .process_workspace import application_bridge

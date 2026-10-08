@@ -25,6 +25,9 @@ class EmbeddedModeTests(unittest.TestCase):
         # catalog. Embedded-mode assertions use the international default.
         from pdfeditor.i18n import set_language
         set_language("en")
+        installer_language = patch("pdfeditor.settings._installer_ui_language", return_value="en")
+        installer_language.start()
+        self.addCleanup(installer_language.stop)
 
     @contextmanager
     def document_windows(self):
@@ -664,7 +667,8 @@ class EmbeddedModeTests(unittest.TestCase):
             editing.mark_dirty()
             target = source.with_name("copy.pdf")
             with patch("pdfeditor.annots.QFileDialog.getSaveFileName",
-                       return_value=(str(target), "PDF")):
+                       return_value=(str(target), "PDF")), \
+                    patch("pdfeditor.annots.choose_save_options", return_value=(False, False)):
                 self.assertTrue(editing.save_as_dialog())
             self.settle()
             self.assertEqual(editing.doc.path, str(target))

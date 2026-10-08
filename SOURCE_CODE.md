@@ -6,9 +6,11 @@ Open **Help → Open-source Licenses → Source code** in Leaflet. The link poin
 the release for the version you are running, not to the moving `main` branch:
 
 - [All Leaflet releases](https://github.com/loselessss/Leaflet/releases)
-- Under the same release's Assets, download `Leaflet_Source_VERSION.zip` and
-  `Leaflet_Dependency_Sources_VERSION.md` together. GitHub-generated tag ZIPs alone
-  do not contain the build inventory and dependency-source directions.
+- New releases provide `Leaflet_Release_Files_VERSION.zip` under Assets. It contains
+  `Leaflet_Source_VERSION.zip`, `Leaflet_Dependency_Sources_VERSION.md` and checksum
+  files. Earlier releases may provide these supporting files separately.
+  GitHub-generated tag ZIPs alone do not contain the build inventory and
+  dependency-source directions.
 - The ZIP contains the tagged Leaflet source, build scripts and the actual build
   environment's package versions and notices. Unrelated project files and
   personal/untracked files are excluded.
@@ -20,8 +22,9 @@ the release for the version you are running, not to the moving `main` branch:
   or licensing has been audited retroactively.
 
 Leaflet의 **도움말 → 오픈소스 라이선스 → 소스 코드**에서 실행 중인 버전의 릴리스로
-이동할 수 있습니다. 같은 릴리스의 Assets에서 소스 ZIP과 의존성 소스 안내를
-함께 받으세요.
+이동할 수 있습니다. 새 릴리스에서는 Assets의 `Leaflet_Release_Files_VERSION.zip`을
+받으세요. 소스 ZIP·의존성 소스 안내·체크섬이 함께 들어 있습니다.
+이전 릴리스에서는 이 파일들이 따로 제공될 수 있습니다.
 ZIP에는 해당 태그의 Leaflet 소스·빌드 스크립트·실제 빌드 환경의 패키지 버전·고지가
 들어갑니다. Leaflet와 무관한 프로젝트 파일과 개인·미추적 파일은 제외합니다.
 외부 라이브러리 원본은 의존성 안내의 **같은 버전 소스 링크**에서 받을 수 있으며,
@@ -30,7 +33,8 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
 
 ## Rebuild on Windows / Windows에서 빌드
 
-1. Extract the source ZIP. Use the Python version and architecture recorded in
+1. Extract the release files ZIP, then its source ZIP (or the separately provided source ZIP).
+   Use the Python version and architecture recorded in
    `third-party/build-environment.json` (official builds use 64-bit Python 3.12).
 2. Create a clean virtual environment. Install the exact versions recorded in
    `third-party/build-requirements.txt` with `python -m pip install -r`.
@@ -60,8 +64,10 @@ Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요�
   archives for PyMuPDF and PyQt5 and the matching Qt source distribution.
   Generated icons and the rebuilt native DLL may differ; their tagged
   generators and native source/build script are included. Other local source changes stop publication.
-- Publish the source ZIP, its checksum and dependency source document as Assets
-  in the same public release as the installers. Source preparation or publication
+- Run `create_release_bundle.py --version VERSION` after creating installer checksums.
+  Publish its supporting-files ZIP in the same public release as the Leaflet installers.
+  Do not publish individual source/checksum/guide files or create sPDF installer aliases.
+  Source preparation or publication
   failures stop installer publication. Sources remain publicly downloadable
   without Actions artifact access or an expiry date.
 - The installer SHA-256 is included in the release body; GitHub asset digests

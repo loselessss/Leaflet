@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased - 2026-10-07
+
+### 개선
+
+- Choose whether to remove document metadata and Leaflet object re-editing information when saving as PDF. Both options are off by default and preserve visible content.
+- Bundle source, dependency-source directions and checksums into one release-files ZIP, and stop creating sPDF-named installer and executable aliases.
+- Select existing images placed directly on PDF pages to move, resize, or delete them, with undo and redo. Images inside groups or clipping scopes are excluded.
+- Click an image or editable object in the editor to select it automatically; text clicks continue to edit or select text.
+
 ## 1.34.8 - 2026-10-07
 
 ### 개선

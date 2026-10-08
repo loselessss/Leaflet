@@ -37,7 +37,9 @@
 - For every user-visible change, update `CHANGELOG.md` in the same change. Keep the newest release first and use Korean section labels such as `새 기능`, `개선`, `성능 개선`, `버그 수정`, and `기타`, omitting empty sections.
 - Whenever the release version changes, update `pdfeditor/meta.py` (`APP_VERSION` and `RELEASE_DATE`), `installer.iss` (`MyAppVersion`), the README release/status entry, and `CHANGELOG.md` together. Search the repository for the previous version before committing and verify that every release reference is intentional.
 - Verify that the application and installer versions match exactly.
-- Installer output names use `Leaflet_Setup_{#MyAppVersion}`. Publish a matching `sPDF_Setup_VERSION.exe` compatibility alias so older installed versions can update.
+- Installer output names use `Leaflet_Setup_{#MyAppVersion}`. Do not create or publish `sPDF_Setup_VERSION.exe` compatibility aliases for new releases.
+- New installers must not create an extra `sPDF.exe` copy. Keep existing internal module names, native ABI identifiers and settings/association identities for compatibility; this naming rule applies to distributed application/installer aliases.
+- Publish Leaflet installers separately. Bundle matching app source, dependency-source directions and checksum files into `Leaflet_Release_Files_VERSION.zip`; do not upload those supporting files individually. Preserve existing historical release assets unless the user asks to change them.
 
 ## Development and verification
 

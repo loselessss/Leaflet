@@ -15,6 +15,8 @@ class ObjectController:
     def __init__(self, tab):
         self.tab = tab
         self.active = False
+        self.auto_selected = False
+        self._consume_release = False
         self.selected = None
         self.items = []
         self.context = None
@@ -35,7 +37,7 @@ class ObjectController:
         self.dock.setAllowedAreas(Qt.RightDockWidgetArea)
         panel = QWidget()
         layout = QFormLayout(panel)
-        self.label = QLabel(localize("Select an Leaflet object.", "Leaflet에서 추가한 개체를 선택하세요."))
+        self.label = QLabel(localize("Select an image or a Leaflet object.", "이미지 또는 Leaflet에서 추가한 개체를 선택하세요."))
         self.label.setWordWrap(True)
         layout.addRow(self.label)
         self.fields = []
@@ -77,6 +79,7 @@ class ObjectController:
 
     def deactivate(self):
         self.active = False
+        self.auto_selected = False
         self.action.setChecked(False)
         self.cancel()
         self.tab.view.viewport().update()
@@ -85,12 +88,16 @@ class ObjectController:
         tab = self.tab
         context = (id(tab.doc), tab.page_index,
                    getattr(tab.doc, "_render_generation", -1))
-        if context != self.context:
+        changed = context != self.context
+        if changed:
             self.cancel()
-            if self.context is None or context[:2] != self.context[:2]:
+            if (self.context is None or context[:2] != self.context[:2]
+                    or (self.selected or "").startswith("existing-image:")):
                 self.selected = None
+                self.auto_selected = False
             self.context = context
-        self.items = model.objects(tab.doc, tab.page_index) if tab.doc is not None else []
+        if changed:
+            self.items = model.objects(tab.doc, tab.page_index) if tab.doc is not None else []
         item = self.current()
         editable = tab.doc is not None and not tab.read_only
         for action in (self.action, self.rectangle_action, self.image_action):
@@ -104,7 +111,7 @@ class ObjectController:
             for field, value in zip(self.fields, (rect.x0, rect.y0, rect.width, rect.height)):
                 field.setValue(value * 25.4 / 72)
         else:
-            self.label.setText(localize("Select an Leaflet object.", "Leaflet에서 추가한 개체를 선택하세요."))
+            self.label.setText(localize("Select an image or a Leaflet object.", "이미지 또는 Leaflet에서 추가한 개체를 선택하세요."))
         tab.view.viewport().update()
 
     def current(self):
@@ -165,23 +172,32 @@ class ObjectController:
     def commit(self, rect):
         item = self.current()
         if item and list(rect) != item["rect"] and not self.tab.read_only:
-            self.tab._perform_text_edit(lambda: model.transform(
-                self.tab.doc, self.tab.page_index, item["id"], rect))
+            result = []
+            if self.tab._perform_text_edit(lambda: result.append(model.transform(
+                    self.tab.doc, self.tab.page_index, item["id"], rect))):
+                self.selected = result[0]
+                self.auto_selected = not self.active and self._automatic_enabled()
         self.refresh()
 
     def delete(self):
         item = self.current()
         if item and not self.tab.read_only:
-            self.tab._perform_text_edit(lambda: model.delete(
-                self.tab.doc, self.tab.page_index, item["id"]))
+            if self.tab._perform_text_edit(lambda: model.delete(
+                    self.tab.doc, self.tab.page_index, item["id"])):
+                self.selected = None
         self.refresh()
 
     def cancel(self):
         self.drag = None
         self.preview = None
 
+    def _automatic_enabled(self):
+        return (self.tab.view.canvas.interaction_mode == "select"
+                and not self.tab._note_mode)
+
     def mouse(self, name, event):
-        if not self.active or self.tab.doc is None or self.tab.read_only:
+        automatic = not self.active and self._automatic_enabled()
+        if (not self.active and not automatic) or self.tab.doc is None or self.tab.read_only:
             return False
         if event.button() not in (Qt.LeftButton, Qt.NoButton):
             return False
@@ -197,16 +213,38 @@ class ObjectController:
         page = self.tab.doc._doc[page_index]
         point = fitz.Point(point.x(), point.y()) * page.derotation_matrix
         if name == "mousePressEvent":
+            self._consume_release = False
             self.refresh()
             item = self.current()
             tolerance = 7 / max(.1, view.zoom)
-            resize = item and abs(point.x - item["rect"][2]) <= tolerance and abs(point.y - item["rect"][3]) <= tolerance
+            resize = ((self.active or self.auto_selected) and item
+                      and abs(point.x - item["rect"][2]) <= tolerance
+                      and abs(point.y - item["rect"][3]) <= tolerance)
+            # Text remains clickable even over a full-page scanned image.
+            if automatic and not resize and self.tab._span_at(QPointF(point.x, point.y)):
+                self.selected = None
+                self.auto_selected = False
+                self.refresh()
+                return False
             if not resize:
                 item = next((x for x in reversed(self.items) if point in fitz.Rect(x["rect"])), None)
+            if automatic and item:
+                self._consume_release = True
+                if not self.tab._commit_inline_text():
+                    return True
+                self.refresh()
+                item = self.current() if resize else next(
+                    (x for x in reversed(self.items) if point in fitz.Rect(x["rect"])), None)
             self.selected = item["id"] if item else None
+            self.auto_selected = automatic and item is not None
+            if self.auto_selected:
+                self.dock.show()
             self.refresh()
             if item:
                 self.drag = (point, fitz.Rect(item["rect"]), bool(resize))
+                self._consume_release = True
+            elif automatic:
+                return False
             view.setFocus()
         elif name == "mouseMoveEvent" and self.drag:
             start, original, resize = self.drag
@@ -218,15 +256,21 @@ class ObjectController:
                                       original.x1 + dx, original.y1 + dy))
             view.viewport().update()
         elif name == "mouseReleaseEvent":
+            if not self._consume_release and automatic:
+                return False
+            self._consume_release = False
             rect = self.preview
             self.cancel()
             if rect is not None:
                 self.commit(rect)
-        return True
+        elif name == "mouseDoubleClickEvent" and self.auto_selected:
+            item = self.current()
+            return item is not None and point in fitz.Rect(item["rect"])
+        return self.active or self.drag is not None or name == "mouseReleaseEvent"
 
     def outlines(self):
         item = self.current()
-        if not self.active or not item or self.tab.doc is None:
+        if not (self.active or self.auto_selected) or not item or self.tab.doc is None:
             return []
         page = self.tab.doc._doc[self.tab.page_index]
         rect = self.preview if self.preview is not None else fitz.Rect(item["rect"])

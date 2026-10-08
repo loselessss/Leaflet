@@ -1,7 +1,7 @@
-"""Editable sPDF-owned page content. Never infer objects from arbitrary PDF paths.
+"""Editable owned page content and individual direct image placements.
 
 PDF references (not integer xrefs inside JSON) survive garbage collection on save.
-Each object keeps an immutable original stream and a separately transformed stream.
+Owned objects keep an immutable original stream and a transformed stream.
 """
 
 import hashlib
@@ -61,7 +61,12 @@ def objects(document, page_index):
             result.append(item)
         except (ValueError, TypeError, KeyError, RuntimeError):
             continue
-    return result
+    from .existing_images import placements
+    excluded = {xref for reference in _refs(pdf, page.xref, "SPDFObjects")
+                for xref in _refs(pdf, reference, "Content")}
+    order = {content: index for index, content in enumerate(page.get_contents())}
+    return sorted(result + placements(document, page_index, excluded),
+                  key=lambda item: (order[item["content"]], item.get("start", 0)))
 
 
 def _write_data(pdf, item):
@@ -127,7 +132,7 @@ def _create(document, page_index, kind, rect, *, image=None):
 
 def transform(document, page_index, object_id, rect):
     with _unrotated(document, page_index):
-        _transform(document, page_index, object_id, rect)
+        return _transform(document, page_index, object_id, rect)
 
 
 def _transform(document, page_index, object_id, rect):
@@ -136,6 +141,9 @@ def _transform(document, page_index, object_id, rect):
     item = next((x for x in objects(document, page_index) if x["id"] == object_id), None)
     if item is None:
         raise ValueError("The object is no longer editable.")
+    if item.get("existing"):
+        from .existing_images import edit
+        return edit(document, page_index, item, rect)
     pdf = document._doc
     page = pdf[page_index]
     # Model coordinates are unrotated MuPDF page coordinates, including CropBox.
@@ -151,6 +159,7 @@ def _transform(document, page_index, object_id, rect):
     item["digest"] = hashlib.sha256(stream).hexdigest()
     _write_data(pdf, item)
     document.invalidate_render()
+    return object_id
 
 
 def delete(document, page_index, object_id):
@@ -160,6 +169,10 @@ def delete(document, page_index, object_id):
     item = next((x for x in objects(document, page_index) if x["id"] == object_id), None)
     if item is None:
         raise ValueError("The object is no longer editable.")
+    if item.get("existing"):
+        from .existing_images import edit
+        edit(document, page_index, item)
+        return
     pdf.update_stream(item["content"], b"")
     refs = [x for x in _refs(pdf, page.xref, "SPDFObjects") if x != item["xref"]]
     pdf.xref_set_key(page.xref, "SPDFObjects", "[" + " ".join(f"{x} 0 R" for x in refs) + "]")

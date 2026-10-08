@@ -24,12 +24,13 @@ Press **F1** for the full usage guide.
 - **Reading:** GPU rendering, zoom up to 800%, search, bookmarks, draggable tabs that detach and merge,
   two-page view, and presentation mode.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,
-  then move or resize them.
+  then move or resize them. Select existing direct PDF images to move, resize, or delete them.
 - **Pages:** Reorder, rotate, crop, merge, split, and extract pages.
   Adjust page size and bleed, or add binding and folding guides.
 - **Annotations:** Highlights, notes, and text watermarks.
 - **OCR:** Recognize Korean and English scans locally and add searchable text.
 - **Output:** Print, compress PDFs, and convert between PDFs and images.
+  Save As offers optional removal of document metadata and Leaflet object re-editing information.
 
 Click nearby fragments on the same line to edit them together, or drag a box around
 several lines to edit a paragraph. Adjust box dimensions, alignment and line spacing
@@ -38,7 +39,8 @@ paragraph edits; Enter inserts a line break. Overflow blocks application until c
 
 Text wraps within the selected box; it does not reflow the surrounding document,
 and replacement fonts may look different. Objects added with Leaflet can be edited
-again after saving; existing PDF artwork is not automatically converted into objects.
+again after saving. Click existing direct PDF images to select them in the editor;
+images inside groups or clipping scopes and existing vector artwork are not yet editable.
 
 ## Shortcuts
 

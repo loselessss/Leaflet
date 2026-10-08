@@ -2,13 +2,7 @@
 
 ## 1.34.8 - 2026-10-07
 
-### 1.34.7 highlights
-
-- Drag tabs into new windows or merge them into another window. Press Ctrl+Shift+T to reopen closed documents.
-- Preserve fonts, sizes and positions when changing dates or numbers in mixed-format text, and fix false text-box overflow errors.
-- Keep more pages with nested transparency and masks on the GPU.
-
-### 1.34.8 fixes
+### Improvements and fixes
 
 - Refresh the complete window after moving between monitors with different display scaling.
 - Remove unavailable files from Recent Files and Favorites after confirmation, without deleting the original file.

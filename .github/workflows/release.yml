@@ -62,10 +62,13 @@ jobs:
           Copy-Item -LiteralPath $installer -Destination $latestInstaller
           "$hash  Leaflet_Setup_latest.exe" |
             Set-Content -Encoding ascii -LiteralPath "$latestInstaller.sha256"
-          $compatInstaller = "Output\sPDF_Setup_$version.exe"
-          Copy-Item -LiteralPath $installer -Destination $compatInstaller
-          "$hash  sPDF_Setup_$version.exe" |
-            Set-Content -Encoding ascii -LiteralPath "$compatInstaller.sha256"
+
+      - name: Bundle supporting release files
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          python create_release_bundle.py --version $version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Preserve release files as workflow artifact
         uses: actions/upload-artifact@v6
@@ -73,12 +76,7 @@ jobs:
           name: Leaflet-${{ github.ref_name }}-windows
           path: |
             Output/Leaflet_Setup_*.exe
-            Output/Leaflet_Setup_*.exe.sha256
-            Output/sPDF_Setup_*.exe
-            Output/sPDF_Setup_*.exe.sha256
-            Output/Leaflet_Source_*.zip
-            Output/Leaflet_Source_*.zip.sha256
-            Output/Leaflet_Dependency_Sources_*.md
+            Output/Leaflet_Release_Files_*.zip
           compression-level: 0
 
       - name: Publish GitHub release
@@ -90,9 +88,7 @@ jobs:
           $version = $tag.TrimStart("v")
           $installer = "Output\Leaflet_Setup_$version.exe"
           $latestInstaller = "Output\Leaflet_Setup_latest.exe"
-          $compatInstaller = "Output\sPDF_Setup_$version.exe"
-          $sourceArchive = "Output\Leaflet_Source_$version.zip"
-          $dependencySources = "Output\Leaflet_Dependency_Sources_$version.md"
+          $releaseFiles = "Output\Leaflet_Release_Files_$version.zip"
           python release_notes.py --version $version --release-notes RELEASE_NOTES.md --release-notes-ko RELEASE_NOTES.ko.md --output release-notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
@@ -103,11 +99,9 @@ jobs:
             gh release edit $tag --title "Leaflet $version" `
               --notes-file release-notes.md
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $installer $latestInstaller $compatInstaller $sourceArchive `
-              "$sourceArchive.sha256" $dependencySources --clobber
+            gh release upload $tag $installer $latestInstaller $releaseFiles --clobber
           } else {
-            gh release create $tag $installer $latestInstaller $compatInstaller $sourceArchive `
-              "$sourceArchive.sha256" $dependencySources `
+            gh release create $tag $installer $latestInstaller $releaseFiles `
               --verify-tag --title "Leaflet $version" `
               --notes-file release-notes.md
           }

@@ -104,7 +104,8 @@ def tick():
     elif op == "save":
         result["saved"] = tab.save()
     elif op == "save_as":
-        with patch("pdfeditor.annots.QFileDialog.getSaveFileName", return_value=(str(ROOT / "copy.pdf"), "PDF")):
+        with patch("pdfeditor.annots.QFileDialog.getSaveFileName", return_value=(str(ROOT / "copy.pdf"), "PDF")), \
+                patch("pdfeditor.annots.choose_save_options", return_value=(False, False)):
             result["saved"] = tab.save_as_dialog()
     elif op == "checkpoint":
         tab._recovery.checkpoint()

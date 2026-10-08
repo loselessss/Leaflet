@@ -1153,7 +1153,41 @@ class Document:
     # --- 저장 -------------------------------------------------------
 
     @document_write
-    def save_as(self, out_path, backup=True):
+    def save_as(self, out_path, backup=True, *, remove_metadata=False, remove_editing_data=False):
+        """Save atomically, optionally removing document or object metadata."""
+        result = self._save_as_file(out_path, backup, remove_metadata, remove_editing_data)
+        if remove_metadata or remove_editing_data:
+            from .save_options_core import strip_save_information
+            strip_save_information(self._doc, remove_metadata=remove_metadata,
+                                   remove_editing_data=remove_editing_data)
+            if remove_editing_data:
+                self.invalidate_render()
+        return result
+
+    def _write_save_file(self, path, remove_metadata, remove_editing_data):
+        self._doc.save(path, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+        if not (remove_metadata or remove_editing_data):
+            return
+        from .save_options_core import strip_save_information
+        fd, cleaned = tempfile.mkstemp(prefix=".leaflet-clean-", suffix=".pdf",
+                                      dir=os.path.dirname(path))
+        os.close(fd)
+        try:
+            # Sanitize the completed private file, leaving live edits untouched
+            # until the destination transaction has succeeded.
+            pdf = self._open(path, self._password)
+            try:
+                strip_save_information(pdf, remove_metadata=remove_metadata,
+                                       remove_editing_data=remove_editing_data)
+                pdf.save(cleaned, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            finally:
+                pdf.close()
+            os.replace(cleaned, path)
+        finally:
+            if os.path.exists(cleaned):
+                os.unlink(cleaned)
+
+    def _save_as_file(self, out_path, backup, remove_metadata, remove_editing_data):
         """항상 새 파일로 쓴 뒤 교체한다(설계 §4) — 저장 중 죽어도 원본이 남는다.
 
         incremental save는 쓰지 않는다: 원본 파일에 직접 덧쓰기 때문에
@@ -1168,20 +1202,26 @@ class Document:
         if is_eps_document(out_path):
             raise ValueError("EPS 원본에 덮어쓸 수 없습니다. PDF로 저장해 주세요.")
         if getattr(self, "_snapshot", None) is not None:
-            return self._save_isolated(out_path, backup)
+            return self._save_isolated(out_path, backup, remove_metadata, remove_editing_data)
         fd, tmp = tempfile.mkstemp(prefix=".spdf-save-", suffix=".pdf",
                                    dir=os.path.dirname(os.path.abspath(out_path)))
         os.close(fd)
         same_path = os.path.normcase(os.path.abspath(out_path)) == \
             os.path.normcase(os.path.abspath(self.path))
         backup_created = False
+        pending = None
         try:
-            self._doc.save(tmp, garbage=3, deflate=True,
-                           encryption=fitz.PDF_ENCRYPT_KEEP)
+            self._write_save_file(tmp, remove_metadata, remove_editing_data)
             if backup and os.path.exists(out_path):
                 shutil.copy2(out_path, out_path + ".bak")
                 backup_created = True
             if same_path:
+                if remove_metadata or remove_editing_data:
+                    fd, pending = tempfile.mkstemp(prefix=".leaflet-pending-", suffix=".pdf",
+                                                  dir=os.path.dirname(os.path.abspath(out_path)))
+                    os.close(fd)
+                    self._doc.save(pending, garbage=3, deflate=True,
+                                   encryption=fitz.PDF_ENCRYPT_KEEP)
                 self._display_cache.clear()
                 self._gpu_vector_cache.clear()
                 self._gpu_vector_cache_bytes = 0
@@ -1193,7 +1233,7 @@ class Document:
                 if same_path:
                     # Preserve pending edits even when another process keeps the
                     # destination locked. The extra memory is only used on error.
-                    with open(tmp, "rb") as stream:
+                    with open(pending or tmp, "rb") as stream:
                         self._doc = fitz.open("pdf", stream.read())
                     if self._doc.needs_pass:
                         self._doc.authenticate(self._password or "")
@@ -1207,8 +1247,10 @@ class Document:
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
+            if pending is not None and os.path.exists(pending):
+                os.unlink(pending)
 
-    def _save_isolated(self, out_path, backup):
+    def _save_isolated(self, out_path, backup, remove_metadata=False, remove_editing_data=False):
         """No source handle release, no reader handshake, no in-place writes.
 
         Cooperating writers use a nonblocking OS lock. A changed source is a
@@ -1223,7 +1265,7 @@ class Document:
         fd, temporary = tempfile.mkstemp(prefix=".spdf-save-", suffix=".pdf", dir=folder)
         os.close(fd)
         try:
-            self._doc.save(temporary, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            self._write_save_file(temporary, remove_metadata, remove_editing_data)
             # Validate and flush the completed file before touching the target.
             probe = self._open(temporary, self._password)
             try:

@@ -45,6 +45,7 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.dialogs = []
         self.patchers = [patch.object(settings, "PATH", str(root / "settings.json")),
                          patch.object(settings, "_OLD_PATH", str(root / "absent")),
+                         patch.object(settings, "_installer_ui_language", return_value="en"),
                          patch.object(app, "_app_windows", [])]
         for patcher in self.patchers:
             patcher.start()
@@ -301,6 +302,110 @@ class EditorWorkspaceTests(unittest.TestCase):
         count = len(tab._undo_stack)
         controller.apply()
         self.assertEqual(len(tab._undo_stack), count)
+
+    def test_existing_image_selection_numeric_edit_and_undo_redo(self):
+        import fitz
+        from pdfeditor import editor_objects
+        # Populate the original file, so undo also exercises an imported asset.
+        with fitz.open(self.path) as pdf:
+            pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+            pix.clear_with(100)
+            pdf[0].insert_image(fitz.Rect(40, 100, 140, 150), stream=pix.tobytes("png"))
+            pdf.saveIncr()
+        tab = self.open_editor()
+        controller = tab._object_controller
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        point = tab.view.mapFromScene(tab.view._page_transforms[0].map(QPointF(90, 125)))
+        for kind, name in ((QEvent.MouseButtonPress, "mousePressEvent"),
+                           (QEvent.MouseButtonRelease, "mouseReleaseEvent")):
+            tab.view._forward_mouse(name, QMouseEvent(kind, QPointF(point),
+                                   Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        self.assertFalse(controller.active)
+        self.assertTrue(controller.auto_selected)
+        self.assertTrue(tab._edit_mode)
+        controller.refresh()
+        original = list(controller.current()["rect"])
+        controller.fields[0].setValue(25.4)
+        controller.fields[2].setValue(50.8)
+        controller.apply()
+        self.assertIsNotNone(controller.current())
+        self.assertTrue(controller.auto_selected)
+        self.assertAlmostEqual(controller.current()["rect"][0], 72, places=3)
+        self.assertAlmostEqual(fitz.Rect(controller.current()["rect"]).width, 144, places=3)
+        moved = list(controller.current()["rect"])
+        tab.undo()
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], original)
+        tab.redo()
+        self.assertEqual(editor_objects.objects(tab.doc, 0)[0]["rect"], moved)
+        controller.selected = controller.items[0]["id"]
+        controller.refresh()
+        controller.delete()
+        self.assertEqual(len(tab.doc._doc[0].get_image_info()), 0)
+        tab.undo()
+        self.assertEqual(len(tab.doc._doc[0].get_image_info()), 1)
+
+    def test_save_as_cleanup_choices_and_cancel(self):
+        from pdfeditor import editor_objects
+        import fitz
+        tab = self.open_editor()
+        tab.doc._doc.set_metadata({"author": "Private author"})
+        controller = tab._object_controller
+        controller.add("rectangle")
+        target = self.path.with_name("clean-copy.pdf")
+        with patch("pdfeditor.annots.QFileDialog.getSaveFileName", return_value=(str(target), "PDF")), \
+                patch("pdfeditor.annots.choose_save_options", return_value=None):
+            self.assertFalse(tab.save_as_dialog())
+        self.assertFalse(target.exists())
+        self.assertEqual(tab.doc._doc.metadata["author"], "Private author")
+        self.assertTrue(controller.current())
+        with patch("pdfeditor.annots.QFileDialog.getSaveFileName", return_value=(str(target), "PDF")), \
+                patch("pdfeditor.annots.choose_save_options", return_value=(True, True)):
+            self.assertTrue(tab.save_as_dialog())
+        self.assertIsNone(controller.current())
+        self.assertEqual(editor_objects.objects(tab.doc, 0), [])
+        self.assertEqual(tab.doc._doc.metadata["author"], "")
+        with fitz.open(target) as pdf:
+            self.assertEqual(pdf.metadata["author"], "")
+            self.assertEqual(pdf.xref_get_key(pdf[0].xref, "SPDFObjects")[0], "null")
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_automatic_objects_leave_text_and_blank_clicks_to_text_editor(self):
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QMouseEvent
+        import fitz
+        tab = self.open_editor()
+        controller = tab._object_controller
+        # A scan covering the page must not swallow searchable text clicks.
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+        pix.clear_with(100)
+        tab.doc._doc[0].insert_image(tab.doc._doc[0].rect, stream=pix.tobytes("png"))
+        tab.doc.invalidate_render()
+        controller.refresh()
+        text = fitz.Rect(tab._page_spans[0]["bbox"])
+        def press(x, y):
+            point = tab.view.mapFromScene(tab.view._page_transforms[0].map(QPointF(x, y)))
+            return controller.mouse("mousePressEvent", QMouseEvent(
+                QEvent.MouseButtonPress, QPointF(point), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        self.assertFalse(press((text.x0 + text.x1) / 2, (text.y0 + text.y1) / 2))
+        self.assertTrue(press(180, 250))
+        self.assertTrue(controller.auto_selected)
+        self.assertFalse(press((text.x0 + text.x1) / 2, (text.y0 + text.y1) / 2))
+        self.assertIsNone(controller.current())
+        tab._note_mode = True
+        self.assertFalse(press(180, 250))
+        tab._note_mode = False
+        tab.set_edit_mode(False)
+        self.assertTrue(press(180, 250))
+        from PyQt5.QtGui import QKeyEvent
+        controller.preview = fitz.Rect(20, 20, 100, 100)
+        tab.view.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+        self.assertIsNone(controller.preview)
+        point = tab.view.mapFromScene(tab.view._page_transforms[0].map(QPointF(180, 250)))
+        self.assertTrue(controller.mouse("mouseReleaseEvent", QMouseEvent(
+            QEvent.MouseButtonRelease, QPointF(point), Qt.LeftButton, Qt.NoButton, Qt.NoModifier)))
+        tab.set_interaction_mode("hand")
+        self.assertFalse(press(180, 250))
 
     def test_object_drag_preview_cancel_and_commit(self):
         from PyQt5.QtCore import QPointF, QEvent, Qt

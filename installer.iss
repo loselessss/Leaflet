@@ -63,8 +63,6 @@ Name: "associate\defaultpdf"; Description: "설치 후 Leaflet을 기본 PDF 앱
 
 [Files]
 Source: "dist\Leaflet\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Keep existing pinned shortcuts and external launchers working with the new build.
-Source: "dist\Leaflet\Leaflet.exe"; DestDir: "{app}"; DestName: "sPDF.exe"; Flags: ignoreversion
 ; OCR 워커는 Qt DLL과 격리하기 위해 별도 폴더에 (paths.ocr_command 참고)
 Source: "dist\Leaflet-ocr\*"; DestDir: "{app}\ocr"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\spdf_doc.ico"; DestDir: "{app}\assets"; Flags: ignoreversion

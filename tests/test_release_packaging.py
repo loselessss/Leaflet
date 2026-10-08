@@ -131,7 +131,7 @@ class ReleasePackagingTests(unittest.TestCase):
                 self.assertIn(
                     'Type: files; Name: "%s\\%s"' % (target, name), installer)
 
-    def test_installer_registers_pdf_and_illustrator_open_with(self):
+    def test_installer_registers_pdf_illustrator_and_eps_open_with(self):
         installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
         self.assertIn(
             'Subkey: "Software\\Classes\\.pdf\\OpenWithProgids"',
@@ -140,6 +140,14 @@ class ReleasePackagingTests(unittest.TestCase):
             'Subkey: "Software\\Classes\\.ai\\OpenWithProgids"',
             installer)
         self.assertIn('ValueName: ".ai"', installer)
+        self.assertIn(
+            'Subkey: "Software\\Classes\\.eps\\OpenWithProgids"',
+            installer)
+        self.assertIn('ValueName: "{#MyEpsProgId}"', installer)
+        self.assertIn(
+            'Subkey: "Software\\Classes\\{#MyEpsProgId}\\shell\\open\\command"',
+            installer)
+        self.assertIn('ValueName: ".eps"', installer)
 
     def test_app_disables_dialog_context_help_before_startup(self):
         startup = (
