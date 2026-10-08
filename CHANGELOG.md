@@ -2,8 +2,6 @@
 
 ## 1.35.0 - 2026-10-08
 
-Unreleased. Pending changes; the release date will be finalized when publishing.
-
 ### 개선
 
 - Choose whether to remove document metadata and Leaflet object re-editing information when saving as PDF. Both options are off by default and preserve visible content.
@@ -17,7 +15,6 @@ Unreleased. Pending changes; the release date will be finalized when publishing.
 
 - Open files faster when the reader is resident by forwarding launches before GUI initialization and reducing repeated interface translation during tab creation.
 - Reduce installer and MSIX size by omitting unused video libraries, AVIF codecs, Qt web-display components and unused Qt translations while preserving GPU rendering, supported image imports and OCR process isolation.
-- Normalize build dependencies to a single headless OpenCV installation.
 
 ## 1.34.8 - 2026-10-07
 

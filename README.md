@@ -5,8 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Development version: 1.35.0 (unreleased)** · Windows · English and Korean
-Latest published version: 1.34.8.
+**Version: 1.35.0** · Windows · English and Korean
 
 EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html) installed on the PC. Leaflet converts EPS to a private PDF for viewing and editing; save the result as PDF. Ghostscript is not bundled.
 
