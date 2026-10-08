@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.35.0 - 2026-10-08
+
+Unreleased. Pending changes; the release date will be finalized when publishing.
 
 ### 개선
 
