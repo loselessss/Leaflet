@@ -4,6 +4,12 @@ import argparse
 import re
 from pathlib import Path
 
+STORE_URL = "https://apps.microsoft.com/detail/9PCB1BH4WBDT"
+STABLE_CHANNEL_NOTICES = {
+    "en": "For the **stable version**, install Leaflet from [Microsoft Store](%s)." % STORE_URL,
+    "ko": "**안정 버전은 [Microsoft Store](%s)에서 설치하세요.**" % STORE_URL,
+}
+
 
 _RELEASE_HEADING_RE = re.compile(
     r"^## (?P<version>\d+\.\d+\.\d+) - (?P<date>\d{4}-\d{2}-\d{2})\s*$",
@@ -34,6 +40,9 @@ def compose_localized_release_notes(version, english, korean):
     for code, title, changelog in (
             ("en", "English", english), ("ko", "한국어", korean)):
         notes = extract_release_notes(changelog, version).strip()
+        notice = STABLE_CHANNEL_NOTICES[code]
+        if notice not in notes:
+            notes += "\n\n" + notice
         sections.append(
             "## %s\n\n"
             "<!-- spdf-release-notes:start:%s -->\n%s\n"

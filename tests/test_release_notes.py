@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from release_notes import (
+    STABLE_CHANNEL_NOTICES, STORE_URL,
     compose_localized_documents, compose_localized_release_notes,
     extract_release_notes, main)
 
@@ -78,6 +79,23 @@ class ReleaseNotesTests(unittest.TestCase):
             self.assertEqual(
                 output.read_text(encoding="utf-8"),
                 compose_localized_release_notes("1.7.2", SAMPLE_EN, SAMPLE))
+
+    def test_each_version_recommends_store_inside_both_language_sections(self):
+        from pdfeditor.update_service import localized_release_notes
+        for version in ("1.7.2", "1.7.1"):
+            body = compose_localized_documents(version, SAMPLE_EN, SAMPLE)
+            for language in ("en", "ko"):
+                notes = localized_release_notes(body, language)
+                self.assertIn(STABLE_CHANNEL_NOTICES[language], notes)
+                self.assertEqual(notes.count(STORE_URL), 1)
+
+    def test_existing_store_guidance_is_not_duplicated(self):
+        english = SAMPLE_EN.replace("Improved shutdown handling.",
+            "Improved shutdown handling.\n\n" + STABLE_CHANNEL_NOTICES["en"])
+        korean = SAMPLE.replace("종료 처리를 보강했습니다.",
+            "종료 처리를 보강했습니다.\n\n" + STABLE_CHANNEL_NOTICES["ko"])
+        body = compose_localized_documents("1.7.2", english, korean)
+        self.assertEqual(body.count(STORE_URL), 2)
 
     def test_release_documents_exclude_previous_versions(self):
         notes = compose_localized_documents(

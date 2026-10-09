@@ -1,9 +1,11 @@
 # Leaflet Release Notes
 
-## 1.35.1 - Unreleased
+## 1.35.1 - 2026-10-09
 
-- Improve zoom responsiveness on complex GPU-rendered pages with cached transparency groups and progressive sharp tiles, restoring full resolution after zooming stops.
-- Recommend Microsoft Store for the stable version in both READMEs.
+- Improve zoom responsiveness on complex GPU-rendered pages and progressively restore sharp detail after zooming stops.
+- Reuse rendered results across zoom levels and pans, adjusting the GPU cache to available memory to reduce repeated rendering.
+
+For the **stable version**, install Leaflet from [Microsoft Store](https://apps.microsoft.com/detail/9PCB1BH4WBDT).
 
 ## 1.35.0 - 2026-10-08
 

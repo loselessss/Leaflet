@@ -1,21 +1,15 @@
 # Changelog
 
-## 1.35.1 - Unreleased
+## 1.35.1 - 2026-10-09
 
 ### 성능 개선
 
-- Reuse the existing GPU raster during animated zoom on pages with complex transparency instead of repeating composition at every intermediate scale.
-- Keep bounded GPU snapshots of expensive transparency and mask groups, including their backdrop, across nearby zoom scales. Redraw vectors outside those groups at the current scale; edge and interpolation differences are accepted for display.
-- Reduce high-zoom refresh work by cropping display rasters to the viewport with a small pan margin, caching visible group portions with coverage checks, skipping offscreen scopes, and composing source-over-only groups with vector clip/opacity layers instead of temporary backdrop images.
-- Prefer speed when refreshing expensive display groups: compose at 75% linear display density, resample with high-quality cubic interpolation, reuse snapshots up to 2× their stored scale, and share one bounded scratch bitmap. Vectors outside those groups and saved PDF content retain their original rendering.
-- After zoom or pan settles, prepare an exact GPU frame on a separate rendering context and replace the fast display when it is ready. Cancel outdated jobs, share immutable scene resources, and keep one active job plus the latest pending request with bounded viewport-sized results.
-- Prepare full-density GPU composition in 512 px tiles, prioritize the viewport center, and display completed tiles progressively. Cull individual drawing commands using retained bounds, use vector layers for ordinary source-over scopes, and keep a small overlap at tile edges while preserving the fast page until all sharp tiles are ready.
-- Start sharp GPU refinement after 90 ms of inactivity to reduce the wait after zooming stops.
-- Retain transparency snapshots at multiple scales and positions, reuse sharp GPU regions immediately after a pan, and prepare only tiles not covered by earlier frames. Expand the adaptive GPU cache ceiling to 2 GiB when RAM and GPU headroom allow, and trim old results under memory pressure.
+- Improve zoom responsiveness on complex GPU-rendered pages and progressively restore sharp detail after zooming stops.
+- Reuse rendered results across zoom levels and pans, adjusting the GPU cache to available memory to reduce repeated rendering.
 
 ### 기타
 
-- Add the Microsoft Store download link to both READMEs and recommend it for the stable version.
+- Recommend Microsoft Store for the stable version in both READMEs.
 
 ## 1.35.0 - 2026-10-08
 
