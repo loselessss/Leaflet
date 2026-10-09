@@ -171,6 +171,13 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._zoom_animation_position = None
         self._zoom_animation_anchor = None
         self._zoom_animation_started = 0.0
+        self._sharp_refine_timer = QTimer(self)
+        self._sharp_refine_timer.setSingleShot(True)
+        self._sharp_refine_timer.timeout.connect(self._start_sharp_refine)
+        self._sharp_poll_timer = QTimer(self)
+        self._sharp_poll_timer.setInterval(30)
+        self._sharp_poll_timer.timeout.connect(self._poll_sharp_refine)
+        self._sharp_attempted = {}
         self.canvas = _ReaderCanvas(self)
         enable_opengl = opengl_allowed() if use_opengl is None else use_opengl
         render_mode = settings.render_backend() if use_opengl is None else "auto"
@@ -590,6 +597,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._notify_render_device()
 
     def _release_d2d_surface(self, *, disable=False):
+        self._cancel_sharp_refine()
+        self._sharp_attempted.clear()
         for _key, bitmap in tuple(self._d2d_previews.values()):
             bitmap.close()
         for _key, bitmap in tuple(self._d2d_tiles.values()):
@@ -894,10 +903,25 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 page_transform.m21(), page_transform.m22(),
                 page_transform.dx() + viewport_origin.x(),
                 page_transform.dy() + viewport_origin.y())
-            if (self._zoom_animation_timer.isActive() and
-                    self._d2d_surface.draw_scene_preview(retained, transform)):
+            if self._zoom_animation_timer.isActive():
+                if self._d2d_surface.draw_scene_preview(retained, transform):
+                    return
+                # A high-zoom raster may cover only the old viewport. Keep the
+                # full-page preview visible if zooming out exposes new content.
+                if len(draws) >= 256 and page in self._previews:
+                    width, height = self._page_sizes[page]
+                    self._set_page_transform(page_transform)
+                    bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
+                    self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+                    return
+            elif self._d2d_surface.draw_sharp_scene(retained, transform):
                 return
-            self._d2d_surface.draw_scene(retained, transform)
+            self._d2d_surface.draw_scene(retained, transform, reuse_groups=True)
+            if not self._zoom_animation_timer.isActive():
+                self._d2d_surface.draw_sharp_partial(retained, transform)
+            if not self._zoom_animation_timer.isActive() and not self._sharp_poll_timer.isActive():
+                if not self._sharp_refine_timer.isActive():
+                    self._sharp_refine_timer.start(90)
             return
         width, height = self._page_sizes[page]
         self._d2d_surface.fill_rect(0, 0, width, height, 0xffffffff)
@@ -1247,6 +1271,59 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         if progress < 1.0:
             self._zoom_animation_timer.start(ZOOM_ANIMATION_FRAME_MS)
 
+    def _cancel_sharp_refine(self):
+        self._sharp_refine_timer.stop()
+        self._sharp_poll_timer.stop()
+        if self._d2d_surface is not None:
+            cancel = getattr(self._d2d_surface, "cancel_sharp", None)
+            if cancel is not None:
+                cancel()
+
+    def _start_sharp_refine(self):
+        if self._d2d_surface is None or self._document is None or \
+                not self.isVisible() or self._zoom_animation_timer.isActive():
+            return
+        exposed = self._visible_scene_rect()
+        origin = self.mapFromScene(QPointF(0, 0))
+        visible = {page for page, _preview, rect in self.canvas._pages if rect.intersects(exposed)}
+        self._sharp_attempted = {p: key for p, key in self._sharp_attempted.items() if p in visible}
+        for page in sorted(visible):
+            cached = self._d2d_vector_paths.get(page)
+            if cached is None or cached[3] is None:
+                continue
+            matrix = self._page_transforms[page]
+            transform = (matrix.m11(), matrix.m12(), matrix.m21(), matrix.m22(),
+                         matrix.dx() + origin.x(), matrix.dy() + origin.y())
+            retained = cached[3]
+            key = (retained, transform, self._d2d_size)
+            if self._sharp_attempted.get(page) == key:
+                continue
+            self._sharp_attempted[page] = key
+            try:
+                pending = self._d2d_surface.request_sharp_scene(retained, transform)
+            except (OSError, RuntimeError, ValueError):
+                continue  # Keep the fast frame on optional refinement failure.
+            if pending:
+                self._sharp_poll_timer.start()
+                return
+
+    def _poll_sharp_refine(self):
+        if self._d2d_surface is None:
+            self._sharp_poll_timer.stop()
+            return
+        try:
+            status = self._d2d_surface.sharp_status()
+        except (OSError, RuntimeError, ValueError):
+            status = 0
+        if status in (1, 3):
+            if status == 3:
+                self.viewport().update()
+            return
+        self._sharp_poll_timer.stop()
+        if status == 2:
+            self.viewport().update()
+        self._sharp_refine_timer.start(0)
+
     def _visible_scene_rect(self):
         return self.mapToScene(self.viewport().rect()).boundingRect()
 
@@ -1259,6 +1336,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
     def _viewport_moved(self, *_args):
         if self._updating:
             return
+        self._cancel_sharp_refine()
         self._pause_page_prefetch()
         self.viewport().update()
         self.viewport_changed.emit()
@@ -1373,6 +1451,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def stop_rendering(self, *, keep_zoom_animation=False,
                        keep_vector_refine_worker=False):
+        self._cancel_sharp_refine()
         self._page_switch_started = None
         self._prefetch_timer.stop()
         self._gpu_initial_frame_pending = False

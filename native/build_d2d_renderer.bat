@@ -19,5 +19,5 @@ cl /nologo /std:c++17 /EHsc /W4 /WX /O2 /LD /DUNICODE /D_UNICODE ^
   /I"%~dp0d2d_renderer" "%~dp0d2d_renderer\spdf_d2d.cpp" ^
   /link /OUT:"%~dp0bin\spdf_d2d_renderer.dll" ^
   /IMPLIB:"%~dp0bin\spdf_d2d.lib" /PDB:"%~dp0bin\spdf_d2d_renderer.pdb" ^
-  d3d11.lib dxgi.lib d2d1.lib dwrite.lib dxguid.lib
+  d3d11.lib dxgi.lib d2d1.lib dwrite.lib dxguid.lib ole32.lib
 exit /b %errorlevel%

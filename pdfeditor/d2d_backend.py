@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 
-ABI_VERSION = 21
+ABI_VERSION = 24
 DRIVER_NAMES = {0: "none", 1: "hardware", 2: "warp"}
 
 
@@ -178,6 +178,17 @@ def _load_library(path):
     library.spdf_d2d_draw_scene_preview.argtypes = [
         c_void_p, c_void_p, POINTER(_Transform)]
     library.spdf_d2d_draw_scene_preview.restype = c_int32
+    library.spdf_d2d_draw_scene_cached.argtypes = [
+        c_void_p, c_void_p, POINTER(_Transform)]
+    library.spdf_d2d_draw_scene_cached.restype = c_int32
+    for name in ("spdf_d2d_request_sharp", "spdf_d2d_draw_sharp", "spdf_d2d_draw_sharp_partial"):
+        function = getattr(library, name)
+        function.argtypes = [c_void_p, c_void_p, POINTER(_Transform)]
+        function.restype = c_int32
+    library.spdf_d2d_sharp_status.argtypes = [c_void_p]
+    library.spdf_d2d_sharp_status.restype = c_int32
+    library.spdf_d2d_cancel_sharp.argtypes = [c_void_p]
+    library.spdf_d2d_cancel_sharp.restype = None
     library.spdf_d2d_end_frame.argtypes = [c_void_p]
     library.spdf_d2d_end_frame.restype = c_int32
     library.spdf_d2d_destroy_bitmap.argtypes = [c_void_p]
@@ -472,15 +483,50 @@ class D2DSurface:
         _check_hresult(result, "Direct2D zoom preview")
         return result == 0
 
-    def draw_scene(self, scene, transform):
+    def draw_scene(self, scene, transform, *, reuse_groups=False):
+        """Replay at this scale, optionally reusing display-only group snapshots."""
         if self.closed or scene.closed or scene._surface is not self:
             raise ValueError("scene does not belong to this Direct2D surface")
         if len(transform) != 6:
             raise ValueError("invalid Direct2D scene transform")
         native = _Transform(*map(float, transform))
-        _check_hresult(self._library.spdf_d2d_draw_scene(
+        draw = (self._library.spdf_d2d_draw_scene_cached if reuse_groups else
+                self._library.spdf_d2d_draw_scene)
+        _check_hresult(draw(
             self._handle, scene._handle, byref(native)),
             "Direct2D retained scene replay")
+
+    def _sharp_scene_call(self, name, scene, transform):
+        if self.closed or scene.closed or scene._surface is not self:
+            raise ValueError("scene does not belong to this Direct2D surface")
+        if len(transform) != 6:
+            raise ValueError("invalid Direct2D scene transform")
+        native = _Transform(*map(float, transform))
+        result = getattr(self._library, name)(self._handle, scene._handle, byref(native))
+        _check_hresult(result, "Direct2D sharp frame")
+        return result == 0
+
+    def request_sharp_scene(self, scene, transform):
+        """Queue exact GPU composition on a separate context; never wait here."""
+        return self._sharp_scene_call("spdf_d2d_request_sharp", scene, transform)
+
+    def draw_sharp_scene(self, scene, transform):
+        return self._sharp_scene_call("spdf_d2d_draw_sharp", scene, transform)
+
+    def draw_sharp_partial(self, scene, transform):
+        """Overlay completed sharp tiles on the fast page frame."""
+        return self._sharp_scene_call("spdf_d2d_draw_sharp_partial", scene, transform)
+
+    def sharp_status(self):
+        if self.closed:
+            return 0
+        result = self._library.spdf_d2d_sharp_status(self._handle)
+        _check_hresult(result, "Direct2D sharp frame preparation")
+        return result
+
+    def cancel_sharp(self):
+        if not self.closed:
+            self._library.spdf_d2d_cancel_sharp(self._handle)
 
     def begin_frame(self, argb=0xffe8e8e8):
         if self.closed:

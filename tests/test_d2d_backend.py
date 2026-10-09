@@ -2,6 +2,7 @@ import ctypes
 import itertools
 import math
 import os
+import time
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -45,7 +46,7 @@ def pdf_component_blend(mode, backdrop, source):
 
 class D2DBackendTests(unittest.TestCase):
     def test_native_structure_has_stable_abi_layout(self):
-        self.assertEqual(ABI_VERSION, 21)
+        self.assertEqual(ABI_VERSION, 24)
         self.assertEqual(_NativeInfo.adapter_name.offset, 20)
         if os.name == "nt":
             self.assertEqual(ctypes.sizeof(_NativeInfo), 276)
@@ -205,6 +206,188 @@ class D2DBackendTests(unittest.TestCase):
                         surface.draw_scene(cached, (scale, 0, 0, scale, dx, dy))
                         self.assertEqual(surface.read_pixels_bgra(32, 32), results[1])
                         surface.end_frame()
+        finally:
+            user32.DestroyWindow(hwnd)
+
+    @unittest.skipUnless(os.name == "nt", "Direct2D is Windows-only")
+    def test_group_snapshots_preserve_backdrop_alpha_and_live_vectors(self):
+        library = Path(__file__).resolve().parents[1] / "native/bin/spdf_d2d_renderer.dll"
+        if not library.is_file():
+            self.skipTest("native renderer is not built")
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.CreateWindowExW.argtypes = [
+            ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        user32.CreateWindowExW.restype = ctypes.c_void_p
+        user32.DestroyWindow.argtypes = [ctypes.c_void_p]
+        hwnd = user32.CreateWindowExW(0, "STATIC", "group cache test", 0,
+                                     0, 0, 64, 64, None, None, None, None)
+        self.assertTrue(hwnd, ctypes.get_last_error())
+        try:
+            with D2DSurface(hwnd, 64, 64, path=library) as surface:
+                def rect(x0, y0, x1, y1):
+                    return surface.create_path([
+                        ("move", x0, y0), ("line", x1, y0),
+                        ("line", x1, y1), ("line", x0, y1), ("close",)])
+                background = rect(0, 0, 32, 32)
+                content = rect(4, 4, 18, 18)
+                foreground = rect(21.2, 3.2, 23.7, 23.7)
+                operations = (
+                    ("composite_push", 0, .7, False, True),
+                    ("path", background, 0x8000ff00, None, 1, None, None),
+                    ("clip_group_push", content, (1, 0, 0, 1, 0, 0)),
+                    ("composite_mask_begin", (4, 4, 18, 18), False, 0),
+                    ("path", content, 0xaaffffff, None, 1, None, None),
+                    ("composite_mask_end", ()),
+                    ("composite_push", 1, .8, False, True),
+                    ("path", content, 0xffff0000, None, 1, None, None),
+                ) + (("path", content, 0x00000000, None, 1, None, None),) * 64 + (
+                    ("composite_pop", None), ("clip_group_pop", None),
+                    ("clip_group_pop", None),
+                    ("path", foreground, 0xff0000ff, None, 1, None, None),
+                ) + (("path", foreground, 0x00000000, None, 1, None, None),) * 128 + (
+                    ("composite_pop", None),)
+                scene = surface.create_scene(32, 32, operations)
+                for dpi in (96, 144):
+                    surface.resize(64, 64, dpi)
+                    for scale in (1, 1.25, 1.5, 2, .75):
+                        transform = (scale, 0, 0, scale, .25, .5)
+                        results = []
+                        for reuse in (False, True):
+                            surface.begin_frame(0xff123456)
+                            surface.draw_scene(scene, transform, reuse_groups=reuse)
+                            results.append(surface.read_pixels_bgra(64, 64))
+                            surface.end_frame()
+                        if scale in (1, 2):
+                            # Only the expensive group is rendered at reduced
+                            # display density. Edge differences are intentional.
+                            error = [abs(a - b) for a, b in zip(*results)]
+                            self.assertLess(sum(error) / len(error), 1.0, (dpi, scale))
+                        # Interior blend/alpha values must not be applied twice.
+                        ratio = dpi / 96
+                        for x, y in ((10, 10), (22, 10), (28, 10)):
+                            px, py = int((x * scale + .25) * ratio), int((y * scale + .5) * ratio)
+                            if px >= 64 or py >= 64:
+                                continue
+                            offset = (py * 64 + px) * 4
+                            self.assertLessEqual(max(abs(a - b) for a, b in zip(
+                                results[0][offset:offset + 4], results[1][offset:offset + 4])), 2)
+                        # The narrow foreground vector stays at the new scale.
+                        x0 = int((20 * scale + .25) * ratio)
+                        x1 = min(64, int((25 * scale + .25) * ratio))
+                        y = int((10 * scale + .5) * ratio)
+                        self.assertEqual(results[0][(y * 64 + x0) * 4:(y * 64 + x1) * 4],
+                                         results[1][(y * 64 + x0) * 4:(y * 64 + x1) * 4])
+                    # Pan at high zoom beyond the first cached viewport. New
+                    # content must be rendered rather than sampling empty space.
+                    for dx in (0, -32, -64, 0):
+                        results = []
+                        for reuse in (False, True):
+                            surface.begin_frame(0xff123456)
+                            surface.draw_scene(scene, (4, 0, 0, 4, dx, -8), reuse_groups=reuse)
+                            results.append(surface.read_pixels_bgra(64, 64))
+                            surface.end_frame()
+                        error = [abs(a - b) for a, b in zip(*results)]
+                        self.assertLess(sum(error) / len(error), 1.0, (dpi, dx))
+                    partial = surface.create_scene(32, 32, operations)
+                    surface.begin_frame()
+                    surface.draw_scene(partial, (4, 0, 0, 4, 0, 0), reuse_groups=True)
+                    surface.end_frame()
+                    surface.begin_frame()
+                    self.assertFalse(surface.draw_scene_preview(partial, (1, 0, 0, 1, 0, 0)))
+                    surface.end_frame()
+                simple = surface.create_scene(32, 32, (
+                    ("composite_push", 0, .5, False, True),
+                    ("clip_group_push", content, (1, 0, 0, 1, 0, 0)),
+                    ("composite_push", 0, 1, False, True),
+                    ("path", background, 0x80ff0000, None, 1, None, None),
+                    ("composite_pop", None),
+                    ("clip_group_pop", None),
+                    ("composite_pop", None)))
+                for dpi in (96, 144):
+                    surface.resize(64, 64, dpi)
+                    results = []
+                    for reuse in (False, True):
+                        surface.begin_frame()
+                        surface.draw_scene(simple, (1.25, 0, 0, 1.25, .25, .5), reuse_groups=reuse)
+                        results.append(surface.read_pixels_bgra(64, 64))
+                        surface.end_frame()
+                    error = [abs(a - b) for a, b in zip(*results)]
+                    self.assertLessEqual(max(error), 16)
+                    self.assertLess(sum(error) / len(error), .25)
+                # Completed asynchronous frames recover the original pixel
+                # quality, including fractional origins, HiDPI and rotation.
+                for dpi in (96, 144):
+                    surface.resize(64, 64, dpi)
+                    for transform in ((1.25, 0, 0, 1.25, .25, .5),
+                                      (0, 1.25, -1.25, 0, 42.25, .5)):
+                        surface.begin_frame(0xff123456)
+                        surface.draw_scene(scene, transform)
+                        reference = surface.read_pixels_bgra(64, 64)
+                        surface.end_frame()
+                        self.assertTrue(surface.request_sharp_scene(scene, transform))
+                        deadline = time.monotonic() + 10
+                        while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertEqual(surface.sharp_status(), 2)
+                        surface.begin_frame(0xff123456)
+                        self.assertTrue(surface.draw_sharp_scene(scene, transform))
+                        refined = surface.read_pixels_bgra(64, 64)
+                        self.assertFalse(surface.draw_sharp_scene(scene,
+                            (transform[0] * 2, transform[1] * 2, transform[2] * 2,
+                             transform[3] * 2, transform[4], transform[5])))
+                        surface.end_frame()
+                        error = [abs(a - b) for a, b in zip(reference, refined)]
+                        self.assertLess(sum(error) / len(error), .25)
+                # Multiple tile interiors/gutters must preserve original
+                # composition across physical tile boundaries at either DPI.
+                for dpi in (96, 144):
+                    surface.resize(1200, 900, dpi)
+                    for transform in ((20, 0, 0, 20, .25, -5.5),
+                                      (0, 20, -20, 0, 700.25, -5.5)):
+                        surface.begin_frame(0xff123456)
+                        surface.draw_scene(scene, transform)
+                        reference = surface.read_pixels_bgra(1200, 900)
+                        surface.end_frame()
+                        self.assertTrue(surface.request_sharp_scene(scene, transform))
+                        deadline = time.monotonic() + 10
+                        while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertEqual(surface.sharp_status(), 2)
+                        surface.begin_frame(0xff123456)
+                        self.assertTrue(surface.draw_sharp_scene(scene, transform))
+                        refined = surface.read_pixels_bgra(1200, 900)
+                        surface.end_frame()
+                        error = [abs(a - b) for a, b in zip(reference, refined)]
+                        self.assertLess(sum(error) / len(error), .25)
+                        for x in (344, 856):
+                            band = [error[(y * 1200 + col) * 4 + channel]
+                                    for y in range(900) for col in range(x - 2, x + 3)
+                                    for channel in range(4)]
+                            self.assertLess(sum(band) / len(band), .25)
+                        for y in (194, 706):
+                            band = error[((y - 2) * 1200) * 4:((y + 3) * 1200) * 4]
+                            self.assertLess(sum(band) / len(band), .25)
+                self.assertTrue(surface.request_sharp_scene(scene, (2.25, 0, 0, 2.25, 0, 0)))
+                surface.resize(256, 256, 144)
+                self.assertTrue(surface.request_sharp_scene(scene, (2.25, 0, 0, 2.25, 0, 0)))
+                deadline = time.monotonic() + 10
+                while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                    time.sleep(.005)
+                self.assertEqual(surface.sharp_status(), 2)
+                surface.begin_frame()
+                self.assertTrue(surface.draw_sharp_scene(scene, (2.25, 0, 0, 2.25, 0, 0)))
+                surface.end_frame()
+                self.assertTrue(surface.request_sharp_scene(scene, (2.5, 0, 0, 2.5, 0, 0)))
+                surface.cancel_sharp()
+                self.assertEqual(surface.sharp_status(), 0)
+                # Closing immutable original resources must not invalidate the
+                # clone already queued on the worker context.
+                temporary = surface.create_scene(32, 32, operations)
+                self.assertTrue(surface.request_sharp_scene(temporary, (2, 0, 0, 2, 0, 0)))
+                temporary.close()
+                self.assertEqual(surface.sharp_status(), 0)
         finally:
             user32.DestroyWindow(hwnd)
 

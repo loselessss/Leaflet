@@ -3,13 +3,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cfloat>
 #include <cstring>
 #include <iterator>
 #include <memory>
 #include <new>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 
 #include <d2d1_1.h>
 #include <d2d1_2.h>
@@ -27,6 +33,12 @@ using Microsoft::WRL::ComPtr;
 namespace {
 
 struct Scene;
+struct SharpJob;
+struct SharpQueue;
+
+// Display-only quality policy. Normal vectors still use the display's density.
+constexpr float GROUP_RASTER_DENSITY = 0.75f;
+constexpr float GROUP_RASTER_SCALE_LIMIT = 2.0f;
 
 HRESULT create_d3d_device(
     D3D_DRIVER_TYPE driver_type,
@@ -102,6 +114,7 @@ void set_adapter_name(ID3D11Device* device, SpdfD2DInfo* info) noexcept {
 
 class Surface {
 public:
+    ~Surface();
     struct Bitmap {
         Surface* owner;
         ComPtr<ID2D1Bitmap1> resource;
@@ -154,7 +167,7 @@ public:
 
         D2D1_FACTORY_OPTIONS options{};
         result = D2D1CreateFactory(
-            D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            D2D1_FACTORY_TYPE_MULTI_THREADED,
             __uuidof(ID2D1Factory1),
             &options,
             reinterpret_cast<void**>(d2d_factory_.GetAddressOf()));
@@ -171,6 +184,7 @@ public:
             return result;
         }
         configure_antialiasing();
+        d2d_factory_.As(&multithread_);
         // Geometry realizations cache tessellation for repeated zoom/pan frames.
         // They are optional and FillGeometry remains the compatibility path.
         d2d_context_.As(&d2d_context1_);
@@ -214,8 +228,10 @@ public:
         }
         d2d_context_->SetTarget(nullptr);
         target_.Reset();
+        if (multithread_) multithread_->Enter();
         const auto result = swap_chain_->ResizeBuffers(
             0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+        if (multithread_) multithread_->Leave();
         if (FAILED(result)) {
             return result;
         }
@@ -1458,7 +1474,7 @@ public:
     }
 
     HRESULT end_frame() noexcept {
-        if (!d2d_context_ || !swap_chain_ || !drawing_) {
+        if (!d2d_context_ || !drawing_) {
             return E_UNEXPECTED;
         }
         if (!composite_captures_.empty()) {
@@ -1505,6 +1521,7 @@ public:
         drawing_ = false;
         auto result = d2d_context_->EndDraw();
         if (result == D2DERR_RECREATE_TARGET) {
+            if (!swap_chain_) return result;
             d2d_context_->SetTarget(nullptr);
             target_.Reset();
             result = create_target();
@@ -1516,7 +1533,13 @@ public:
         if (FAILED(result)) {
             return result;
         }
-        return swap_chain_->Present(1, 0);
+        if (!swap_chain_) return S_OK;
+        if (multithread_) multithread_->Enter();
+        // Do not hold the factory-wide resource lock for a full vsync while
+        // another context is trying to finish the exact frame.
+        result = swap_chain_->Present(sharp_pending() ? 0 : 1, 0);
+        if (multithread_) multithread_->Leave();
+        return result;
     }
 
     HRESULT begin_scene_recording(
@@ -1558,10 +1581,83 @@ public:
         return S_OK;
     }
 
-    HRESULT draw_cached_scene(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_cached_scene(Scene* scene, const SpdfD2DTransform& transform,
+        bool reuse_groups = false) noexcept;
     HRESULT draw_scene_preview(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_group_raster(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_group_coarse(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& transform) noexcept;
+    void cache_group_raster(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& transform, const D2D1_RECT_F& bounds) noexcept;
+    bool group_visible(const D2D1_RECT_F& bounds, const SpdfD2DTransform& transform) noexcept;
+    bool command_visible(const D2D1_RECT_F& bounds, const SpdfD2DTransform& t) const noexcept {
+        const auto x1 = bounds.left * t.m11 + bounds.top * t.m21 + t.dx;
+        const auto y1 = bounds.left * t.m12 + bounds.top * t.m22 + t.dy;
+        const auto x2 = bounds.right * t.m11 + bounds.top * t.m21 + t.dx;
+        const auto y2 = bounds.right * t.m12 + bounds.top * t.m22 + t.dy;
+        const auto x3 = bounds.left * t.m11 + bounds.bottom * t.m21 + t.dx;
+        const auto y3 = bounds.left * t.m12 + bounds.bottom * t.m22 + t.dy;
+        const auto x4 = bounds.right * t.m11 + bounds.bottom * t.m21 + t.dx;
+        const auto y4 = bounds.right * t.m12 + bounds.bottom * t.m22 + t.dy;
+        const auto size = worker_target_size_;
+        const auto border = 2.0f * 96 / dpi_;
+        return (std::max)({x1, x2, x3, x4}) >= -border &&
+            (std::max)({y1, y2, y3, y4}) >= -border &&
+            (std::min)({x1, x2, x3, x4}) <= size.width + border &&
+            (std::min)({y1, y2, y3, y4}) <= size.height + border;
+    }
+    bool covers_visible(const D2D1_RECT_F& coverage, const D2D1_RECT_F& bounds,
+        const SpdfD2DTransform& transform) noexcept;
+    HRESULT request_sharp(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_sharp(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    HRESULT draw_sharp_partial(Scene* scene, const SpdfD2DTransform& transform) noexcept;
+    std::int32_t sharp_status() noexcept;
+    void cancel_sharp() noexcept;
+    bool refining() const noexcept { return static_cast<bool>(cancel_token_); }
+    bool cancelled() const noexcept { return cancel_token_ && cancel_token_->load(); }
+    HRESULT initialize_worker(const Surface& parent, UINT32 width, UINT32 height) noexcept {
+        d3d_device_ = parent.d3d_device_;
+        dxgi_device_ = parent.dxgi_device_;
+        d2d_factory_ = parent.d2d_factory_;
+        d2d_device_ = parent.d2d_device_;
+        dwrite_factory_ = parent.dwrite_factory_;
+        luminosity_lut_ = parent.luminosity_lut_;
+        dpi_ = parent.dpi_;
+        auto result = d2d_device_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2d_context_);
+        if (FAILED(result)) return result;
+        d2d_context_.As(&d2d_context1_);
+        d2d_context_->SetDpi(dpi_, dpi_);
+        configure_antialiasing();
+        return prepare_worker_target(width, height);
+    }
+    HRESULT prepare_worker_target(UINT32 width, UINT32 height) noexcept {
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+        target_.Reset();
+        const auto result = d2d_context_->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &target_);
+        if (FAILED(result)) return result;
+        worker_target_size_ = D2D1::SizeF(width * 96 / dpi_, height * 96 / dpi_);
+        d2d_context_->SetTarget(target_.Get());
+        d2d_context_->SetDpi(dpi_, dpi_);
+        configure_antialiasing();
+        return S_OK;
+    }
+    HRESULT finish_worker(ID2D1Bitmap1** bitmap) noexcept {
+        const auto result = end_frame();
+        d2d_context_->SetTarget(nullptr);
+        if (SUCCEEDED(result)) target_.CopyTo(bitmap);
+        return result;
+    }
+    void set_cancel_token(std::shared_ptr<std::atomic<bool>> token) { cancel_token_ = std::move(token); }
 
 private:
+    bool sharp_pending() const noexcept;
+    bool import_sharp() noexcept;
+    std::shared_ptr<SharpQueue> sharp_queue_;
+    std::shared_ptr<SharpJob> sharp_job_;
+    std::shared_ptr<std::atomic<bool>> cancel_token_;
+    D2D1_SIZE_F worker_target_size_{};
     std::uint64_t scene_cache_budget() noexcept {
         const auto now = GetTickCount64();
         if (budget_sampled_ && now - budget_sampled_ < 1000) return raster_budget_;
@@ -1593,14 +1689,19 @@ private:
     std::uint64_t budget_sampled_ = 0;
     std::uint64_t raster_budget_ = 128ULL * 1024 * 1024;
     struct SceneRaster {
-        std::shared_ptr<char> identity;
+        std::weak_ptr<char> identity;
         ComPtr<ID2D1Bitmap1> bitmap;
         SpdfD2DTransform transform{};
         float dpi = 96.0f;
         std::uint64_t bytes = 0;
         std::uint64_t used = 0;
+        std::size_t command_index = SIZE_MAX;
+        bool approximate = false;
+        D2D1_RECT_F coverage{};
+        bool sharp = false;
     };
     std::vector<SceneRaster> scene_rasters_;
+    ComPtr<ID2D1Bitmap1> group_scratch_;
     std::uint64_t raster_clock_ = 0;
     struct CompositeCapture {
         ComPtr<ID2D1Bitmap1> previous;
@@ -1730,6 +1831,7 @@ private:
     ComPtr<IDXGIFactory2> dxgi_factory_;
     ComPtr<IDXGISwapChain1> swap_chain_;
     ComPtr<ID2D1Factory1> d2d_factory_;
+    ComPtr<ID2D1Multithread> multithread_;
     ComPtr<ID2D1Device> d2d_device_;
     ComPtr<ID2D1DeviceContext> d2d_context_;
     ComPtr<ID2D1DeviceContext1> d2d_context1_;
@@ -1761,8 +1863,19 @@ struct Scene {
     Surface* owner = nullptr;
     std::shared_ptr<char> identity = std::make_shared<char>();
     std::vector<SceneCommand> commands;
+    std::vector<D2D1_RECT_F> command_bounds;
     ComPtr<ID2D1CommandList> display_list;
     bool recordable = true;
+    struct RasterGroup {
+        std::size_t end = 0;
+        D2D1_RECT_F bounds{};
+    };
+    std::unordered_map<std::size_t, RasterGroup> raster_groups;
+    std::unordered_map<std::size_t, RasterGroup> scopes;
+    std::unordered_set<std::size_t> simple_scopes;
+    std::unordered_set<std::size_t> simple_ends;
+    std::unordered_set<std::size_t> noop_scopes;
+    std::unordered_set<std::size_t> noop_ends;
 };
 
 D2D1_MATRIX_3X2_F compose_transform(
@@ -1777,10 +1890,159 @@ D2D1_MATRIX_3X2_F compose_transform(
         page.m12 * item.dx + page.m22 * item.dy + page.dy);
 }
 
+D2D1_RECT_F transformed_rect(const D2D1_RECT_F& rect,
+        const D2D1_MATRIX_3X2_F& matrix) noexcept {
+    const D2D1_POINT_2F corners[] = {
+        {rect.left, rect.top}, {rect.right, rect.top},
+        {rect.left, rect.bottom}, {rect.right, rect.bottom}};
+    auto bounds = D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (const auto& point : corners) {
+        const auto x = point.x * matrix._11 + point.y * matrix._21 + matrix._31;
+        const auto y = point.x * matrix._12 + point.y * matrix._22 + matrix._32;
+        bounds.left = (std::min)(bounds.left, x);
+        bounds.top = (std::min)(bounds.top, y);
+        bounds.right = (std::max)(bounds.right, x);
+        bounds.bottom = (std::max)(bounds.bottom, y);
+    }
+    return bounds;
+}
+
+// Keep ordinary text/vector commands live. Select disjoint expensive scopes;
+// their immutable backdrop is included in each snapshot, preserving blend order.
+void prepare_raster_groups(Scene* scene) {
+    struct Scope {
+        std::size_t first;
+        bool complex = false;
+        bool valid = true;
+        bool simple = true;
+        D2D1_RECT_F bounds = D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+    };
+    std::vector<Scope> stack;
+    scene->command_bounds.resize(scene->commands.size(), D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX));
+    std::vector<std::pair<std::size_t, Scene::RasterGroup>> groups;
+    const auto include = [](D2D1_RECT_F& a, const D2D1_RECT_F& b) {
+        a.left = (std::min)(a.left, b.left);
+        a.top = (std::min)(a.top, b.top);
+        a.right = (std::max)(a.right, b.right);
+        a.bottom = (std::max)(a.bottom, b.bottom);
+    };
+    for (std::size_t index = 0; index < scene->commands.size(); ++index) {
+        const auto& command = scene->commands[index].command;
+        const auto type = command.type;
+        const bool complex = type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
+            type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
+            type == SPDF_D2D_SCENE_MASK_BEGIN || type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN;
+        if (complex || type == SPDF_D2D_SCENE_CLIP_PUSH ||
+                type == SPDF_D2D_SCENE_RECT_CLIP_PUSH || type == SPDF_D2D_SCENE_OPACITY_PUSH) {
+            auto scope = Scope{index, complex};
+            scope.simple = type != SPDF_D2D_SCENE_MASK_BEGIN &&
+                type != SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN &&
+                (type != SPDF_D2D_SCENE_COMPOSITE_PUSH ||
+                    (command.uint_values[0] == 0 && command.uint_values[1] == 0));
+            stack.push_back(scope);
+            continue;
+        }
+        if (type == SPDF_D2D_SCENE_CLIP_POP || type == SPDF_D2D_SCENE_RECT_CLIP_POP ||
+                type == SPDF_D2D_SCENE_LAYER_POP || type == SPDF_D2D_SCENE_COMPOSITE_POP ||
+                type == SPDF_D2D_SCENE_CLIP_GROUP_POP) {
+            if (stack.empty()) { scene->raster_groups.clear(); return; }
+            auto scope = stack.back();
+            stack.pop_back();
+            const auto& start = scene->commands[scope.first].command;
+            const auto matrix = (start.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)
+                ? compose_transform({1, 0, 0, 1, 0, 0}, start.transform)
+                : D2D1::Matrix3x2F::Identity();
+            D2D1_RECT_F clip{};
+            bool clipped = false;
+            if (start.type == SPDF_D2D_SCENE_CLIP_PUSH || start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH) {
+                clipped = SUCCEEDED(static_cast<Surface::Path*>(start.resource)->resource->GetBounds(&matrix, &clip));
+                if (!clipped) scope.valid = false;
+            } else if (start.type == SPDF_D2D_SCENE_RECT_CLIP_PUSH ||
+                    start.type == SPDF_D2D_SCENE_MASK_BEGIN || start.type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN) {
+                clip = transformed_rect(D2D1::RectF(start.values[0], start.values[1],
+                    start.values[2], start.values[3]), matrix);
+                clipped = true;
+            }
+            if (clipped) {
+                scope.bounds.left = (std::max)(scope.bounds.left, clip.left);
+                scope.bounds.top = (std::max)(scope.bounds.top, clip.top);
+                scope.bounds.right = (std::min)(scope.bounds.right, clip.right);
+                scope.bounds.bottom = (std::min)(scope.bounds.bottom, clip.bottom);
+            }
+            if (!stack.empty()) {
+                stack.back().complex |= scope.complex;
+                stack.back().valid &= scope.valid;
+                stack.back().simple &= scope.simple;
+                if (scope.bounds.right > scope.bounds.left && scope.bounds.bottom > scope.bounds.top)
+                    include(stack.back().bounds, scope.bounds);
+            }
+            // Avoid baking an entire page's text into a single group image.
+            if (scope.valid && scope.bounds.right > scope.bounds.left &&
+                    scope.bounds.bottom > scope.bounds.top && std::isfinite(scope.bounds.left) &&
+                    std::isfinite(scope.bounds.top) && std::isfinite(scope.bounds.right) &&
+                    std::isfinite(scope.bounds.bottom))
+                scene->scopes.emplace(scope.first, Scene::RasterGroup{index, scope.bounds});
+            if (scope.valid && scope.simple && (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
+                    start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH)) {
+                scene->simple_scopes.insert(scope.first);
+                scene->simple_ends.insert(index);
+                if (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH && start.values[0] == 1.0f) {
+                    scene->noop_scopes.insert(scope.first);
+                    scene->noop_ends.insert(index);
+                }
+            }
+            if (scope.valid && scope.complex && index - scope.first >= 63 &&
+                    (index - scope.first + 1) * 4 < scene->commands.size() * 3 &&
+                    scope.bounds.right > scope.bounds.left && scope.bounds.bottom > scope.bounds.top &&
+                    std::isfinite(scope.bounds.left) && std::isfinite(scope.bounds.top) &&
+                    std::isfinite(scope.bounds.right) && std::isfinite(scope.bounds.bottom))
+                groups.push_back({scope.first, {index, scope.bounds}});
+            continue;
+        }
+        if (type == SPDF_D2D_SCENE_MASK_END ||
+                type == SPDF_D2D_SCENE_COMPOSITE_MASK_END) continue;
+        const auto matrix = (command.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)
+            ? compose_transform({1, 0, 0, 1, 0, 0}, command.transform)
+            : D2D1::Matrix3x2F::Identity();
+        D2D1_RECT_F bounds{};
+        HRESULT result = S_OK;
+        if (type == SPDF_D2D_SCENE_PATH_FILL || type == SPDF_D2D_SCENE_LINEAR_GRADIENT ||
+                type == SPDF_D2D_SCENE_RADIAL_GRADIENT || type == SPDF_D2D_SCENE_PATH_STROKE) {
+            const auto path = static_cast<Surface::Path*>(command.resource);
+            result = type == SPDF_D2D_SCENE_PATH_STROKE
+                ? path->resource->GetWidenedBounds(command.values[0], command.stroke_style
+                    ? static_cast<Surface::StrokeStyle*>(command.stroke_style)->resource.Get() : nullptr,
+                    &matrix, .25f, &bounds)
+                : path->resource->GetBounds(&matrix, &bounds);
+        } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_FILL_RECT) {
+            bounds = transformed_rect(D2D1::RectF(command.values[0], command.values[1],
+                command.values[2], command.values[3]), matrix);
+        } else { if (!stack.empty()) stack.back().valid = false; continue; }
+        if (FAILED(result) || !std::isfinite(bounds.left) || !std::isfinite(bounds.top) ||
+                !std::isfinite(bounds.right) || !std::isfinite(bounds.bottom)) {
+            if (!stack.empty()) stack.back().valid = false;
+        } else {
+            scene->command_bounds[index] = bounds;
+            if (!stack.empty()) include(stack.back().bounds, bounds);
+        }
+    }
+    if (!stack.empty()) return;
+    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::size_t next = 0;
+    for (const auto& group : groups) {
+        if (group.first < next) continue;
+        scene->raster_groups.emplace(group);
+        next = group.second.end + 1;
+    }
+}
+
 HRESULT replay_scene(
     Surface* surface,
     Scene* scene,
-    const SpdfD2DTransform& page) noexcept {
+    const SpdfD2DTransform& page,
+    bool reuse_groups = false,
+    std::size_t first = 0,
+    std::size_t last = SIZE_MAX) noexcept {
     if (surface == nullptr || scene == nullptr || scene->owner != surface) {
         return E_INVALIDARG;
     }
@@ -1792,9 +2054,65 @@ HRESULT replay_scene(
         return surface->set_transform(
             matrix._11, matrix._12, matrix._21, matrix._22, matrix._31, matrix._32);
     };
-    for (const auto& stored : scene->commands) {
+    last = (std::min)(last, scene->commands.size());
+    for (auto index = first; index < last; ++index) {
+        if ((index & 63) == 0 && surface->cancelled()) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+        if (surface->refining() && index < scene->command_bounds.size()) {
+            const auto& bounds = scene->command_bounds[index];
+            if (bounds.left <= bounds.right && bounds.top <= bounds.bottom &&
+                    !surface->command_visible(bounds, page)) continue;
+        }
+        if (reuse_groups || surface->refining()) {
+            const auto scope = scene->scopes.find(index);
+            if (scope != scene->scopes.end() &&
+                    !(surface->refining() ? surface->command_visible(scope->second.bounds, page)
+                        : surface->group_visible(scope->second.bounds, page))) {
+                index = scope->second.end;
+                continue;
+            }
+        }
+        const auto group = reuse_groups && !scene->simple_scopes.count(index)
+            ? scene->raster_groups.find(index)
+            : scene->raster_groups.end();
+        if (group != scene->raster_groups.end()) {
+            auto result = surface->draw_group_raster(scene, index, page);
+            if (FAILED(result)) return result;
+            if (result == S_FALSE) {
+                result = surface->draw_group_coarse(scene, index, page);
+                if (FAILED(result)) return result;
+            }
+            if (result == S_FALSE) {
+                // Cull invisible nested scopes even when refreshing this group.
+                // Start after its opener to avoid selecting the same cache again.
+                result = replay_scene(surface, scene, page, false, index, index + 1);
+                if (SUCCEEDED(result)) result = replay_scene(surface, scene, page, true,
+                    index + 1, group->second.end + 1);
+                if (FAILED(result)) return result;
+                surface->cache_group_raster(scene, index, page, group->second.bounds);
+            }
+            index = group->second.end;
+            continue;
+        }
+        const auto& stored = scene->commands[index];
         const auto& command = stored.command;
         HRESULT result = S_OK;
+        const bool vector_scopes = reuse_groups || surface->refining();
+        if (vector_scopes && (scene->noop_scopes.count(index) || scene->noop_ends.count(index))) continue;
+        // Source-over-only scopes need no backdrop capture or Flush. Use the
+        // normal GPU vector clip/opacity layer, including nested simple scopes.
+        if (vector_scopes && scene->simple_scopes.count(index)) {
+            result = set_item_transform(command);
+            if (SUCCEEDED(result)) result = command.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH
+                ? surface->push_clip_path(static_cast<Surface::Path*>(command.resource))
+                : surface->push_opacity_layer(command.values[0]);
+            if (FAILED(result)) return result;
+            continue;
+        }
+        if (vector_scopes && scene->simple_ends.count(index)) {
+            result = surface->pop_layer();
+            if (FAILED(result)) return result;
+            continue;
+        }
         switch (command.type) {
         case SPDF_D2D_SCENE_FILL_RECT:
             result = set_item_transform(command);
@@ -1909,7 +2227,202 @@ HRESULT replay_scene(
     return surface->set_transform(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
 }
 
+bool Surface::group_visible(const D2D1_RECT_F& bounds, const SpdfD2DTransform& t) noexcept {
+    if (FAILED(set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy))) return true;
+    D2D1_MATRIX_3X2_F matrix;
+    d2d_context_->GetTransform(&matrix);
+    const auto area = transformed_rect(bounds, matrix);
+    ComPtr<ID2D1Image> target;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    d2d_context_->GetTarget(&target);
+    if (FAILED(target.As(&bitmap))) return true;
+    const auto size = bitmap->GetSize();
+    const auto border = 2.0f * 96 / dpi_;
+    return area.right >= -border && area.bottom >= -border &&
+        area.left <= size.width + border && area.top <= size.height + border;
+}
+
+bool Surface::covers_visible(const D2D1_RECT_F& coverage, const D2D1_RECT_F& bounds,
+        const SpdfD2DTransform& t) noexcept {
+    if (FAILED(set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy))) return false;
+    D2D1_MATRIX_3X2_F matrix;
+    d2d_context_->GetTransform(&matrix);
+    auto desired = transformed_rect(bounds, matrix);
+    const auto stored = transformed_rect(coverage, matrix);
+    ComPtr<ID2D1Image> target;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    d2d_context_->GetTarget(&target);
+    if (FAILED(target.As(&bitmap))) return false;
+    const auto size = bitmap->GetSize();
+    desired.left = (std::max)(0.0f, desired.left);
+    desired.top = (std::max)(0.0f, desired.top);
+    desired.right = (std::min)(size.width, desired.right);
+    desired.bottom = (std::min)(size.height, desired.bottom);
+    return stored.left <= desired.left && stored.top <= desired.top &&
+        stored.right >= desired.right && stored.bottom >= desired.bottom;
+}
+
 // Animated zoom can temporarily rescale an existing complex-page raster.
+HRESULT Surface::draw_group_raster(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& t) noexcept {
+    if (t.m12 != 0 || t.m21 != 0 || t.m11 <= 0 || t.m22 <= 0 ||
+            !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
+            !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
+            layer_depth_ || axis_clip_depth_ || !mask_captures_.empty()) return S_FALSE;
+    for (auto& cached : scene_rasters_) {
+        if (cached.command_index != index || cached.identity.lock() != scene->identity ||
+                cached.dpi != dpi_ || t.m11 > cached.transform.m11 * GROUP_RASTER_SCALE_LIMIT ||
+                t.m22 > cached.transform.m22 * GROUP_RASTER_SCALE_LIMIT) continue;
+        if (!covers_visible(cached.coverage, scene->raster_groups.at(index).bounds, t)) continue;
+        const auto sx = t.m11 / cached.transform.m11;
+        const auto sy = t.m22 / cached.transform.m22;
+        auto result = set_transform(sx, 0, 0, sy,
+            t.dx - cached.transform.dx * sx, t.dy - cached.transform.dy * sy);
+        if (FAILED(result)) return result;
+        const auto blend = d2d_context_->GetPrimitiveBlend();
+        // The snapshot includes its backdrop, so translucent pixels replace
+        // the previous result rather than applying its alpha a second time.
+        d2d_context_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
+        d2d_context_->DrawBitmap(cached.bitmap.Get(), nullptr, 1.0f,
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        d2d_context_->SetPrimitiveBlend(blend);
+        cached.used = ++raster_clock_;
+        return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+    }
+    return S_FALSE;
+}
+
+void Surface::cache_group_raster(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& t, const D2D1_RECT_F& bounds) noexcept {
+    if (t.m12 != 0 || t.m21 != 0 || t.m11 <= 0 || t.m22 <= 0 ||
+            !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
+            !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
+            layer_depth_ || axis_clip_depth_ || !mask_captures_.empty()) return;
+    if (FAILED(set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy))) return;
+    D2D1_MATRIX_3X2_F matrix;
+    d2d_context_->GetTransform(&matrix);
+    auto area = transformed_rect(bounds, matrix);
+    if (!std::isfinite(area.left) || !std::isfinite(area.top) ||
+            !std::isfinite(area.right) || !std::isfinite(area.bottom)) return;
+    ComPtr<ID2D1Image> target;
+    ComPtr<ID2D1Bitmap1> source;
+    d2d_context_->GetTarget(&target);
+    if (FAILED(target.As(&source))) return;
+    const auto dimensions = source->GetPixelSize();
+    const auto size = source->GetSize();
+    // Store only the visible portion, with explicit page-space coverage so a
+    // later pan or scale never treats missing pixels as a complete group.
+    area.left = (std::max)(0.0f, area.left);
+    area.top = (std::max)(0.0f, area.top);
+    area.right = (std::min)(size.width, area.right);
+    area.bottom = (std::min)(size.height, area.bottom);
+    if (area.right <= area.left || area.bottom <= area.top) return;
+    const auto ratio = dpi_ / 96.0f;
+    const auto left = (std::max)(0, static_cast<int>(std::floor(area.left * ratio)) - 2);
+    const auto top = (std::max)(0, static_cast<int>(std::floor(area.top * ratio)) - 2);
+    const auto right = (std::min)(static_cast<int>(dimensions.width), static_cast<int>(std::ceil(area.right * ratio)) + 2);
+    const auto bottom = (std::min)(static_cast<int>(dimensions.height), static_cast<int>(std::ceil(area.bottom * ratio)) + 2);
+    if (right <= left || bottom <= top) return;
+    SceneRaster cached;
+    cached.bytes = static_cast<std::uint64_t>(right - left) * (bottom - top) * 4;
+    const auto budget = scene_cache_budget();
+    if (cached.bytes > (std::min)(64ULL * 1024 * 1024, budget / 8)) return;
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+        source->GetPixelFormat(), dpi_, dpi_);
+    if (FAILED(d2d_context_->CreateBitmap(D2D1::SizeU(right - left, bottom - top),
+            nullptr, 0, properties, &cached.bitmap)) || FAILED(d2d_context_->Flush())) return;
+    d2d_context_->SetTarget(nullptr);
+    const auto pixels = D2D1::RectU(left, top, right, bottom);
+    const auto result = cached.bitmap->CopyFromBitmap(nullptr, source.Get(), &pixels);
+    d2d_context_->SetTarget(target.Get());
+    if (FAILED(result)) return;
+    cached.identity = scene->identity;
+    cached.command_index = index;
+    cached.transform = t;
+    cached.transform.dx = matrix._31 - left / ratio;
+    cached.transform.dy = matrix._32 - top / ratio;
+    cached.coverage = D2D1::RectF(
+        (left / ratio - matrix._31) / t.m11, (top / ratio - matrix._32) / t.m22,
+        (right / ratio - matrix._31) / t.m11, (bottom / ratio - matrix._32) / t.m22);
+    cached.dpi = dpi_;
+    cached.used = ++raster_clock_;
+    scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
+        [&](const SceneRaster& entry) { return entry.identity.expired() ||
+            (entry.command_index == index && entry.identity.lock() == scene->identity); }), scene_rasters_.end());
+    std::uint64_t used = cached.bytes;
+    for (const auto& entry : scene_rasters_) used += entry.bytes;
+    while (used > budget && !scene_rasters_.empty()) {
+        auto oldest = std::min_element(scene_rasters_.begin(), scene_rasters_.end(),
+            [](const SceneRaster& a, const SceneRaster& b) { return a.used < b.used; });
+        used -= oldest->bytes;
+        scene_rasters_.erase(oldest);
+    }
+    try { scene_rasters_.push_back(std::move(cached)); }
+    catch (const std::bad_alloc&) { /* Keep the normally rendered frame. */ }
+}
+
+HRESULT Surface::draw_group_coarse(Scene* scene, std::size_t index,
+        const SpdfD2DTransform& t) noexcept {
+    if (t.m12 != 0 || t.m21 != 0 || t.m11 <= 0 || t.m22 <= 0 ||
+            !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
+            !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
+            layer_depth_ || axis_clip_depth_ || !mask_captures_.empty()) return S_FALSE;
+    ComPtr<ID2D1Image> previous;
+    ComPtr<ID2D1Bitmap1> backdrop, target;
+    d2d_context_->GetTarget(&previous);
+    if (FAILED(previous.As(&backdrop))) return S_FALSE;
+    const auto size = backdrop->GetPixelSize();
+    const float density = GROUP_RASTER_DENSITY;
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        backdrop->GetPixelFormat(), dpi_, dpi_);
+    const auto required = D2D1::SizeU(
+        (std::max)(1U, static_cast<UINT32>(std::ceil(size.width * density))),
+        (std::max)(1U, static_cast<UINT32>(std::ceil(size.height * density))));
+    if (group_scratch_ && group_scratch_.Get() != backdrop.Get()) {
+        const auto available = group_scratch_->GetPixelSize();
+        float x, y;
+        group_scratch_->GetDpi(&x, &y);
+        if (available.width == required.width && available.height == required.height && x == dpi_ && y == dpi_)
+            target = group_scratch_;
+    }
+    if (!target) {
+        if (FAILED(d2d_context_->CreateBitmap(required, nullptr, 0, properties, &target))) return S_FALSE;
+        group_scratch_ = target;
+    }
+    auto result = d2d_context_->Flush();
+    if (FAILED(result)) return result;
+    const auto blend = d2d_context_->GetPrimitiveBlend();
+    d2d_context_->SetTarget(target.Get());
+    d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+    d2d_context_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
+    d2d_context_->SetTransform(D2D1::Matrix3x2F::Scale(density, density));
+    d2d_context_->DrawBitmap(backdrop.Get(), nullptr, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+    d2d_context_->SetPrimitiveBlend(blend);
+    float offset_x = 0, offset_y = 0;
+    for (const auto& capture : composite_captures_) {
+        if (capture.cropped) {
+            offset_x += capture.destination_origin.x;
+            offset_y += capture.destination_origin.y;
+        }
+    }
+    auto local = t;
+    local.m11 *= density;
+    local.m22 *= density;
+    local.dx = t.dx * density + offset_x * (1 - density);
+    local.dy = t.dy * density + offset_y * (1 - density);
+    const auto& group = scene->raster_groups.at(index);
+    result = replay_scene(this, scene, local, false, index, index + 1);
+    if (SUCCEEDED(result)) result = replay_scene(this, scene, local, true, index + 1, group.end + 1);
+    if (SUCCEEDED(result)) cache_group_raster(scene, index, local, group.bounds);
+    if (SUCCEEDED(result)) result = d2d_context_->Flush();
+    d2d_context_->SetTarget(previous.Get());
+    d2d_context_->SetPrimitiveBlend(blend);
+    if (FAILED(result)) return result;
+    result = set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+    if (FAILED(result)) return result;
+    return draw_group_raster(scene, index, t);
+}
+
 HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noexcept {
     if (scene->recordable || t.m12 != 0 || t.m21 != 0 ||
             t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.m11) ||
@@ -1917,9 +2430,13 @@ HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noe
             layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
             !mask_captures_.empty()) return S_FALSE;
     SceneRaster* best = nullptr;
+    const auto& background = scene->commands.front().command;
+    if (background.type != SPDF_D2D_SCENE_FILL_RECT) return S_FALSE;
+    const auto bounds = D2D1::RectF(background.values[0], background.values[1],
+        background.values[2], background.values[3]);
     for (auto& cached : scene_rasters_) {
-        if (cached.identity == scene->identity && cached.dpi == dpi_ &&
-                (!best || cached.used > best->used)) best = &cached;
+        if (!cached.sharp && cached.command_index == SIZE_MAX && cached.identity.lock() == scene->identity && cached.dpi == dpi_ &&
+                (!best || cached.used > best->used) && covers_visible(cached.coverage, bounds, t)) best = &cached;
     }
     if (!best) return S_FALSE;
     const float sx = t.m11 / best->transform.m11;
@@ -1938,10 +2455,11 @@ HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noe
 // Complex pages cannot use a command list because their blend operations read
 // the backdrop. Cache their GPU-rendered pixels at the exact scale instead.
 // Integer-pixel translations preserve coverage; other transforms replay normally.
-HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noexcept {
+HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t,
+        bool reuse_groups) noexcept {
     const auto budget = scene_cache_budget();
     scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
-        [](const SceneRaster& entry) { return entry.identity.use_count() == 1; }), scene_rasters_.end());
+        [](const SceneRaster& entry) { return entry.identity.expired(); }), scene_rasters_.end());
     std::uint64_t used = 0;
     for (const auto& entry : scene_rasters_) used += entry.bytes;
     while (used > budget && !scene_rasters_.empty()) {
@@ -1954,17 +2472,20 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noex
             t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
             !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
             layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
-            !mask_captures_.empty()) return replay_scene(this, scene, t);
+            !mask_captures_.empty()) return replay_scene(this, scene, t, reuse_groups);
     const auto& first = scene->commands.front().command;
     if (first.type != SPDF_D2D_SCENE_FILL_RECT || first.flags != 0 ||
             first.uint_values[0] != 0xffffffff || first.values[0] != 0 ||
-            first.values[1] != 0) return replay_scene(this, scene, t);
+            first.values[1] != 0) return replay_scene(this, scene, t, reuse_groups);
     const float ratio = dpi_ / 96.0f;
+    const auto page_bounds = D2D1::RectF(0, 0, first.values[2], first.values[3]);
     for (auto& cached : scene_rasters_) {
         const float x = (t.dx - cached.transform.dx) * ratio;
         const float y = (t.dy - cached.transform.dy) * ratio;
-        if (cached.identity == scene->identity && cached.dpi == dpi_ &&
+        if (!cached.sharp && cached.command_index == SIZE_MAX && cached.approximate == reuse_groups &&
+                cached.identity.lock() == scene->identity && cached.dpi == dpi_ &&
                 cached.transform.m11 == t.m11 && cached.transform.m22 == t.m22 &&
+                (!reuse_groups || covers_visible(cached.coverage, page_bounds, t)) &&
                 std::abs(x - std::round(x)) < 0.0001f &&
                 std::abs(y - std::round(y)) < 0.0001f) {
             cached.used = ++raster_clock_;
@@ -1979,20 +2500,38 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noex
     // Two pixels protect antialiased page edges. Align to the original pixel
     // phase so cached and direct output have identical sample positions.
     const float border = std::ceil(2 * ratio);
-    const float origin_x = (std::floor(t.dx * ratio) - border) / ratio;
-    const float origin_y = (std::floor(t.dy * ratio) - border) / ratio;
-    const float width = std::ceil(first.values[2] * t.m11 * ratio) + 2 * border + 1;
-    const float height = std::ceil(first.values[3] * t.m22 * ratio) + 2 * border + 1;
+    float origin_x = (std::floor(t.dx * ratio) - border) / ratio;
+    float origin_y = (std::floor(t.dy * ratio) - border) / ratio;
+    float width = std::ceil(first.values[2] * t.m11 * ratio) + 2 * border + 1;
+    float height = std::ceil(first.values[3] * t.m22 * ratio) + 2 * border + 1;
+    if (reuse_groups) {
+        ComPtr<ID2D1Image> target;
+        ComPtr<ID2D1Bitmap1> bitmap;
+        d2d_context_->GetTarget(&target);
+        if (SUCCEEDED(target.As(&bitmap))) {
+            const auto size = bitmap->GetSize();
+            // A small margin helps pans reuse this raster without allocating
+            // an enormous full-page bitmap at high zoom.
+            const auto margin = 64.0f / ratio;
+            const auto right = (std::min)(origin_x + width / ratio, size.width + margin);
+            const auto bottom = (std::min)(origin_y + height / ratio, size.height + margin);
+            origin_x = (std::max)(origin_x, -margin);
+            origin_y = (std::max)(origin_y, -margin);
+            width = std::ceil((right - origin_x) * ratio);
+            height = std::ceil((bottom - origin_y) * ratio);
+            if (width <= 0 || height <= 0) return S_OK;
+        }
+    }
     const auto limit = d2d_context_->GetMaximumBitmapSize();
     if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0 ||
             width > limit || height > limit || width * height * 4 >
                 (std::min)(128ULL * 1024 * 1024, budget / 4))
-        return replay_scene(this, scene, t);
+        return replay_scene(this, scene, t, reuse_groups);
     SceneRaster cached;
     cached.bytes = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * 4;
     // Evict expired pages and least recently used scales before allocating.
     scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
-        [](const SceneRaster& entry) { return entry.identity.use_count() == 1; }), scene_rasters_.end());
+        [](const SceneRaster& entry) { return entry.identity.expired(); }), scene_rasters_.end());
     std::uint64_t total = cached.bytes;
     for (const auto& entry : scene_rasters_) total += entry.bytes;
     while (total > budget && !scene_rasters_.empty()) {
@@ -2005,7 +2544,7 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noex
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
     auto result = d2d_context_->CreateBitmap(D2D1::SizeU(
         static_cast<UINT32>(width), static_cast<UINT32>(height)), nullptr, 0, properties, &cached.bitmap);
-    if (FAILED(result)) return replay_scene(this, scene, t);
+    if (FAILED(result)) return replay_scene(this, scene, t, reuse_groups);
     ComPtr<ID2D1Image> previous;
     d2d_context_->GetTarget(&previous);
     d2d_context_->SetTarget(cached.bitmap.Get());
@@ -2013,7 +2552,7 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noex
     auto local = t;
     local.dx -= origin_x;
     local.dy -= origin_y;
-    result = replay_scene(this, scene, local);
+    result = replay_scene(this, scene, local, reuse_groups);
     if (SUCCEEDED(result)) result = d2d_context_->Flush();
     d2d_context_->SetTarget(previous.Get());
     if (FAILED(result)) return result;
@@ -2022,14 +2561,373 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t) noex
     // Store the raster origin directly in the translation fields.
     cached.transform.dx = t.dx - origin_x;
     cached.transform.dy = t.dy - origin_y;
+    cached.coverage = D2D1::RectF(
+        (origin_x - t.dx) / t.m11, (origin_y - t.dy) / t.m22,
+        (origin_x + width / ratio - t.dx) / t.m11,
+        (origin_y + height / ratio - t.dy) / t.m22);
     cached.dpi = dpi_;
     cached.used = ++raster_clock_;
+    cached.approximate = reuse_groups;
     d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(origin_x, origin_y));
     d2d_context_->DrawBitmap(cached.bitmap.Get(), nullptr, 1.0f,
         D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    // Group snapshots may have been added while rendering this page bitmap.
+    // Account for them again before retaining the completed whole-page raster.
+    total = cached.bytes;
+    for (const auto& entry : scene_rasters_) total += entry.bytes;
+    while (total > budget && !scene_rasters_.empty()) {
+        auto oldest = std::min_element(scene_rasters_.begin(), scene_rasters_.end(),
+            [](const SceneRaster& a, const SceneRaster& b) { return a.used < b.used; });
+        total -= oldest->bytes;
+        scene_rasters_.erase(oldest);
+    }
     try { scene_rasters_.push_back(std::move(cached)); }
     catch (const std::bad_alloc&) { /* This frame is still valid without caching. */ }
     return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+}
+
+constexpr UINT32 SHARP_TILE_SIZE = 512;
+constexpr UINT32 SHARP_TILE_BORDER = 2;
+std::vector<UINT32> sharp_tile_edges(UINT32 size) {
+    std::vector<UINT32> edges{0};
+    // Anchor a full tile on the viewport center instead of placing its center
+    // near a boundary of four tiles. Remaining edge strips stay <= 512 px.
+    const auto offset = (static_cast<int>(size / 2) - static_cast<int>(SHARP_TILE_SIZE / 2)) %
+        static_cast<int>(SHARP_TILE_SIZE);
+    const auto first = offset > 0 ? static_cast<UINT32>(offset) :
+        static_cast<UINT32>(offset + SHARP_TILE_SIZE);
+    for (UINT32 position = first; position < size; position += SHARP_TILE_SIZE) edges.push_back(position);
+    edges.push_back(size);
+    return edges;
+}
+struct SharpTile {
+    D2D1_RECT_U bounds{};
+    ComPtr<ID2D1Bitmap1> bitmap;
+};
+struct SharpJob {
+    std::unique_ptr<Surface> renderer;
+    std::unique_ptr<Scene> scene;
+    std::weak_ptr<char> identity;
+    std::shared_ptr<std::atomic<bool>> cancelled = std::make_shared<std::atomic<bool>>(false);
+    std::atomic<bool> ready{false};
+    HRESULT result = S_OK;
+    bool imported = false;
+    SpdfD2DTransform transform{};
+    UINT32 width = 0, height = 0;
+    float dpi = 96;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    std::mutex tiles_mutex;
+    std::vector<SharpTile> tiles; // Worker publishes immutable completed bitmaps.
+    std::vector<D2D1_RECT_U> regions;
+    std::vector<D2D1_RECT_U> coverage; // UI thread only, copied into the atlas.
+    HRESULT import_result = S_OK;
+};
+
+struct SharpQueue {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::shared_ptr<SharpJob> pending, active;
+    bool stop = false;
+};
+
+bool Surface::sharp_pending() const noexcept {
+    return sharp_job_ && !sharp_job_->cancelled->load() &&
+        !sharp_job_->ready.load(std::memory_order_acquire);
+}
+
+std::unique_ptr<Scene> clone_scene(Surface* owner, const Scene& source) {
+    auto result = std::make_unique<Scene>();
+    result->owner = owner;
+    result->scopes = source.scopes;
+    result->command_bounds = source.command_bounds;
+    result->simple_scopes = source.simple_scopes;
+    result->simple_ends = source.simple_ends;
+    result->noop_scopes = source.noop_scopes;
+    result->noop_ends = source.noop_ends;
+    result->commands.reserve(source.commands.size());
+    for (const auto& original : source.commands) {
+        SceneCommand copy;
+        copy.command = original.command;
+        copy.transfer = original.transfer;
+        copy.stops = original.stops;
+        if (original.path) {
+            copy.path = std::make_unique<Surface::Path>(Surface::Path{
+                owner, original.path->resource, original.path->fill_realization});
+            copy.command.resource = copy.path.get();
+        }
+        if (original.bitmap) {
+            copy.bitmap = std::make_unique<Surface::Bitmap>(Surface::Bitmap{owner, original.bitmap->resource});
+            copy.command.resource = copy.bitmap.get();
+        }
+        if (original.stroke_style) {
+            copy.stroke_style = std::make_unique<Surface::StrokeStyle>(Surface::StrokeStyle{owner, original.stroke_style->resource});
+            copy.command.stroke_style = copy.stroke_style.get();
+        }
+        const auto& c = copy.command;
+        HRESULT hr = S_OK;
+        if (original.linear_brush) hr = owner->create_linear_gradient_brush(
+            c.values[0], c.values[1], c.values[2], c.values[3], copy.stops.data(),
+            static_cast<UINT32>(copy.stops.size()), &copy.linear_brush);
+        if (original.radial_brush) hr = owner->create_radial_gradient_brush(
+            c.values[0], c.values[1], c.values[2], c.values[3], c.values[4], c.values[5],
+            copy.stops.data(), static_cast<UINT32>(copy.stops.size()), &copy.radial_brush);
+        if (FAILED(hr)) return nullptr;
+        result->commands.push_back(std::move(copy));
+    }
+    return result;
+}
+
+void run_sharp_queue(const std::shared_ptr<SharpQueue>& queue) noexcept {
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    for (;;) {
+        std::shared_ptr<SharpJob> job;
+        {
+            std::unique_lock<std::mutex> lock(queue->mutex);
+            queue->changed.wait(lock, [&] { return queue->stop || queue->pending; });
+            if (queue->stop) break;
+            job = std::move(queue->pending);
+            queue->active = job;
+        }
+        if (!job->cancelled->load() && !job->identity.expired()) {
+            job->renderer->set_cancel_token(job->cancelled);
+            for (const auto& region : job->regions) {
+                if (FAILED(job->result) || job->cancelled->load() || job->identity.expired()) break;
+                const auto width = region.right - region.left;
+                const auto height = region.bottom - region.top;
+                job->result = job->renderer->prepare_worker_target(
+                    width + 2 * SHARP_TILE_BORDER, height + 2 * SHARP_TILE_BORDER);
+                if (FAILED(job->result)) break;
+                job->result = job->renderer->begin_frame(0x00000000);
+                if (FAILED(job->result)) break;
+                auto local = job->transform;
+                local.dx += (64.0f + SHARP_TILE_BORDER - region.left) * 96 / job->dpi;
+                local.dy += (64.0f + SHARP_TILE_BORDER - region.top) * 96 / job->dpi;
+                job->result = replay_scene(job->renderer.get(), job->scene.get(), local);
+                SharpTile tile;
+                tile.bounds = region;
+                const auto ended = job->renderer->finish_worker(&tile.bitmap);
+                if (SUCCEEDED(job->result)) job->result = ended;
+                if (FAILED(job->result) || job->cancelled->load()) break;
+                try {
+                    std::lock_guard<std::mutex> lock(job->tiles_mutex);
+                    job->tiles.push_back(std::move(tile));
+                } catch (...) { job->result = E_OUTOFMEMORY; break; }
+            }
+        }
+        job->scene.reset();
+        job->renderer.reset();
+        job->ready.store(true, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(queue->mutex);
+            queue->active.reset();
+        }
+    }
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+Surface::~Surface() {
+    cancel_sharp();
+    if (sharp_queue_) {
+        {
+            std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
+            sharp_queue_->stop = true;
+            sharp_queue_->pending.reset();
+        }
+        sharp_queue_->changed.notify_one();
+    }
+}
+
+void Surface::cancel_sharp() noexcept {
+    if (sharp_job_) sharp_job_->cancelled->store(true);
+    sharp_job_.reset();
+    if (sharp_queue_) {
+        std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
+        if (sharp_queue_->active) sharp_queue_->active->cancelled->store(true);
+        if (sharp_queue_->pending) sharp_queue_->pending->cancelled->store(true);
+        sharp_queue_->pending.reset();
+    }
+}
+
+bool Surface::import_sharp() noexcept {
+    if (!sharp_job_ || sharp_job_->cancelled->load() || sharp_job_->identity.expired() ||
+            sharp_job_->imported || FAILED(sharp_job_->import_result)) return false;
+    auto& job = *sharp_job_;
+    std::vector<SharpTile> completed;
+    {
+        std::lock_guard<std::mutex> lock(job.tiles_mutex);
+        completed.swap(job.tiles);
+    }
+    bool changed = false;
+    try {
+        if (!completed.empty() && !job.bitmap) {
+            const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+            job.import_result = d2d_context_->CreateBitmap(D2D1::SizeU(job.width, job.height),
+                nullptr, 0, properties, &job.bitmap);
+        }
+        for (const auto& tile : completed) {
+            if (FAILED(job.import_result)) break;
+            const auto destination = D2D1::Point2U(tile.bounds.left, tile.bounds.top);
+            const auto source = D2D1::RectU(SHARP_TILE_BORDER, SHARP_TILE_BORDER,
+                SHARP_TILE_BORDER + tile.bounds.right - tile.bounds.left,
+                SHARP_TILE_BORDER + tile.bounds.bottom - tile.bounds.top);
+            job.import_result = job.bitmap->CopyFromBitmap(&destination, tile.bitmap.Get(), &source);
+            if (SUCCEEDED(job.import_result)) { job.coverage.push_back(tile.bounds); changed = true; }
+        }
+    } catch (...) { job.import_result = E_OUTOFMEMORY; }
+    if (!job.ready.load(std::memory_order_acquire) || FAILED(job.result) ||
+            FAILED(job.import_result) || !job.bitmap) return changed;
+    // The worker can finish while this poll is importing the preceding tile.
+    if (job.coverage.size() != job.regions.size()) return changed;
+    SceneRaster raster;
+    raster.identity = sharp_job_->identity;
+    raster.bitmap = sharp_job_->bitmap;
+    raster.transform = sharp_job_->transform;
+    raster.dpi = sharp_job_->dpi;
+    raster.bytes = static_cast<std::uint64_t>(sharp_job_->width) * sharp_job_->height * 4;
+    raster.used = ++raster_clock_;
+    raster.sharp = true;
+    const auto budget = scene_cache_budget();
+    scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
+        [](const SceneRaster& entry) { return entry.identity.expired(); }), scene_rasters_.end());
+    auto used = raster.bytes;
+    for (const auto& entry : scene_rasters_) used += entry.bytes;
+    while (used > budget && !scene_rasters_.empty()) {
+        auto oldest = std::min_element(scene_rasters_.begin(), scene_rasters_.end(),
+            [](const SceneRaster& a, const SceneRaster& b) { return a.used < b.used; });
+        used -= oldest->bytes;
+        scene_rasters_.erase(oldest);
+    }
+    try {
+        scene_rasters_.push_back(std::move(raster));
+        sharp_job_->imported = true;
+        sharp_job_->bitmap.Reset();
+    }
+    catch (const std::bad_alloc&) { /* Preserve the fast frame. */ }
+    return changed;
+}
+
+HRESULT Surface::draw_sharp_partial(Scene* scene, const SpdfD2DTransform& t) noexcept {
+    import_sharp();
+    if (!drawing_ || !sharp_job_) return S_FALSE;
+    const auto& job = *sharp_job_;
+    if (!job.bitmap || job.cancelled->load() || job.identity.lock() != scene->identity ||
+            job.dpi != dpi_ || std::memcmp(&job.transform, &t, sizeof(t)) != 0) return S_FALSE;
+    // Overlay only the opaque page interior. Repainting a translucent page
+    // edge over the fast frame would apply its coverage twice; other pages
+    // behind transparent parts of this viewport atlas must also stay intact.
+    if (t.m12 != 0 || t.m21 != 0 || scene->commands.empty()) return S_FALSE;
+    const auto& background = scene->commands.front().command;
+    if (background.type != SPDF_D2D_SCENE_FILL_RECT || background.flags != 0 ||
+            background.uint_values[0] != 0xffffffff) return S_FALSE;
+    const auto ratio = dpi_ / 96;
+    const auto page = transformed_rect(D2D1::RectF(background.values[0], background.values[1],
+        background.values[2], background.values[3]), D2D1::Matrix3x2F(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy));
+    const auto interior = D2D1::RectF((std::ceil(page.left * ratio) + 1 + 64) / ratio,
+        (std::ceil(page.top * ratio) + 1 + 64) / ratio,
+        (std::floor(page.right * ratio) - 1 + 64) / ratio,
+        (std::floor(page.bottom * ratio) - 1 + 64) / ratio);
+    if (interior.right <= interior.left || interior.bottom <= interior.top) return S_FALSE;
+    d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(-64 / ratio, -64 / ratio));
+    d2d_context_->PushAxisAlignedClip(interior, D2D1_ANTIALIAS_MODE_ALIASED);
+    for (const auto& r : job.coverage) {
+        const auto rect = D2D1::RectF(r.left / ratio, r.top / ratio, r.right / ratio, r.bottom / ratio);
+        d2d_context_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
+        d2d_context_->DrawBitmap(job.bitmap.Get(), nullptr, 1, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        d2d_context_->PopAxisAlignedClip();
+    }
+    d2d_context_->PopAxisAlignedClip();
+    return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+}
+
+HRESULT Surface::draw_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept {
+    import_sharp();
+    const auto size = target_->GetSize();
+    const auto ratio = dpi_ / 96;
+    for (auto& raster : scene_rasters_) {
+        if (!raster.sharp || raster.identity.lock() != scene->identity || raster.dpi != dpi_ ||
+                raster.transform.m11 != t.m11 || raster.transform.m12 != t.m12 ||
+                raster.transform.m21 != t.m21 || raster.transform.m22 != t.m22) continue;
+        const auto dx = (t.dx - raster.transform.dx) * ratio;
+        const auto dy = (t.dy - raster.transform.dy) * ratio;
+        if (std::abs(dx - std::round(dx)) > .002f || std::abs(dy - std::round(dy)) > .002f) continue;
+        // Keep the border separate from large page translations to avoid
+        // losing subpixel precision when zoomed pages have large coordinates.
+        const auto x = (std::round(dx) - 64) / ratio;
+        const auto y = (std::round(dy) - 64) / ratio;
+        const auto pixels = raster.bitmap->GetSize();
+        if (x > 0 || y > 0 || x + pixels.width < size.width || y + pixels.height < size.height) continue;
+        if (drawing_) {
+            d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(x, y));
+            d2d_context_->DrawBitmap(raster.bitmap.Get(), nullptr, 1,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            raster.used = ++raster_clock_;
+            return set_transform(t.m11, t.m12, t.m21, t.m22, t.dx, t.dy);
+        }
+        return S_OK;
+    }
+    return S_FALSE;
+}
+
+HRESULT Surface::request_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept {
+    if (drawing_ || !target_ || scene->owner != this) return E_INVALIDARG;
+    if (!std::isfinite(t.m11) || !std::isfinite(t.m12) || !std::isfinite(t.m21) ||
+            !std::isfinite(t.m22) || !std::isfinite(t.dx) || !std::isfinite(t.dy)) return E_INVALIDARG;
+    if (scene->recordable || draw_sharp(scene, t) == S_OK) return S_FALSE;
+    const auto dimensions = target_->GetPixelSize();
+    if (sharp_job_ && !sharp_job_->cancelled->load() && sharp_job_->identity.lock() == scene->identity &&
+            std::memcmp(&sharp_job_->transform, &t, sizeof(t)) == 0 && sharp_job_->dpi == dpi_ &&
+            sharp_job_->width == dimensions.width + 128 && sharp_job_->height == dimensions.height + 128)
+        return S_OK;
+    const auto bytes = static_cast<std::uint64_t>(dimensions.width + 128) * (dimensions.height + 128) * 4;
+    if (bytes > (std::min)(128ULL * 1024 * 1024, scene_cache_budget() / 4)) return S_FALSE;
+    try {
+        auto job = std::make_shared<SharpJob>();
+        job->renderer = std::make_unique<Surface>();
+        job->width = dimensions.width + 128;
+        job->height = dimensions.height + 128;
+        job->dpi = dpi_;
+        job->transform = t;
+        job->identity = scene->identity;
+        const auto xs = sharp_tile_edges(job->width), ys = sharp_tile_edges(job->height);
+        for (std::size_t row = 1; row < ys.size(); ++row)
+            for (std::size_t col = 1; col < xs.size(); ++col)
+                job->regions.push_back(D2D1::RectU(xs[col - 1], ys[row - 1], xs[col], ys[row]));
+        const auto distance = [&](const D2D1_RECT_U& r) {
+            const auto x = (r.left + r.right) * .5f - job->width * .5f;
+            const auto y = (r.top + r.bottom) * .5f - job->height * .5f;
+            return x * x + y * y;
+        };
+        std::stable_sort(job->regions.begin(), job->regions.end(), [&](const auto& a, const auto& b) {
+            return distance(a) < distance(b);
+        });
+        auto result = job->renderer->initialize_worker(*this, 1, 1);
+        if (FAILED(result)) return result;
+        job->scene = clone_scene(job->renderer.get(), *scene);
+        if (!job->scene) return E_FAIL;
+        cancel_sharp();
+        if (!sharp_queue_) {
+            sharp_queue_ = std::make_shared<SharpQueue>();
+            std::thread(run_sharp_queue, sharp_queue_).detach();
+        }
+        sharp_job_ = job;
+        {
+            std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
+            sharp_queue_->pending = job;
+        }
+        sharp_queue_->changed.notify_one();
+        return S_OK;
+    } catch (...) { return E_OUTOFMEMORY; }
+}
+
+std::int32_t Surface::sharp_status() noexcept {
+    if (!sharp_job_) return 0;
+    if (sharp_job_->cancelled->load() || sharp_job_->identity.expired()) { cancel_sharp(); return 0; }
+    const bool changed = import_sharp();
+    if (FAILED(sharp_job_->import_result)) return static_cast<std::int32_t>(sharp_job_->import_result);
+    if (!sharp_job_->ready.load(std::memory_order_acquire)) return changed ? 3 : 1;
+    if (FAILED(sharp_job_->result)) return static_cast<std::int32_t>(sharp_job_->result);
+    return sharp_job_->imported ? 2 : (changed ? 3 : 1);
 }
 
 }  // namespace
@@ -2610,6 +3508,7 @@ std::int32_t spdf_d2d_create_scene(
             }
             created->commands.push_back(std::move(stored));
         }
+        if (!created->recordable) prepare_raster_groups(created.get());
         *scene = created.release();
         return static_cast<std::int32_t>(S_OK);
     } catch (const std::bad_alloc&) {
@@ -2617,6 +3516,16 @@ std::int32_t spdf_d2d_create_scene(
     } catch (...) {
         return static_cast<std::int32_t>(E_FAIL);
     }
+}
+
+std::int32_t spdf_d2d_draw_scene_cached(
+    void* surface, void* scene, const SpdfD2DTransform* transform) noexcept {
+    if (!surface || !scene || !transform) return static_cast<std::int32_t>(E_INVALIDARG);
+    auto* context = static_cast<Surface*>(surface);
+    auto* retained = static_cast<Scene*>(scene);
+    if (retained->owner != context) return static_cast<std::int32_t>(E_INVALIDARG);
+    if (retained->recordable) return spdf_d2d_draw_scene(surface, scene, transform);
+    return static_cast<std::int32_t>(context->draw_cached_scene(retained, *transform, true));
 }
 
 std::int32_t spdf_d2d_draw_scene_preview(
@@ -2658,6 +3567,34 @@ std::int32_t spdf_d2d_draw_scene(
     }
     return static_cast<std::int32_t>(
         context->draw_command_list(retained->display_list.Get(), *transform));
+}
+
+std::int32_t spdf_d2d_request_sharp(void* surface, void* scene,
+        const SpdfD2DTransform* transform) noexcept {
+    if (!surface || !scene || !transform) return static_cast<std::int32_t>(E_INVALIDARG);
+    return static_cast<std::int32_t>(static_cast<Surface*>(surface)->request_sharp(static_cast<Scene*>(scene), *transform));
+}
+
+std::int32_t spdf_d2d_draw_sharp(void* surface, void* scene,
+        const SpdfD2DTransform* transform) noexcept {
+    if (!surface || !scene || !transform || static_cast<Scene*>(scene)->owner != surface)
+        return static_cast<std::int32_t>(E_INVALIDARG);
+    return static_cast<std::int32_t>(static_cast<Surface*>(surface)->draw_sharp(static_cast<Scene*>(scene), *transform));
+}
+
+std::int32_t spdf_d2d_draw_sharp_partial(void* surface, void* scene,
+        const SpdfD2DTransform* transform) noexcept {
+    if (!surface || !scene || !transform || static_cast<Scene*>(scene)->owner != surface)
+        return static_cast<std::int32_t>(E_INVALIDARG);
+    return static_cast<std::int32_t>(static_cast<Surface*>(surface)->draw_sharp_partial(static_cast<Scene*>(scene), *transform));
+}
+
+std::int32_t spdf_d2d_sharp_status(void* surface) noexcept {
+    return surface ? static_cast<Surface*>(surface)->sharp_status() : static_cast<std::int32_t>(E_INVALIDARG);
+}
+
+void spdf_d2d_cancel_sharp(void* surface) noexcept {
+    if (surface) static_cast<Surface*>(surface)->cancel_sharp();
 }
 
 std::int32_t spdf_d2d_end_frame(void* surface) noexcept {

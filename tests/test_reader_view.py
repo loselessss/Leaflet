@@ -745,6 +745,7 @@ class ReaderViewTests(unittest.TestCase):
         surface = RetainedSurface()
         surface.create_path.return_value = native_path
         surface.create_scene.return_value = retained
+        surface.draw_sharp_scene.return_value = False
         self.view._d2d_surface = surface
 
         self.view._draw_vector_page(0, scene)
@@ -752,13 +753,14 @@ class ReaderViewTests(unittest.TestCase):
 
         surface.create_scene.assert_called_once()
         self.assertEqual(surface.draw_scene.call_count, 2)
+        self.assertTrue(surface.draw_scene.call_args.kwargs["reuse_groups"])
         surface.draw_scene_preview.return_value = True
         self.view._zoom_animation_timer.start(1000)
         self.view._draw_vector_page(0, scene)
         surface.draw_scene_preview.assert_called_once()
         self.assertEqual(surface.draw_scene.call_count, 2)
         # Missing raster falls back to normal rendering; settled zoom always
-        # draws at the final scale rather than retaining the preview pixels.
+        # draws live vectors at the final scale with optional group snapshots.
         surface.draw_scene_preview.return_value = False
         self.view._draw_vector_page(0, scene)
         self.assertEqual(surface.draw_scene.call_count, 3)
@@ -766,7 +768,47 @@ class ReaderViewTests(unittest.TestCase):
         self.view._draw_vector_page(0, scene)
         self.assertEqual(surface.draw_scene.call_count, 4)
         self.assertEqual(surface.draw_scene_preview.call_count, 2)
+        self.view._zoom_animation_timer.start(1000)
+        with patch.object(self.view, "_native_vector_draws", return_value=[None] * 256):
+            self.view._draw_vector_page(0, scene)
+        surface.draw_bitmap.assert_called_once()
+        self.assertEqual(surface.draw_scene.call_count, 4)
+        self.view._zoom_animation_timer.stop()
         surface.fill_path.assert_not_called()
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
+    def test_sharp_refinement_waits_for_idle_and_displays_partial_tiles(self):
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.request_sharp_scene.return_value = True
+        surface.sharp_status.return_value = 1
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (None, (), (), retained)
+        self.view._zoom_animation_timer.start(1000)
+        self.view._start_sharp_refine()
+        surface.request_sharp_scene.assert_not_called()
+        self.view._zoom_animation_timer.stop()
+        self.view._start_sharp_refine()
+        surface.request_sharp_scene.assert_called_once()
+        self.assertTrue(self.view._sharp_poll_timer.isActive())
+        with patch.object(self.view.viewport(), "update") as update:
+            self.view._poll_sharp_refine()
+            update.assert_not_called()
+            surface.sharp_status.return_value = 3
+            self.view._poll_sharp_refine()
+            update.assert_called_once()
+            self.assertTrue(self.view._sharp_poll_timer.isActive())
+            update.reset_mock()
+            surface.sharp_status.return_value = 2
+            self.view._poll_sharp_refine()
+            update.assert_called_once()
+        self.assertFalse(self.view._sharp_poll_timer.isActive())
+        self.view._start_sharp_refine()
+        surface.request_sharp_scene.assert_called_once()
+        self.view.stop_rendering()
+        surface.cancel_sharp.assert_called()
+        self.assertFalse(self.view._sharp_refine_timer.isActive())
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
 

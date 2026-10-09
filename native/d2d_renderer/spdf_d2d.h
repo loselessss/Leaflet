@@ -9,7 +9,7 @@
 #define SPDF_D2D_API extern "C" __declspec(dllimport)
 #endif
 
-constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 21;
+constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 24;
 constexpr std::uint32_t SPDF_D2D_ADAPTER_NAME_LENGTH = 128;
 
 enum SpdfD2DDriver : std::uint32_t {
@@ -270,6 +270,21 @@ SPDF_D2D_API std::int32_t spdf_d2d_draw_scene_preview(
     void* surface,
     void* scene,
     const SpdfD2DTransform* transform) noexcept;
+// Display mode: reuse bounded transparency-group snapshots across zoom scales.
+SPDF_D2D_API std::int32_t spdf_d2d_draw_scene_cached(
+    void* surface,
+    void* scene,
+    const SpdfD2DTransform* transform) noexcept;
+SPDF_D2D_API std::int32_t spdf_d2d_request_sharp(
+    void* surface, void* scene, const SpdfD2DTransform* transform) noexcept;
+SPDF_D2D_API std::int32_t spdf_d2d_draw_sharp(
+    void* surface, void* scene, const SpdfD2DTransform* transform) noexcept;
+SPDF_D2D_API std::int32_t spdf_d2d_draw_sharp_partial(
+    void* surface, void* scene, const SpdfD2DTransform* transform) noexcept;
+// 0: idle/cancelled, 1: pending, 2: completed, 3: partial update (still pending).
+// Negative values are HRESULT errors.
+SPDF_D2D_API std::int32_t spdf_d2d_sharp_status(void* surface) noexcept;
+SPDF_D2D_API void spdf_d2d_cancel_sharp(void* surface) noexcept;
 SPDF_D2D_API std::int32_t spdf_d2d_end_frame(void* surface) noexcept;
 SPDF_D2D_API void spdf_d2d_destroy_bitmap(void* bitmap) noexcept;
 SPDF_D2D_API void spdf_d2d_destroy_path(void* path) noexcept;
