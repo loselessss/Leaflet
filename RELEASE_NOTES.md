@@ -1,5 +1,10 @@
 # Leaflet Release Notes
 
+## 1.35.1 - Unreleased
+
+- Improve zoom responsiveness on complex GPU-rendered pages with cached transparency groups and progressive sharp tiles, restoring full resolution after zooming stops.
+- Recommend Microsoft Store for the stable version in both READMEs.
+
 ## 1.35.0 - 2026-10-08
 
 - Select existing direct PDF images automatically to move, resize or delete them, with undo and redo.

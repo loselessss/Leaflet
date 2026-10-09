@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.35.1 - Unreleased
 
 ### 성능 개선
 
@@ -11,6 +11,7 @@
 - After zoom or pan settles, prepare an exact GPU frame on a separate rendering context and replace the fast display when it is ready. Cancel outdated jobs, share immutable scene resources, and keep one active job plus the latest pending request with bounded viewport-sized results.
 - Prepare full-density GPU composition in 512 px tiles, prioritize the viewport center, and display completed tiles progressively. Cull individual drawing commands using retained bounds, use vector layers for ordinary source-over scopes, and keep a small overlap at tile edges while preserving the fast page until all sharp tiles are ready.
 - Start sharp GPU refinement after 90 ms of inactivity to reduce the wait after zooming stops.
+- Retain transparency snapshots at multiple scales and positions, reuse sharp GPU regions immediately after a pan, and prepare only tiles not covered by earlier frames. Expand the adaptive GPU cache ceiling to 2 GiB when RAM and GPU headroom allow, and trim old results under memory pressure.
 
 ### 기타
 

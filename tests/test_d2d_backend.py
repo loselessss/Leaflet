@@ -369,6 +369,40 @@ class D2DBackendTests(unittest.TestCase):
                         for y in (194, 706):
                             band = error[((y - 2) * 1200) * 4:((y + 3) * 1200) * 4]
                             self.assertLess(sum(band) / len(band), .25)
+                # Keep earlier zoom/orientation frames, then reuse their
+                # overlapping pixels before and during a new pan refinement.
+                base = (20, 0, 0, 20, .25, -5.5)
+                self.assertFalse(surface.request_sharp_scene(scene, base))
+                ratio = 144 / 96
+                moved = (20, 0, 0, 20, .25 + 200 / ratio, -5.5 - 100 / ratio)
+                surface.begin_frame(0xff123456)
+                surface.draw_scene(scene, moved)
+                reference = surface.read_pixels_bgra(1200, 900)
+                surface.end_frame()
+                surface.begin_frame(0xff123456)
+                surface.draw_scene(scene, moved, reuse_groups=True)
+                self.assertTrue(surface.draw_sharp_partial(scene, moved))
+                partial = surface.read_pixels_bgra(1200, 900)
+                self.assertFalse(surface.draw_sharp_partial(scene, (22, 0, 0, 22, moved[4], moved[5])))
+                surface.end_frame()
+                error = [abs(a - b) for a, b in zip(reference, partial)]
+                overlap = [error[(y * 1200 + x) * 4 + channel]
+                           for y in range(200, 650) for x in range(350, 800) for channel in range(4)]
+                self.assertLess(sum(overlap) / len(overlap), .25)
+                # Pixels outside the opaque page are never overpainted.
+                self.assertEqual(reference[:200 * 4], partial[:200 * 4])
+                self.assertTrue(surface.request_sharp_scene(scene, moved))
+                deadline = time.monotonic() + 10
+                while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                    time.sleep(.005)
+                self.assertEqual(surface.sharp_status(), 2)
+                surface.begin_frame(0xff123456)
+                self.assertTrue(surface.draw_sharp_scene(scene, moved))
+                refined = surface.read_pixels_bgra(1200, 900)
+                surface.end_frame()
+                error = [abs(a - b) for a, b in zip(reference, refined)]
+                self.assertLess(sum(error) / len(error), .25)
+                self.assertFalse(surface.request_sharp_scene(scene, base))
                 self.assertTrue(surface.request_sharp_scene(scene, (2.25, 0, 0, 2.25, 0, 0)))
                 surface.resize(256, 256, 144)
                 self.assertTrue(surface.request_sharp_scene(scene, (2.25, 0, 0, 2.25, 0, 0)))

@@ -88,3 +88,14 @@ only its interior is copied into the bounded viewport atlas. Completed opaque
 page portions replace the fast display progressively. Page edges and rotated
 pages switch when the complete atlas is available, preventing repeated alpha
 coverage and changes to adjacent pages.
+Snapshots retain multiple scales and coverage regions; equivalent smaller
+snapshots at the same scale are replaced only when the new region contains them.
+Selection prefers a nearby stored scale with sufficient coverage. The cache
+ceiling is 2 GiB, additionally bounded by total RAM / 16, available RAM / 8,
+the DXGI local-memory budget / 4 and remaining GPU headroom / 4. Frame startup
+trims expired and least-recently-used results as memory availability changes.
+Sharp frames at matching DPI, scale/rotation and integer pixel phase can supply
+overlapping tiles for a new viewport entirely through GPU copies. Those tiles
+are omitted from the worker's replay list. Cached overlap also stays sharp while
+the reader waits to queue missing tiles; translucent page edges retain the
+normal completion path.
