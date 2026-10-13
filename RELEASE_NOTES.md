@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased
+
+- Add highlights and notes in reader mode. Save applies them to the original PDF; Save As creates a PDF copy. Keep annotation undo/redo and check unsaved changes before closing or switching to the editor.
+
 ## 1.35.1 - 2026-10-09
 
 - Improve zoom responsiveness on complex GPU-rendered pages and progressively restore sharp detail after zooming stops.

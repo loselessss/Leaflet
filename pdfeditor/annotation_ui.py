@@ -26,11 +26,13 @@ class AnnotationPersistenceMixin:
         self.mark_dirty()
         self._notes_changed()
         self._update_edit_actions()
-        if self.doc.annotation_mode and self._shell.autosave_annotations:
+        if (self.doc.annotation_mode and not self.doc.annotations_in_pdf
+                and self._shell.autosave_annotations):
             self._annotation_timer.start()
 
     def _autosave_annotations(self):
-        if self.doc is not None and self.doc.annotation_mode and self.doc.annotations_dirty:
+        if (self.doc is not None and self.doc.annotation_mode
+                and not self.doc.annotations_in_pdf and self.doc.annotations_dirty):
             self._save_annotations(show_error=False)
 
     def _save_annotations(self, show_error=True):

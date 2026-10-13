@@ -9,6 +9,10 @@ sPDF 1.20.0의 독립 실행 리더·편집기는 서로 다른 OS 프로세스�
 `read_only`·주석 옵션·자체 업데이트 비활성 계약은 그대로입니다.
 독립 실행 구조는 [프로세스 분리 문서](PROCESS_ISOLATION.md)를 참고하세요.
 
+독립 실행 `workspace_mode="reader"`는 형광펜·메모를 허용하며 Ctrl+S로 원본 PDF에
+저장합니다. Ctrl+Shift+S는 PDF 사본을 저장하고 현재 경로를 바꿉니다. 원본 자동저장은
+사용하지 않습니다. 아래 별도 주석 저장 계약은 `workspace_mode`를 생략한 내장 API에 적용됩니다.
+
 ## ON/OFF 설정
 
 호스트가 실행한 `QApplication`의 GUI 스레드에서 호출합니다. sPDF를 따로 실행하거나

@@ -437,6 +437,143 @@ class EmbeddedModeTests(unittest.TestCase):
             self.assertEqual(child.workspace_mode, "reader")
             self.assertFalse(child.updates_enabled)
 
+    def test_standalone_reader_annotations_save_to_pdf_with_visible_save_actions(self):
+        from PyQt5.QtCore import QPointF
+        from PyQt5.QtWidgets import QAction
+        with self.document_windows() as (module, source):
+            original = source.read_bytes()
+            reader = module.new_window(str(source), workspace_mode="reader")
+            self.settle()
+            tab = reader._tabs.currentWidget()
+            self.assertTrue(tab.read_only)
+            self.assertTrue(tab.annotations_enabled)
+            self.assertFalse(reader.autosave_annotations)
+            self.assertIs(module.new_window(workspace_mode="reader"), reader)
+            actions = {action.shortcut().toString(): action
+                       for action in tab.findChildren(QAction) if action.shortcut().toString()}
+            for shortcut in ("Ctrl+S", "Ctrl+Shift+S", "Ctrl+H", "Ctrl+M"):
+                self.assertTrue(actions[shortcut].isVisible(), shortcut)
+                self.assertTrue(actions[shortcut].isEnabled(), shortcut)
+            self.assertEqual(actions["Ctrl+S"].text(), "Save")
+            self.assertEqual(actions["Ctrl+Shift+S"].text(), "Save As...")
+            with patch("pdfeditor.annots.QInputDialog.getMultiLineText",
+                       return_value=("Reader note", True)):
+                tab._add_note_at(QPointF(80, 100))
+            self.assertTrue(tab._dirty)
+            self.assertFalse(tab._annotation_timer.isActive())
+            self.assertEqual(source.read_bytes(), original)
+            with patch("pdfeditor.process_workspace.application_bridge"):
+                actions["Ctrl+S"].trigger()
+            self.assertFalse(tab._dirty)
+            self.assertFalse(tab.doc.annotations_dirty)
+            from pdfeditor.core import Document
+            reopened = Document(str(source))
+            try:
+                self.assertEqual(reopened.annots(0)[-1]["text"], "Reader note")
+            finally:
+                reopened.close()
+            tab.undo()
+            self.assertTrue(tab._dirty)
+            self.assertEqual(len(tab.doc.annots(0)), 1)
+            tab.redo()
+            self.assertEqual(tab.doc.annots(0)[-1]["text"], "Reader note")
+
+    def test_reader_save_as_changes_current_path_and_prompts_before_editor_handoff(self):
+        with self.document_windows() as (module, source):
+            reader = module.new_window(str(source), workspace_mode="reader")
+            self.settle()
+            tab = reader._tabs.currentWidget()
+            original = source.read_bytes()
+            tab.doc.add_note(0, 80, 100, "Copied note")
+            tab._annotation_changed()
+            target = source.with_name("copy.pdf")
+            with patch("pdfeditor.annots.QFileDialog.getSaveFileName",
+                       return_value=(str(target), "PDF (*.pdf)")), \
+                    patch("pdfeditor.process_workspace.application_bridge"):
+                self.assertTrue(tab.save_as_dialog())
+            self.assertEqual(tab.doc.path, str(target))
+            self.assertEqual(source.read_bytes(), original)
+            self.assertFalse(tab._dirty)
+            with patch.object(tab, "maybe_save", return_value=False) as prompt, \
+                    patch("pdfeditor.process_workspace.application_bridge") as bridge:
+                self.assertIsNone(reader.open_editor(tab))
+            prompt.assert_called_once_with()
+            bridge.assert_not_called()
+
+    def test_reader_save_failure_and_new_changes_during_handoff_remain_open(self):
+        from PyQt5.QtWidgets import QMessageBox
+        with self.document_windows() as (module, source):
+            reader = module.new_window(str(source), workspace_mode="reader")
+            self.settle()
+            tab = reader._tabs.currentWidget()
+            tab.doc.add_note(0, 80, 100, "Pending note")
+            tab._annotation_changed()
+            with patch.object(tab.doc, "save_reader_pdf", side_effect=OSError("locked")), \
+                    patch("pdfeditor.annots.QMessageBox.critical"):
+                self.assertFalse(tab.save())
+            self.assertTrue(tab._dirty)
+            with patch("pdfeditor.annots.QMessageBox.exec_", return_value=QMessageBox.Cancel):
+                self.assertFalse(tab.maybe_save())
+            reader._complete_workspace_handoff(tab)
+            self.assertGreaterEqual(reader._tabs.indexOf(tab), 0)
+            self.assertTrue(tab.doc.annotations_dirty)
+
+    def test_reader_refresh_preserves_pending_annotations_and_reenables_them_after_reload(self):
+        from pdfeditor.document_snapshot import DocumentSnapshot, file_revision
+        from pdfeditor.process_workspace import WorkspaceBridge
+        with self.document_windows() as (module, source):
+            reader = module.new_window(str(source), workspace_mode="reader")
+            self.settle()
+            tab = reader._tabs.currentWidget()
+            original = tab.doc
+            bridge = WorkspaceBridge(self.app)
+            try:
+                snapshot = DocumentSnapshot(str(source))
+                bridge.refreshing[tab] = ("pending", original, 0)
+                tab.doc.add_note(0, 80, 100, "Pending note")
+                tab._annotation_changed()
+                bridge.finish_refresh(tab, "pending", snapshot, None)
+                self.assertIs(tab.doc, original)
+                self.assertTrue(tab._dirty)
+                self.assertEqual(tab.doc.annots(0)[-1]["text"], "Pending note")
+                with patch.object(bridge, "report"):
+                    bridge.refresh_readers(str(source), [0, 0, 0, 0])
+                self.assertFalse(bridge.refreshing)
+                # Simulate discarding local changes before accepting a reload.
+                tab._dirty = False
+                snapshot = DocumentSnapshot(str(source))
+                bridge.refreshing[tab] = ("clean", original, 0)
+                bridge.finish_refresh(tab, "clean", snapshot, None)
+                self.settle()
+                self.assertIsNot(tab.doc, original)
+                self.assertTrue(tab.doc.annotations_in_pdf)
+                self.assertTrue(tab.annotations_enabled)
+                tab.doc.add_note(0, 90, 110, "After refresh")
+                tab._annotation_changed()
+                with patch("pdfeditor.process_workspace.application_bridge"):
+                    self.assertTrue(tab.save())
+                self.assertEqual(tab.doc._source_revision, file_revision(str(source)))
+            finally:
+                bridge.timer.stop()
+                bridge.server.close()
+                bridge.deleteLater()
+
+    def test_reader_can_discard_annotations_during_editor_handoff(self):
+        from PyQt5.QtWidgets import QMessageBox
+        with self.document_windows() as (module, source):
+            reader = module.new_window(str(source), workspace_mode="reader")
+            self.settle()
+            tab = reader._tabs.currentWidget()
+            original = source.read_bytes()
+            tab.doc.add_note(0, 80, 100, "Discarded note")
+            tab._annotation_changed()
+            with patch("pdfeditor.annots.QMessageBox.exec_", return_value=QMessageBox.Discard), \
+                    patch("pdfeditor.process_workspace.application_bridge"):
+                reader.open_editor(tab)
+            reader._complete_workspace_handoff(tab)
+            self.assertEqual(reader._tabs.count(), 0)
+            self.assertEqual(source.read_bytes(), original)
+
     def test_editor_hands_saved_document_to_reader_and_cancel_keeps_tab(self):
         with self.document_windows() as (module, source):
             editor = module.new_window(str(source), workspace_mode="editor")
@@ -568,7 +705,7 @@ class EmbeddedModeTests(unittest.TestCase):
             self.assertFalse(tab.doc._doc.is_dirty)
             self.assertFalse(tab._dirty)
             self.assertEqual(tab._undo_stack, [])
-            self.assertFalse(tab._save_act.isEnabled())
+            self.assertTrue(tab._save_act.isEnabled())
             self.assertEqual(source.read_bytes(), original)
             tab._rotate_ccw_act.trigger()
             self.assertEqual(tab.view.page_rotation(0), 0)

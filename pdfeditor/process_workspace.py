@@ -309,6 +309,11 @@ class WorkspaceBridge(QObject):
                     continue
                 if getattr(tab.doc, "_source_revision", None) == revision:
                     continue
+                if tab._dirty:
+                    self.report(localize(
+                        "Reader refresh skipped to preserve unsaved annotations. Save As to keep them.",
+                        "미저장 주석을 유지하기 위해 리더 갱신을 건너뛰었습니다. 다른 이름으로 저장해 보관하세요."))
+                    continue
                 if tab in self.copying:
                     self.refresh_latest[tab] = (path, revision)
                     continue
@@ -346,12 +351,16 @@ class WorkspaceBridge(QObject):
                                  "리더 갱신을 건너뛰었습니다. 마지막 정상 문서를 유지합니다. ") + error)
             return
         old = tab.doc
+        if tab._dirty:
+            snapshot.close()
+            return
         try:
             if file_revision(old.path) != snapshot.revision:
                 snapshot.close()
                 return
             document = Document(old.path, old._password, read_only=True,
-                                annotations_enabled=False, snapshot=snapshot)
+                                annotations_enabled=tab._shell.annotations_enabled,
+                                annotations_in_pdf=True, snapshot=snapshot)
             # Validate what the UI needs while the previous document is intact.
             if document.page_count < 1:
                 raise ValueError("Empty document")

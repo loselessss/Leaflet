@@ -6,7 +6,7 @@ def workspace_policy(mode, read_only, annotations_enabled):
     if mode not in (None, "reader", "editor"):
         raise ValueError("Unknown workspace mode: %s" % mode)
     if mode == "reader":
-        return True, False
+        return True, True
     if mode == "editor":
         if read_only:
             raise ValueError("An editor workspace cannot be read-only.")
@@ -29,6 +29,12 @@ class WindowWorkspaceMixin:
     def open_editor(self, source=None, recovery=False):
         if self.workspace_mode != "reader":
             return None
+        if source is None:
+            source = self._tabs.currentWidget()
+        if not recovery and source is not None and not source.maybe_save():
+            return None
+        if not recovery and source is not None:
+            source._workspace_handoff_revision = source._recovery.revision
         from .process_workspace import application_bridge
         try:
             return application_bridge().launch(
@@ -43,6 +49,8 @@ class WindowWorkspaceMixin:
         source = self._tabs.currentWidget()
         if source is not None and not source.maybe_save():
             return None
+        if source is not None:
+            source._workspace_handoff_revision = source._recovery.revision
         from .process_workspace import application_bridge
         try:
             return application_bridge().launch(
@@ -54,6 +62,12 @@ class WindowWorkspaceMixin:
     def _complete_workspace_handoff(self, source):
         """Close only the source document after its peer opened successfully."""
         if source is None or self._tabs.indexOf(source) < 0:
+            return
+        if (source._dirty and source._recovery.revision !=
+                getattr(source, "_workspace_handoff_revision", -1)):
+            self.statusBar().showMessage(localize(
+                "The source tab remains open because it has new unsaved changes.",
+                "새로운 미저장 변경이 있어 원래 탭을 유지합니다."), 6000)
             return
         self._remove_tab(source)
         if self._tabs.count() == 0:

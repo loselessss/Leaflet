@@ -84,7 +84,9 @@ HELP_HTML = """
 <p>메모 아이콘에 <b>마우스를 올리면</b> 내용이 뜨고, <b>클릭</b>하면
 편집됩니다. 우클릭 메뉴로 형광펜/메모/삭제도 됩니다. 모아보기 패널에서
 항목을 클릭하면 해당 위치로 이동합니다. <b>주석은 저장해야 파일에
-남습니다.</b></p>
+남습니다.</b> 리더모드에서도 형광펜과 메모를 사용할 수 있습니다.
+<b>Ctrl+S</b>는 원본 PDF에 반영하고, <b>Ctrl+Shift+S</b>는 다른 이름의
+PDF 사본을 저장합니다. 리더 주석은 원본에 자동 저장하지 않습니다.</p>
 
 <h3>🔤 OCR (문자 인식)</h3>
 <table cellpadding="4">
@@ -221,6 +223,9 @@ PDF or PDF-compatible Illustrator files onto the window.</p>
 <tr><td><b>Ctrl+M</b></td><td>Add a note at a clicked location</td></tr>
 <tr><td><b>Ctrl+Shift+M</b></td><td>Toggle the notes panel</td></tr>
 </table>
+<p>Highlights and notes are available in reader mode too. <b>Ctrl+S</b>
+saves them into the original PDF; <b>Ctrl+Shift+S</b> saves a PDF copy.
+Reader annotations are not automatically saved into the original.</p>
 
 <h3>🔤 OCR</h3>
 <table cellpadding="4">

@@ -500,7 +500,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self._fav_menu.setToolTipsVisible(True)
         self._fav_menu.aboutToShow.connect(self._rebuild_fav_menu)
         m.addSeparator()
-        annotation_mode = self.read_only and self.annotations_enabled
+        annotation_mode = (self.read_only and self.annotations_enabled
+                           and self._shell.workspace_mode != "reader")
         save_label = localize("Save annotations", "주석 저장") if annotation_mode else "저장"
         export_label = localize("Save PDF with annotations...", "주석 포함 PDF 저장...") \
             if annotation_mode else "다른 이름으로 저장..."
@@ -961,7 +962,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             try:
                 doc = Document(path, password, read_only=self.read_only,
                                annotations_enabled=self._shell.annotations_enabled,
-                               isolated=self._shell.workspace_mode is not None)
+                               isolated=self._shell.workspace_mode is not None,
+                               annotations_in_pdf=self._shell.workspace_mode == "reader")
                 if self._shell.workspace_mode == "editor":
                     try:
                         doc.ensure_editable()
@@ -1044,7 +1046,11 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                 self.statusBar().showMessage(localize(
                     "Reader — Ctrl+E opens this document in a separate editor.",
                     "읽기 모드 — Ctrl+E를 누르면 별도 편집 창에서 열립니다."), 6000)
-            if doc.annotation_mode and doc.annotations_enabled:
+            if doc.annotations_in_pdf and doc.annotations_enabled:
+                self.statusBar().showMessage(localize(
+                    "Reader — Ctrl+S saves notes and highlights into the original PDF.",
+                    "읽기 모드 — Ctrl+S로 메모·형광펜을 원본 PDF에 저장합니다."), 6000)
+            elif doc.annotation_mode and doc.annotations_enabled:
                 self.statusBar().showMessage(localize(
                     "Annotations enabled; autosave is " +
                     ("ON." if self._shell.autosave_annotations else "OFF (Ctrl+S to save)."),
@@ -1387,7 +1393,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
         self._workspace_mode = workspace_mode
         self._read_only, self._annotations_enabled = workspace_policy(
             workspace_mode, read_only, annotations_enabled)
-        self._autosave_annotations = bool(autosave_annotations)
+        self._autosave_annotations = (False if workspace_mode == "reader"
+                                      else bool(autosave_annotations))
         application = QApplication.instance()
         if application is not None:
             install_i18n(application)
@@ -2337,10 +2344,13 @@ def new_window(path=None, force_new=False, updates_enabled=None, *,
     In read-only mode, annotations_enabled=True enables sidecar annotations;
     autosave_annotations=False makes their saving manual (Ctrl+S).
     Standalone workspaces opt in with workspace_mode="reader" or "editor".
+    The standalone reader saves annotations into the PDF manually with Ctrl+S.
     Omit it in embedded hosts to preserve their existing policy and menus.
     """
     read_only, annotation_flag = workspace_policy(
         workspace_mode, read_only, annotations_enabled)
+    if workspace_mode == "reader":
+        autosave_annotations = False
     policy = (bool(read_only), annotation_flag, bool(autosave_annotations))
     updates_enabled = bool(updates_enabled)
     application = QApplication.instance()

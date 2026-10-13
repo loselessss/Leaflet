@@ -29,7 +29,7 @@ Press **F1** for the full usage guide.
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
 - **Pages:** Reorder, rotate, crop, merge, split, and extract pages.
   Adjust page size and bleed, or add binding and folding guides.
-- **Annotations:** Highlights, notes, and text watermarks.
+- **Annotations:** Highlights and notes in the reader and editor; save into the original PDF or save a copy. Text watermarks are available in the editor.
 - **OCR:** Recognize Korean and English scans locally and add searchable text.
 - **Output:** Print, compress PDFs, and convert between PDFs and images.
   Save As offers optional removal of document metadata and Leaflet object re-editing information.

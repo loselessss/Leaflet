@@ -68,7 +68,7 @@ class AnnotMixin:
             return False
         if not self._dirty or self.doc is None:
             return True
-        annotation_mode = self.doc.annotation_mode
+        annotation_mode = self.doc.annotation_mode and not self.doc.annotations_in_pdf
         if annotation_mode:
             self._annotation_timer.stop()
             if self._shell.autosave_annotations and self._save_annotations(show_error=False):
@@ -100,7 +100,7 @@ class AnnotMixin:
             return False
         if self.doc is None:
             return False
-        if self.doc.annotation_mode:
+        if self.doc.annotation_mode and not self.doc.annotations_in_pdf:
             return self._save_annotations()
         if (is_illustrator_document(self.doc.path) or is_eps_document(self.doc.path) or
                 getattr(self, "_recovered_unsaved", False)):
@@ -122,7 +122,7 @@ class AnnotMixin:
             return False
         if self.doc is None:
             return False
-        if self.doc.annotation_mode:
+        if self.doc.annotation_mode and not self.doc.annotations_in_pdf:
             return self._export_annotations_dialog()
         path, _ = QFileDialog.getSaveFileName(
             self, "다른 이름으로 저장", suggested_pdf_path(self.doc.path),
@@ -130,7 +130,7 @@ class AnnotMixin:
         if not path:
             return False
         path = suggested_pdf_path(path)
-        options = choose_save_options(self)
+        options = (False, False) if self.doc.annotations_in_pdf else choose_save_options(self)
         if options is None:
             return False
         try:
@@ -150,11 +150,14 @@ class AnnotMixin:
         return True
 
     def _save_document_file(self, path, *, remove_metadata=False, remove_editing_data=False):
-        revision = self.doc.save_as(path, remove_metadata=remove_metadata,
-                                    remove_editing_data=remove_editing_data)
+        if self.doc.annotations_in_pdf:
+            revision = self.doc.save_reader_pdf(path)
+        else:
+            revision = self.doc.save_as(path, remove_metadata=remove_metadata,
+                                        remove_editing_data=remove_editing_data)
         if remove_editing_data:
             self.refresh_editor_overview()
-        if self._shell.workspace_mode == "editor":
+        if self._shell.workspace_mode in ("reader", "editor"):
             from .document_snapshot import file_revision
             from .process_workspace import application_bridge
             try:

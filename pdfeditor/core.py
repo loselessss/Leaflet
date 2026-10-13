@@ -70,10 +70,14 @@ class Document:
     """열린 PDF 한 건. 페이지 렌더와 텍스트 추출의 단일 창구."""
 
     def __init__(self, path, password=None, *, read_only=False,
-                 annotations_enabled=None, isolated=False, snapshot=None):
+                 annotations_enabled=None, isolated=False, snapshot=None,
+                 annotations_in_pdf=False):
         self._read_only = bool(read_only)
         self._annotations_enabled = (not read_only if annotations_enabled is None
                                      else bool(annotations_enabled))
+        self._annotations_in_pdf = bool(annotations_in_pdf)
+        if self._annotations_in_pdf and not self.annotation_mode:
+            raise ValueError("PDF annotation saving requires an annotation-only reader.")
         self._annotation_store = None
         self.annotation_error = None
         self.path = path
@@ -81,7 +85,7 @@ class Document:
         # 비밀번호를 들고 있어야 한다.
         self._password = password
         self._snapshot = snapshot
-        if (isolated or is_eps_document(path)) and self._snapshot is None:
+        if (isolated or self.annotations_in_pdf or is_eps_document(path)) and self._snapshot is None:
             from .document_snapshot import DocumentSnapshot
             self._snapshot = DocumentSnapshot(path)
         try:
@@ -104,7 +108,11 @@ class Document:
         except OSError:
             pass
         sidecar_exists = os.path.exists(os.path.realpath(path) + ".spdf-annotations.json")
-        if self.read_only and (self.annotation_mode or sidecar_exists):
+        if self.annotations_in_pdf:
+            if self.annotations_enabled:
+                from .annotation_store import AnnotationStore
+                self._annotation_store = AnnotationStore(path, sidecar=False)
+        elif self.read_only and (self.annotation_mode or sidecar_exists):
             try:
                 if self.annotation_mode:
                     self.ensure_annotatable(require_store=False)
@@ -128,6 +136,7 @@ class Document:
         document = cls.__new__(cls)
         document._read_only = bool(read_only)
         document._annotations_enabled = not read_only
+        document._annotations_in_pdf = False
         document._annotation_store = None
         document.annotation_error = None
         document.path = path
@@ -470,6 +479,10 @@ class Document:
         return self.read_only and self._annotations_enabled
 
     @property
+    def annotations_in_pdf(self):
+        return self._annotations_in_pdf
+
+    @property
     def annotations_enabled(self):
         return (self._annotations_enabled and not self.annotation_error and
                 bool(self._doc.permissions & fitz.PDF_PERM_ANNOTATE))
@@ -498,7 +511,8 @@ class Document:
         store = self._annotation_store
         if store is None or not (self.can_redo_annotation if forward else self.can_undo_annotation):
             return False
-        restored = store.rebuild(lambda: self._open(self.path, self._password),
+        baseline = self._snapshot.path if self.annotations_in_pdf else self.path
+        restored = store.rebuild(lambda: self._open(baseline, self._password),
                                  store.cursor + (1 if forward else -1))
         self._doc.close()
         self._doc = restored
@@ -511,6 +525,21 @@ class Document:
             raise ValueError("Separate annotation saving requires a read-only annotation window.")
         self._annotation_store.save()
 
+    def save_reader_pdf(self, out_path):
+        """Save reader annotations atomically, retaining the replay baseline.
+
+        Body edits and the general save_as API remain blocked in read-only mode.
+        The isolated transaction preserves encryption and rejects stale writes.
+        """
+        self.ensure_annotatable()
+        if not self.annotations_in_pdf:
+            raise PermissionError("PDF saving is disabled for this annotation window.")
+        if is_illustrator_document(out_path):
+            raise ValueError("Save Illustrator annotations as a PDF instead.")
+        revision = self._save_as_file(out_path, True, False, False)
+        self._annotation_store.saved_revision = self._annotation_store.revision
+        return revision
+
     def export_annotated_pdf(self, out_path):
         """Export a separate PDF without switching the source or sidecar."""
         self.ensure_annotatable()
@@ -519,7 +548,7 @@ class Document:
             os.path.realpath(self.path))
         if same_path or (os.path.exists(out_path) and os.path.samefile(out_path, self.path)):
             raise ValueError("Choose a different file; the original PDF must be preserved.")
-        if self._annotation_store:
+        if self._annotation_store and not self.annotations_in_pdf:
             sidecar = str(self._annotation_store.path)
             if (os.path.normcase(os.path.realpath(out_path)) == os.path.normcase(sidecar) or
                     (os.path.exists(out_path) and os.path.exists(sidecar) and

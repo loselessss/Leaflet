@@ -1,4 +1,4 @@
-"""Versioned annotation-only sidecars; no Qt and no original PDF writes."""
+"""Replayable annotation history, optionally persisted as a versioned sidecar."""
 
 from contextlib import contextmanager
 import hashlib
@@ -40,22 +40,27 @@ def _write_lock(path):
 
 
 class AnnotationStore:
-    """An operation journal, bound to the exact source PDF by SHA-256.
+    """An operation journal, with sidecars bound to the source PDF by SHA-256.
 
     Only notes/highlights and annotation edits can be replayed. Added annotation
     IDs are independent of MuPDF xrefs, which can change after undo/reopen.
     """
 
-    def __init__(self, source):
+    def __init__(self, source, *, sidecar=True):
         self.source = Path(source).resolve()
         self.path = Path(str(self.source) + ".spdf-annotations.json")
-        self.source_hash = _digest(self.source)
-        self._source_stat = self.source.stat()
+        self.sidecar = sidecar
         self.operations = []
         self.cursor = 0
         self.ids = {}
         self.revision = self.saved_revision = 0
         self._disk_hash = None
+        if not sidecar:
+            # The standalone reader replays against its immutable private input
+            # copy and writes the PDF through the document save transaction.
+            return
+        self.source_hash = _digest(self.source)
+        self._source_stat = self.source.stat()
         raw = self._read_disk()
         if raw is not None:
             payload = json.loads(raw)
@@ -85,6 +90,8 @@ class AnnotationStore:
         return self.revision != self.saved_revision
 
     def check_source(self):
+        if not self.sidecar:
+            return
         stat = self.source.stat()
         before = self._source_stat
         if (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns) != (
@@ -176,6 +183,8 @@ class AnnotationStore:
         return pdf
 
     def save(self):
+        if not self.sidecar:
+            raise ValueError("Save this annotation history through the PDF document.")
         self.check_source()
         payload = {"format": "spdf-annotations", "version": 1,
                    "source_sha256": self.source_hash,

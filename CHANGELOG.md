@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### 개선
+
+- Enable highlights and notes in reader mode, with Save writing them into the original PDF and Save As creating a PDF copy. Preserve annotation undo/redo and prompt before closing or switching to the editor with unsaved changes.
+
 ## 1.35.1 - 2026-10-09
 
 ### 성능 개선
