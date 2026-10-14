@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Unreleased (1.36.0)
 
 ### 새 기능
 

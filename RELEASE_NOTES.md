@@ -1,6 +1,6 @@
 # Leaflet Release Notes
 
-## Unreleased
+## Unreleased (1.36.0)
 
 - View multiple pages on the editor artboard canvas, zoom, pan and arrange their screen positions. Double-click a page for precise editing; screen arrangement does not change PDF page order.
 
