@@ -2,7 +2,10 @@
 
 ## Unreleased
 
+- View multiple pages on the editor artboard canvas, zoom, pan and arrange their screen positions. Double-click a page for precise editing; screen arrangement does not change PDF page order.
+
 - Add highlights and notes in reader mode. Save applies them to the original PDF; Save As creates a PDF copy. Keep annotation undo/redo and check unsaved changes before closing or switching to the editor.
+- Choose Illustrator-compatible PDF saving (on by default) to remove stale editing data and reopen the current PDF content. Uncheck it to retain existing Illustrator data; AI layer/effect editing is not recreated.
 
 ## 1.35.1 - 2026-10-09
 

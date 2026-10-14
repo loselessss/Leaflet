@@ -47,6 +47,14 @@ class InternationalEditionTests(unittest.TestCase):
         text = "이 문장은 PDF 본문입니다."
         self.assertEqual(tr(text), text)
 
+    def test_artboard_command_and_help_exist_in_both_languages(self):
+        from pdfeditor.help import HELP_HTML, HELP_HTML_EN
+        self.assertEqual(tr("아트보드"), "Artboards")
+        set_language("ko")
+        self.assertEqual(tr("아트보드"), "아트보드")
+        for guide in (HELP_HTML, HELP_HTML_EN):
+            self.assertIn("Ctrl+Shift+A", guide)
+
     def test_unknown_language_falls_back_to_english(self):
         self.assertEqual(set_language("fr-FR"), "en")
         self.assertEqual(tr("저장"), "Save")

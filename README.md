@@ -9,6 +9,8 @@ text editing, page organization, annotations, and offline OCR.
 
 EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html) installed on the PC. Leaflet converts EPS to a private PDF for viewing and editing; save the result as PDF. Ghostscript is not bundled.
 
+Modified AI files are saved as PDF. The Illustrator-compatible save checkbox is on by default and removes private editing data so Illustrator uses the current PDF content. Unchecking preserves existing data but may reopen old content. This does not create AI files or retain their layer/effect editing structure.
+
 ## Download
 
 [Privacy policy / 개인정보 처리방침](PRIVACY.md)
@@ -29,6 +31,7 @@ Press **F1** for the full usage guide.
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
 - **Pages:** Reorder, rotate, crop, merge, split, and extract pages.
   Adjust page size and bleed, or add binding and folding guides.
+- **Artboards:** View multiple pages on the editor canvas, zoom and pan, or drag page labels to arrange their screen positions. Double-click a page for precise editing; PDF page order is unchanged.
 - **Annotations:** Highlights and notes in the reader and editor; save into the original PDF or save a copy. Text watermarks are available in the editor.
 - **OCR:** Recognize Korean and English scans locally and add searchable text.
 - **Output:** Print, compress PDFs, and convert between PDFs and images.
@@ -52,6 +55,7 @@ images inside groups or clipping scopes and existing vector artwork are not yet 
 | Ctrl+F | Find text |
 | Ctrl+E | Open the editor / toggle text editing |
 | Ctrl+Shift+P | Page organization |
+| Ctrl+Shift+A | Editor artboard overview / precise page editing |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Delete / Arrow keys / Shift+Arrow keys | Delete / move / move farther with an object selected on the editor canvas |
 | Esc / Hold Space | Cancel a gesture or clear object selection / temporarily pan in the editor |

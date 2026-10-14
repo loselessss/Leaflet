@@ -2,9 +2,17 @@
 
 ## Unreleased
 
+### 새 기능
+
+- Add an editor artboard overview with multiple PDF pages on one canvas, zooming, panning and view-only page arrangement. Double-click a page to return to precise editing; keep PDF coordinates and page order unchanged.
+
 ### 개선
 
 - Enable highlights and notes in reader mode, with Save writing them into the original PDF and Save As creating a PDF copy. Preserve annotation undo/redo and prompt before closing or switching to the editor with unsaved changes.
+
+### 버그 수정
+
+- Add an Illustrator-compatible PDF save checkbox, enabled by default, to remove outdated Illustrator editing data and prevent old pages or content from returning. Uncheck it to preserve existing Illustrator data; original AI layer/effect editing is not reproduced.
 
 ## 1.35.1 - 2026-10-09
 

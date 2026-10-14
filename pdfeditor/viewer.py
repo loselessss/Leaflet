@@ -139,6 +139,9 @@ class ViewerMixin(NavigationMixin):
         self._update_page_label()
 
     def set_zoom(self, zoom):
+        if self.is_editor_overview():
+            self._artboard_view.set_zoom(zoom)
+            return
         zoom = max(self.view.ZOOM_MIN, min(self.view.ZOOM_MAX, zoom))
         if zoom == self.view.zoom:
             self._update_page_label()
@@ -147,10 +150,10 @@ class ViewerMixin(NavigationMixin):
         self.on_zoom_changed(zoom)
 
     def zoom_in(self):
-        self.set_zoom(self.view.zoom * 1.25)
+        self.set_zoom(self.active_workspace_view().zoom * 1.25)
 
     def zoom_out(self):
-        self.set_zoom(self.view.zoom / 1.25)
+        self.set_zoom(self.active_workspace_view().zoom / 1.25)
 
     def zoom_in_fine(self):
         self.set_zoom_percent(self.zoom_percent() + 1)
@@ -161,10 +164,10 @@ class ViewerMixin(NavigationMixin):
     def _actual_size_scale(self):
         # PDF points are 1/72 inch. Qt reports physical DPI in device-
         # independent coordinates; DPR is applied separately by rendering.
-        return max(1.0, float(self.view.viewport().physicalDpiX())) / 72.0
+        return max(1.0, float(self.active_workspace_view().viewport().physicalDpiX())) / 72.0
 
     def zoom_percent(self):
-        return self.view.zoom / self._actual_size_scale() * 100.0
+        return self.active_workspace_view().zoom / self._actual_size_scale() * 100.0
 
     def set_zoom_percent(self, percent):
         self.set_zoom(percent / 100.0 * self._actual_size_scale())
@@ -221,12 +224,18 @@ class ViewerMixin(NavigationMixin):
         """창 너비에 맞춘다."""
         if self.doc is None:
             return
+        if self.is_editor_overview():
+            self._artboard_view.fit_selected(width_only=True)
+            return
         self._set_fit_zoom(self.page_index)
         self.on_zoom_changed(self.view.zoom)
 
     def zoom_page_fit(self):
         """현재 페이지 전체가 문서 화면 안에 들어오도록 맞춘다."""
         if self.doc is None:
+            return
+        if self.is_editor_overview():
+            self._artboard_view.fit_selected()
             return
         pages = self.visible_document_pages()
         sizes = [self._displayed_page_size(page) for page in pages]
@@ -309,6 +318,8 @@ class ViewerMixin(NavigationMixin):
             self.show_page(self.page_index - 1)
 
     def set_two_page_mode(self, enabled):
+        if self.is_editor_overview():
+            self.open_page_editor(edit_text=False)
         enabled = bool(enabled)
         if enabled == self._two_page_mode:
             return
@@ -431,7 +442,7 @@ class ViewerMixin(NavigationMixin):
 
     def _render_visible_thumbs(self):
         """보이는 항목 중 아직 안 그린 것만 렌더(레이지, 설계 §3.1)."""
-        if self.doc is None or self.is_editor_overview():
+        if self.doc is None:
             return
         if not getattr(self, "_view_ready", True):
             self._schedule_thumbs()
@@ -470,7 +481,7 @@ class ViewerMixin(NavigationMixin):
         self._schedule_thumbs()
 
     def update_thumbnail_viewport_marker(self):
-        if self.doc is None:
+        if self.doc is None or self.is_editor_overview():
             self.thumbs.set_viewport_marker(-1, None)
             return
         self.thumbs.set_viewport_marker(
@@ -480,6 +491,8 @@ class ViewerMixin(NavigationMixin):
         """썸네일에서 찍은 페이지 위치를 메인 화면 중앙에 표시한다."""
         if self.doc is None:
             return
+        if self.is_editor_overview():
+            self.open_page_editor(page, edit_text=False)
         if page != self.page_index:
             self.show_page(page)
         else:

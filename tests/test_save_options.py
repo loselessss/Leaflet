@@ -116,10 +116,100 @@ class SaveOptionsDialogTests(unittest.TestCase):
         from pdfeditor.save_options import choose_save_options
         def accept(dialog):
             choices = dialog.findChildren(QCheckBox)
-            self.assertEqual([box.isChecked() for box in choices], [False, False])
+            self.assertEqual([box.isChecked() for box in choices], [False, False, True])
             choices[1].setChecked(True)
             return QDialog.Accepted
         with patch.object(QDialog, "exec_", accept):
-            self.assertEqual(choose_save_options(None), (False, True))
+            self.assertEqual(choose_save_options(None), (False, True, True))
         with patch.object(QDialog, "exec_", return_value=QDialog.Rejected):
             self.assertIsNone(choose_save_options(None))
+
+    def test_illustrator_only_dialog_preserves_other_information(self):
+        from PyQt5.QtWidgets import QCheckBox, QDialog
+        from pdfeditor.save_options import choose_save_options
+        def accept(dialog):
+            choices = dialog.findChildren(QCheckBox)
+            self.assertEqual(len(choices), 1)
+            self.assertTrue(choices[0].isChecked())
+            choices[0].setChecked(False)
+            return QDialog.Accepted
+        with patch.object(QDialog, "exec_", accept):
+            self.assertEqual(choose_save_options(None, compatibility_only=True), (False, False, False))
+
+    def test_illustrator_option_uses_selected_ui_language(self):
+        from PyQt5.QtWidgets import QCheckBox, QDialog
+        from pdfeditor.i18n import set_language
+        from pdfeditor.save_options import choose_save_options
+        try:
+            for language, expected in (("en", "Illustrator-compatible save"),
+                                       ("ko", "Illustrator 호환 저장")):
+                set_language(language)
+                def inspect(dialog):
+                    choice = dialog.findChild(QCheckBox, "illustratorCompatibleSave")
+                    self.assertTrue(choice.text().startswith(expected))
+                    return QDialog.Rejected
+                with patch.object(QDialog, "exec_", inspect):
+                    self.assertIsNone(choose_save_options(None))
+        finally:
+            set_language("en")
+
+
+class IllustratorSaveUITests(unittest.TestCase):
+    from tests import test_editor_workspace as _fixtures
+    setUpClass = classmethod(_fixtures.EditorWorkspaceTests.setUpClass.__func__)
+    tearDownClass = classmethod(_fixtures.EditorWorkspaceTests.tearDownClass.__func__)
+    setUp = _fixtures.EditorWorkspaceTests.setUp
+    tearDown = _fixtures.EditorWorkspaceTests.tearDown
+    settle = _fixtures.EditorWorkspaceTests.settle
+    open_editor = _fixtures.EditorWorkspaceTests.open_editor
+
+    def add_private_data(self, tab):
+        tab.doc._doc.xref_set_key(tab.doc._doc.pdf_catalog(), "PieceInfo",
+                                 "<< /Illustrator << /Private (Original AI editing data) >> >>")
+        tab.mark_dirty()
+
+    def test_normal_save_cancel_preserves_source_and_pending_information(self):
+        from pdfeditor.save_options_core import has_illustrator_editing_data
+        tab = self.open_editor()
+        self.add_private_data(tab)
+        with patch("pdfeditor.annots.choose_save_options", return_value=None) as choice:
+            self.assertFalse(tab.save())
+        choice.assert_called_once_with(tab, compatibility_only=True)
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertTrue(tab._dirty)
+        self.assertTrue(has_illustrator_editing_data(tab.doc._doc))
+
+    def test_normal_save_respects_opt_out_then_checked_cleanup(self):
+        from pdfeditor.save_options_core import has_illustrator_editing_data
+        tab = self.open_editor()
+        self.add_private_data(tab)
+        with patch("pdfeditor.annots.choose_save_options", return_value=(False, False, False)):
+            self.assertTrue(tab.save())
+        self.assertTrue(has_illustrator_editing_data(tab.doc._doc))
+        with patch("pdfeditor.annots.choose_save_options", return_value=(False, False, True)):
+            self.assertTrue(tab.save())
+        self.assertFalse(has_illustrator_editing_data(tab.doc._doc))
+
+    def test_save_as_forwards_checked_option(self):
+        from pdfeditor.save_options_core import has_illustrator_editing_data
+        tab = self.open_editor()
+        self.add_private_data(tab)
+        target = self.path.with_name("compatible-copy.pdf")
+        with patch("pdfeditor.annots.QFileDialog.getSaveFileName", return_value=(str(target), "PDF")), \
+                patch("pdfeditor.annots.choose_save_options", return_value=(False, False, True)):
+            self.assertTrue(tab.save_as_dialog())
+        self.assertFalse(has_illustrator_editing_data(tab.doc._doc))
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_reader_shows_compatibility_only_and_respects_opt_out(self):
+        from pdfeditor.save_options_core import has_illustrator_editing_data
+        window = self.module.new_window(str(self.path), workspace_mode="reader")
+        self.settle()
+        tab = window._tabs.currentWidget()
+        self.add_private_data(tab)
+        tab.doc.add_note(0, 100, 100, "Reader note")
+        with patch("pdfeditor.annots.choose_save_options", return_value=(False, False, False)) as choice:
+            self.assertTrue(tab.save())
+        choice.assert_called_once_with(tab, compatibility_only=True)
+        self.assertTrue(has_illustrator_editing_data(tab.doc._doc))
+        self.assertTrue(tab.read_only)

@@ -39,6 +39,12 @@ class NavigationMixin:
         self._position_timer.timeout.connect(self.save_reading_position)
 
     def capture_view_state(self):
+        if self.is_editor_overview():
+            state = self._artboard_detail_state
+            if state is not None and state["page"] == self.page_index:
+                return dict(state)
+            return {"page": self.page_index, "zoom": self.view.zoom,
+                    "two_page": False, "horizontal": 0, "vertical": 0}
         hbar = self.view.horizontalScrollBar()
         vbar = self.view.verticalScrollBar()
         return {
@@ -77,6 +83,8 @@ class NavigationMixin:
             return
         self._restoring_view = True
         try:
+            if self.is_editor_overview():
+                self.open_page_editor(int(state.get("page", 0)), edit_text=False)
             self._two_page_mode = bool(state.get("two_page", False))
             self._two_page_act.setChecked(self._two_page_mode)
             self.view.zoom = max(self.view.ZOOM_MIN, min(

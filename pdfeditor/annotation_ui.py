@@ -65,8 +65,16 @@ class AnnotationPersistenceMixin:
             return False
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
+        from .save_options import choose_save_options
+        from .save_options_core import has_illustrator_editing_data
+        options = {}
+        if has_illustrator_editing_data(self.doc._doc):
+            choice = choose_save_options(self, compatibility_only=True)
+            if choice is None:
+                return False
+            options["illustrator_compatible"] = choice[2]
         try:
-            self.doc.export_annotated_pdf(path)
+            self.doc.export_annotated_pdf(path, **options)
         except Exception as error:
             QMessageBox.warning(self, tr("저장 실패"), str(error))
             return False

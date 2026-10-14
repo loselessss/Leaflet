@@ -87,6 +87,12 @@ HELP_HTML = """
 남습니다.</b> 리더모드에서도 형광펜과 메모를 사용할 수 있습니다.
 <b>Ctrl+S</b>는 원본 PDF에 반영하고, <b>Ctrl+Shift+S</b>는 다른 이름의
 PDF 사본을 저장합니다. 리더 주석은 원본에 자동 저장하지 않습니다.</p>
+<p>AI 파일은 수정 후 PDF로 저장합니다. 저장 옵션의 <b>Illustrator 호환 저장</b>은
+기본으로 켜져 기존 재편집 정보를 제거하고 현재 PDF 내용으로 열도록 합니다.
+체크를 해제하면 기존 정보를 보존하지만 이전 페이지·내용이 다시 나타날 수 있습니다.
+Illustrator 재편집 정보가 있는 문서는 Ctrl+S에서도 호환 여부를 확인합니다.
+보이는 PDF 내용은 유지하며 AI 파일 생성이나 원본 레이어·효과 편집 구조 보존을
+보장하는 기능은 아닙니다.</p>
 
 <h3>🔤 OCR (문자 인식)</h3>
 <table cellpadding="4">
@@ -114,6 +120,12 @@ PDF 출력 미리보기를 확인하세요. 글이 넘치면 상자를 늘리거
 mm 단위로 표시합니다. <b>페이지 구성</b>이나 Ctrl+Shift+P는 페이지를 드래그해
 순서를 바꿀 수 있는 별도 바둑판 창을 엽니다. 미저장 변경과 실행 취소·다시 실행
 이력은 두 창에서 이어집니다.</p>
+<p>편집 창의 <b>아트보드</b> 버튼이나 <b>Ctrl+Shift+A</b>로 여러 페이지를 한
+작업면에서 봅니다. Ctrl+휠로 확대·축소하고 Space를 누른 채 드래그하거나 가운데
+버튼으로 이동합니다. 페이지 번호를 드래그해 화면 배치를 바꾸고, <b>정렬</b>로
+선택한 열 수에 맞춥니다. 화면 배치는 PDF 순서나 좌표를 바꾸지 않습니다.
+페이지를 클릭해 선택한 뒤 더블클릭·Enter·<b>페이지 편집</b>으로 정밀 편집합니다.
+실제 페이지 순서·크기 변경은 기존 페이지 구성·페이지 크기 기능을 사용하세요.</p>
 <p>상단 탭에 <b>[읽기/GPU]</b>, <b>[편집/CPU]</b>처럼 모드와 실제 래스터화 경로를 표시합니다.
 CPU 래스터 이미지의 GPU 합성은 CPU로, 일부 CPU 래스터화가 섞이면 CPU+GPU로 표시합니다.
 독립 편집 창에는 프레젠테이션·전체화면 버튼과 메뉴, F5·F11 단축키가 없습니다.
@@ -226,6 +238,11 @@ PDF or PDF-compatible Illustrator files onto the window.</p>
 <p>Highlights and notes are available in reader mode too. <b>Ctrl+S</b>
 saves them into the original PDF; <b>Ctrl+Shift+S</b> saves a PDF copy.
 Reader annotations are not automatically saved into the original.</p>
+<p>Edited AI files are saved as PDF. The <b>Illustrator-compatible save</b> checkbox
+is on by default and removes private editing data so reopening uses the current PDF.
+Unchecking it preserves existing Illustrator data but may reopen old pages or content.
+Ctrl+S also asks when Illustrator editing data is present. Visible
+content is preserved, but the original AI layer and effect editing structure is not.</p>
 
 <h3>🔤 OCR</h3>
 <table cellpadding="4">
@@ -262,6 +279,13 @@ reader tab and closes the reader process when it was the last tab. A failed or
 timed-out open leaves the reader unchanged.
 <b>Page Organization</b> or Ctrl+Shift+P opens a separate thumbnail grid where
 pages can be reordered. Unsaved changes and undo/redo history remain shared.</p>
+<p>The editor's <b>Artboards</b> button or <b>Ctrl+Shift+A</b> shows multiple
+pages on one canvas. Zoom with Ctrl+wheel and pan with Space-drag or the middle
+mouse button. Drag page labels to change their screen positions, or use
+<b>Arrange</b> with the chosen column count. This does not change PDF page order
+or coordinates. Click to select a page, then double-click, press Enter or use
+<b>Edit page</b> for precise editing. Use the existing Page Organization and
+Page Size commands to change the actual document.</p>
 <p>Caption tabs show the mode and actual rasterization path, such as <b>[Read/GPU]</b>
 or <b>[Edit/CPU]</b>. GPU composition of CPU tiles is labeled CPU;
 partly CPU-rasterized pages are labeled CPU+GPU. Standalone editors

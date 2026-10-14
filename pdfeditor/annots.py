@@ -105,8 +105,18 @@ class AnnotMixin:
         if (is_illustrator_document(self.doc.path) or is_eps_document(self.doc.path) or
                 getattr(self, "_recovered_unsaved", False)):
             return self.save_as_dialog()
+        from .save_options_core import has_illustrator_editing_data
+        compatibility = None
+        if has_illustrator_editing_data(self.doc._doc):
+            options = choose_save_options(self, compatibility_only=True)
+            if options is None:
+                return False
+            compatibility = options[2]
         try:
-            self._save_document_file(self.doc.path)
+            if compatibility is None:
+                self._save_document_file(self.doc.path)
+            else:
+                self._save_document_file(self.doc.path, illustrator_compatible=compatibility)
         except Exception as e:
             QMessageBox.critical(self, "저장 실패", "저장할 수 없습니다.\n\n%s" % e)
             return False
@@ -130,12 +140,18 @@ class AnnotMixin:
         if not path:
             return False
         path = suggested_pdf_path(path)
-        options = (False, False) if self.doc.annotations_in_pdf else choose_save_options(self)
+        from .save_options_core import has_illustrator_editing_data
+        if self.doc.annotations_in_pdf:
+            options = (choose_save_options(self, compatibility_only=True)
+                       if has_illustrator_editing_data(self.doc._doc) else (False, False, None))
+        else:
+            options = choose_save_options(self)
         if options is None:
             return False
         try:
             self._save_document_file(path, remove_metadata=options[0],
-                                     remove_editing_data=options[1])
+                                     remove_editing_data=options[1],
+                                     illustrator_compatible=options[2] if len(options) > 2 else None)
         except Exception as e:
             QMessageBox.critical(self, "저장 실패", "저장할 수 없습니다.\n\n%s" % e)
             return False
@@ -149,12 +165,14 @@ class AnnotMixin:
         self.statusBar().showMessage("저장됨: %s" % path, 3000)
         return True
 
-    def _save_document_file(self, path, *, remove_metadata=False, remove_editing_data=False):
+    def _save_document_file(self, path, *, remove_metadata=False, remove_editing_data=False,
+                            illustrator_compatible=None):
+        options = {} if illustrator_compatible is None else {"illustrator_compatible": illustrator_compatible}
         if self.doc.annotations_in_pdf:
-            revision = self.doc.save_reader_pdf(path)
+            revision = self.doc.save_reader_pdf(path, **options)
         else:
             revision = self.doc.save_as(path, remove_metadata=remove_metadata,
-                                        remove_editing_data=remove_editing_data)
+                                        remove_editing_data=remove_editing_data, **options)
         if remove_editing_data:
             self.refresh_editor_overview()
         if self._shell.workspace_mode in ("reader", "editor"):
@@ -197,6 +215,8 @@ class AnnotMixin:
     def start_note_mode(self):
         if self.doc is None:
             return
+        if self.is_editor_overview():
+            self.open_page_editor(edit_text=False)
         # 메모 위치 클릭이 손 도구의 이동으로 소비되지 않게 선택 도구로 전환.
         self.set_interaction_mode("select", announce=False)
         self._note_mode = True

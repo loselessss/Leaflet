@@ -55,7 +55,7 @@ class EditMixin:
             return
         super().show_page(index)
         controller = getattr(self, "_object_controller", None)
-        if controller is not None:
+        if controller is not None and not self.is_editor_overview():
             controller.refresh()
         if self._edit_mode:
             self._show_edit_boxes()

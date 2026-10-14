@@ -11,6 +11,8 @@ GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 
 
 EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html)가 설치되어 있어야 합니다. 임시 PDF로 변환해 열고 편집 결과는 PDF로 저장합니다. Ghostscript는 설치 파일에 포함되지 않습니다.
 
+수정한 AI 파일은 PDF로 저장합니다. Illustrator 호환 저장은 기본으로 켜져 재편집 정보를 제거하고 현재 PDF 내용으로 엽니다. 해제하면 기존 정보를 보존하지만 이전 내용이 다시 나타날 수 있습니다. AI 파일 생성이나 원본 레이어·효과 편집 구조 보존 기능은 아닙니다.
+
 ## 다운로드
 
 **안정 버전은 [Microsoft Store](https://apps.microsoft.com/detail/9PCB1BH4WBDT?hl=ko-kr&gl=KR&ocid=pdpshare)에서 설치하세요.**
@@ -29,6 +31,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
   PDF에 직접 배치된 기존 이미지의 선택·이동·크기 조절·삭제.
 - **페이지:** 순서 변경·회전·자르기·병합·분리·추출,
   페이지 크기·도련 조정과 제본·접기 안내선 추가.
+- **아트보드:** 편집 작업면에서 여러 페이지를 함께 보고 확대·이동하거나 페이지 번호를 드래그해 화면 배치를 조절합니다. 더블클릭하면 정밀 편집으로 돌아가며 PDF 순서는 그대로입니다.
 - **주석:** 리더·편집모드에서 형광펜과 메모를 추가하고 원본 PDF에 저장하거나 사본으로 저장합니다. 텍스트 워터마크는 편집모드에서 사용할 수 있습니다.
 - **OCR:** 한국어·영어 스캔 문서를 컴퓨터에서 인식하고 검색 가능한 텍스트 추가.
 - **출력:** 인쇄, PDF 압축과 PDF·이미지 간 변환.
@@ -52,6 +55,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 | Ctrl+F | 텍스트 찾기 |
 | Ctrl+E | 편집 창 열기 / 텍스트 편집 켜기·끄기 |
 | Ctrl+Shift+P | 페이지 구성 |
+| Ctrl+Shift+A | 편집모드 아트보드 / 정밀 페이지 편집 전환 |
 | Ctrl+Z / Ctrl+Y | 실행 취소 / 다시 실행 |
 | Delete / 방향키 / Shift+방향키 | 편집 캔버스에서 선택한 개체 삭제 / 이동 / 크게 이동 |
 | Esc / Space 누르기 | 조작 취소 또는 개체 선택 해제 / 편집모드에서 임시 화면 이동 |

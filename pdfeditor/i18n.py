@@ -35,6 +35,7 @@ EN = {
     "파일(&F)": "&File",
     "편집(&E)": "&Edit",
     "페이지 구성(&P)": "Page &Organization",
+    "아트보드": "Artboards",
     "주석(&A)": "&Annotations",
     "보기(&V)": "&View",
     "도움말(&H)": "&Help",

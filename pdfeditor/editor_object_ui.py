@@ -86,6 +86,8 @@ class ObjectController:
         if self.tab.doc is None or self.tab.read_only:
             self.action.setChecked(False)
             return
+        if self.tab.is_editor_overview():
+            self.tab.open_page_editor(edit_text=False)
         self.tab.set_edit_mode(False)
         self.tab.cancel_note_mode()
         self.tab.set_interaction_mode("select", announce=False)

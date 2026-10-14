@@ -357,7 +357,13 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         rlay.setContentsMargins(0, 0, 0, 0)
         rlay.setSpacing(0)
         rlay.addWidget(self._build_search_bar())
-        rlay.addWidget(self.view, 1)
+        self._editor_canvas_stack = None
+        if self._shell.workspace_mode == "editor":
+            self._editor_canvas_stack = QStackedWidget()
+            self._editor_canvas_stack.addWidget(self.view)
+            rlay.addWidget(self._editor_canvas_stack, 1)
+        else:
+            rlay.addWidget(self.view, 1)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._sidebar_stack)
@@ -645,6 +651,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             v, "두 장 보기", "Ctrl+Shift+2", self.toggle_two_page_mode,
             "two_page")
         self._two_page_act.setCheckable(True)
+        self.build_artboard_action(v)
         v.addSeparator()
         sidebar_menu = v.addMenu("왼쪽 패널")
         sidebar_menu.setIcon(fluent_icon("pages"))
@@ -790,6 +797,10 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             if self._note_mode:
                 self.cancel_note_mode()
         self.view.set_interaction_mode(mode)
+        if self.is_editor_overview():
+            self._artboard_view.hand_mode = mode == "hand"
+            self._artboard_view.viewport().setCursor(
+                Qt.OpenHandCursor if mode == "hand" else Qt.ArrowCursor)
         self._hand_tool_act.setChecked(mode == "hand")
         self._select_tool_act.setChecked(mode == "select")
         if announce:
@@ -1065,6 +1076,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if getattr(self, "_closing_doc", False):
             return
         self._closing_doc = True
+        if self._artboard_view is not None:
+            self._artboard_view.set_document(None)
         if self._page_grid is not None:
             self._page_grid.stop_rendering()
         stop_rendering = getattr(self.view, "stop_rendering", None)
@@ -1121,6 +1134,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             mode = localize("Read", "읽기") if self.read_only else localize("Edit", "편집")
             devices = {self.view.rasterization_device(page)
                        for page in self.visible_document_pages()}
+            if self.is_editor_overview():
+                devices = {"CPU"}
             device = next(iter(devices)) if len(devices) == 1 else "CPU+GPU"
             name += " [%s/%s]" % (mode, device or "CPU")
         elif self.read_only:
@@ -1139,7 +1154,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
     def _update_render_diagnostic(self):
         visible = settings.render_diagnostics()
         self._render_diagnostic_label.setVisible(visible)
-        if not visible or self.doc is None or not hasattr(
+        if not visible or self.doc is None or self.is_editor_overview() or not hasattr(
                 self.view, "render_diagnostic"):
             self._render_diagnostic_label.setText("")
             self._render_diagnostic_label.setToolTip("")
@@ -1168,9 +1183,10 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             if hasattr(self, "_zoom_input"):
                 self._zoom_input.blockSignals(True)
                 scale = self._actual_size_scale()
+                workspace = self.active_workspace_view()
                 self._zoom_input.setRange(
-                    max(1, round(self.view.ZOOM_MIN / scale * 100)),
-                    round(self.view.ZOOM_MAX / scale * 100))
+                    max(1, round(workspace.ZOOM_MIN / scale * 100)),
+                    round(workspace.ZOOM_MAX / scale * 100))
                 self._zoom_input.setValue(round(self.zoom_percent()))
                 self._zoom_input.blockSignals(False)
         if hasattr(self, "_render_diagnostic_label"):

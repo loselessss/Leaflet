@@ -137,6 +137,7 @@ class Document:
         document._read_only = bool(read_only)
         document._annotations_enabled = not read_only
         document._annotations_in_pdf = False
+        document._edited_since_open = True
         document._annotation_store = None
         document.annotation_error = None
         document.path = path
@@ -516,6 +517,7 @@ class Document:
                                  store.cursor + (1 if forward else -1))
         self._doc.close()
         self._doc = restored
+        self._edited_since_open = True
         self.invalidate_render()
         return True
 
@@ -525,7 +527,7 @@ class Document:
             raise ValueError("Separate annotation saving requires a read-only annotation window.")
         self._annotation_store.save()
 
-    def save_reader_pdf(self, out_path):
+    def save_reader_pdf(self, out_path, *, illustrator_compatible=None):
         """Save reader annotations atomically, retaining the replay baseline.
 
         Body edits and the general save_as API remain blocked in read-only mode.
@@ -536,11 +538,11 @@ class Document:
             raise PermissionError("PDF saving is disabled for this annotation window.")
         if is_illustrator_document(out_path):
             raise ValueError("Save Illustrator annotations as a PDF instead.")
-        revision = self._save_as_file(out_path, True, False, False)
+        revision = self._save_as_file(out_path, True, False, False, illustrator_compatible)
         self._annotation_store.saved_revision = self._annotation_store.revision
         return revision
 
-    def export_annotated_pdf(self, out_path):
+    def export_annotated_pdf(self, out_path, *, illustrator_compatible=None):
         """Export a separate PDF without switching the source or sidecar."""
         self.ensure_annotatable()
         out_path = os.path.abspath(os.fspath(out_path))
@@ -558,8 +560,7 @@ class Document:
                                           dir=os.path.dirname(out_path))
         os.close(fd)
         try:
-            self._doc.save(temporary, garbage=3, deflate=True,
-                           encryption=fitz.PDF_ENCRYPT_KEEP)
+            self._write_save_file(temporary, False, False, illustrator_compatible)
             os.replace(temporary, out_path)
         finally:
             if os.path.exists(temporary):
@@ -1166,6 +1167,8 @@ class Document:
         (연산 중 폰트 등록 불가) 스냅샷 방식을 쓴다. 텍스트 편집은 보통
         용량이 크지 않은 문서에서 일어나므로 감당 가능.
         """
+        if self._doc.is_dirty:
+            self._edited_since_open = True
         return self._doc.tobytes(garbage=0, deflate=True)
 
     @document_write
@@ -1173,6 +1176,7 @@ class Document:
         """스냅샷으로 되돌린다 — 내부 문서를 통째로 교체."""
         self._doc.close()
         self._doc = fitz.open("pdf", data)
+        self._edited_since_open = True
         self._display_cache = {}
         self._gpu_vector_cache.clear()
         self._gpu_vector_cache_bytes = 0
@@ -1182,9 +1186,15 @@ class Document:
     # --- 저장 -------------------------------------------------------
 
     @document_write
-    def save_as(self, out_path, backup=True, *, remove_metadata=False, remove_editing_data=False):
-        """Save atomically, optionally removing document or object metadata."""
-        result = self._save_as_file(out_path, backup, remove_metadata, remove_editing_data)
+    def save_as(self, out_path, backup=True, *, remove_metadata=False, remove_editing_data=False,
+                illustrator_compatible=None):
+        """Save atomically with independent cleanup options.
+
+        Illustrator compatibility: True removes private round-trip data, False
+        preserves it, and None retains the API's automatic cleanup after edits.
+        """
+        result = self._save_as_file(out_path, backup, remove_metadata, remove_editing_data,
+                                    illustrator_compatible)
         if remove_metadata or remove_editing_data:
             from .save_options_core import strip_save_information
             strip_save_information(self._doc, remove_metadata=remove_metadata,
@@ -1193,11 +1203,19 @@ class Document:
                 self.invalidate_render()
         return result
 
-    def _write_save_file(self, path, remove_metadata, remove_editing_data):
+    def _write_save_file(self, path, remove_metadata, remove_editing_data, illustrator_compatible=None):
+        from .save_options_core import has_illustrator_editing_data, strip_save_information
+        # MuPDF serialization can clear is_dirty even if replacing the target
+        # subsequently fails. Keep session edit state for retries and undo.
+        if self._doc.is_dirty:
+            self._edited_since_open = True
+        remove_illustrator = ((illustrator_compatible is True or
+                              (illustrator_compatible is None and
+                               getattr(self, "_edited_since_open", False)))
+                             and has_illustrator_editing_data(self._doc))
         self._doc.save(path, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
-        if not (remove_metadata or remove_editing_data):
-            return
-        from .save_options_core import strip_save_information
+        if not (remove_metadata or remove_editing_data or remove_illustrator):
+            return False
         fd, cleaned = tempfile.mkstemp(prefix=".leaflet-clean-", suffix=".pdf",
                                       dir=os.path.dirname(path))
         os.close(fd)
@@ -1207,7 +1225,8 @@ class Document:
             pdf = self._open(path, self._password)
             try:
                 strip_save_information(pdf, remove_metadata=remove_metadata,
-                                       remove_editing_data=remove_editing_data)
+                                       remove_editing_data=remove_editing_data,
+                                       remove_illustrator_data=remove_illustrator)
                 pdf.save(cleaned, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
             finally:
                 pdf.close()
@@ -1215,8 +1234,10 @@ class Document:
         finally:
             if os.path.exists(cleaned):
                 os.unlink(cleaned)
+        return True
 
-    def _save_as_file(self, out_path, backup, remove_metadata, remove_editing_data):
+    def _save_as_file(self, out_path, backup, remove_metadata, remove_editing_data,
+                      illustrator_compatible=None):
         """항상 새 파일로 쓴 뒤 교체한다(설계 §4) — 저장 중 죽어도 원본이 남는다.
 
         incremental save는 쓰지 않는다: 원본 파일에 직접 덧쓰기 때문에
@@ -1230,8 +1251,15 @@ class Document:
         out_path = os.fspath(out_path)
         if is_eps_document(out_path):
             raise ValueError("EPS 원본에 덮어쓸 수 없습니다. PDF로 저장해 주세요.")
+        from .save_options_core import strip_illustrator_editing_data
+        edited = self._doc.is_dirty or getattr(self, "_edited_since_open", False)
+        clean_illustrator = illustrator_compatible is True or (illustrator_compatible is None and edited)
         if getattr(self, "_snapshot", None) is not None:
-            return self._save_isolated(out_path, backup, remove_metadata, remove_editing_data)
+            result = self._save_isolated(out_path, backup, remove_metadata, remove_editing_data,
+                                         illustrator_compatible)
+            if clean_illustrator:
+                strip_illustrator_editing_data(self._doc)
+            return result
         fd, tmp = tempfile.mkstemp(prefix=".spdf-save-", suffix=".pdf",
                                    dir=os.path.dirname(os.path.abspath(out_path)))
         os.close(fd)
@@ -1240,12 +1268,13 @@ class Document:
         backup_created = False
         pending = None
         try:
-            self._write_save_file(tmp, remove_metadata, remove_editing_data)
+            cleaned = self._write_save_file(tmp, remove_metadata, remove_editing_data,
+                                           illustrator_compatible)
             if backup and os.path.exists(out_path):
                 shutil.copy2(out_path, out_path + ".bak")
                 backup_created = True
             if same_path:
-                if remove_metadata or remove_editing_data:
+                if remove_metadata or remove_editing_data or cleaned:
                     fd, pending = tempfile.mkstemp(prefix=".leaflet-pending-", suffix=".pdf",
                                                   dir=os.path.dirname(os.path.abspath(out_path)))
                     os.close(fd)
@@ -1266,6 +1295,8 @@ class Document:
                         self._doc = fitz.open("pdf", stream.read())
                     if self._doc.needs_pass:
                         self._doc.authenticate(self._password or "")
+                    if edited:
+                        self._edited_since_open = True
                 raise
             if same_path:
                 self._doc = self._open(out_path, self._password)
@@ -1273,13 +1304,16 @@ class Document:
             if backup_created:
                 from .save_transaction import discard_backup
                 discard_backup(out_path)
+            if clean_illustrator:
+                strip_illustrator_editing_data(self._doc)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
             if pending is not None and os.path.exists(pending):
                 os.unlink(pending)
 
-    def _save_isolated(self, out_path, backup, remove_metadata=False, remove_editing_data=False):
+    def _save_isolated(self, out_path, backup, remove_metadata=False, remove_editing_data=False,
+                        illustrator_compatible=None):
         """No source handle release, no reader handshake, no in-place writes.
 
         Cooperating writers use a nonblocking OS lock. A changed source is a
@@ -1294,7 +1328,8 @@ class Document:
         fd, temporary = tempfile.mkstemp(prefix=".spdf-save-", suffix=".pdf", dir=folder)
         os.close(fd)
         try:
-            self._write_save_file(temporary, remove_metadata, remove_editing_data)
+            self._write_save_file(temporary, remove_metadata, remove_editing_data,
+                                  illustrator_compatible)
             # Validate and flush the completed file before touching the target.
             probe = self._open(temporary, self._password)
             try:
