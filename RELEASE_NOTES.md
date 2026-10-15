@@ -1,11 +1,12 @@
 # Leaflet Release Notes
 
-## Unreleased (1.36.0)
+## 1.36.0 - 2026-10-15
 
-- View multiple pages on the editor artboard canvas, zoom, pan and arrange their screen positions. Double-click a page for precise editing; screen arrangement does not change PDF page order.
+Reader mode now supports highlights and notes. Save applies them to the original PDF, while Save As creates a separate copy.
 
-- Add highlights and notes in reader mode. Save applies them to the original PDF; Save As creates a PDF copy. Keep annotation undo/redo and check unsaved changes before closing or switching to the editor.
-- Choose Illustrator-compatible PDF saving (on by default) to remove stale editing data and reopen the current PDF content. Uncheck it to retain existing Illustrator data; AI layer/effect editing is not recreated.
+- Undo and redo annotation changes, with unsaved-change checks when closing a document or switching to the editor.
+- View multiple pages on the new editor artboard canvas. Zoom, pan and arrange their screen positions, then double-click a page to edit it. Screen arrangement does not change PDF page order.
+- Choose Illustrator-compatible PDF saving, enabled by default, to prevent stale editing data from restoring old pages or content. Uncheck it to preserve existing data; this does not recreate the original AI layer or effect editing structure.
 
 ## 1.35.1 - 2026-10-09
 
