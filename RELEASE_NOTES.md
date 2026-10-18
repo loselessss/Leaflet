@@ -2,6 +2,7 @@
 
 ## Unreleased (1.37.0)
 
+- Reduce temporary GPU bitmap allocation during complex transparency and mask rendering.
 - Place images and objects with magnetic edge/center alignment. Toggle it in the toolbar or hold Ctrl for free movement with alignment guides.
 - Search, navigate, edit comments and delete annotations in a separate management window, with document saving and undo/redo.
 - Close the left thumbnail/bookmark panel directly using its X button.

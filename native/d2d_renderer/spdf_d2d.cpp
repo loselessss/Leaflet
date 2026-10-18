@@ -226,6 +226,7 @@ public:
         if (!swap_chain_ || drawing_ || width == 0 || height == 0) {
             return E_INVALIDARG;
         }
+        trim_scratch(0);
         d2d_context_->SetTarget(nullptr);
         target_.Reset();
         if (multithread_) multithread_->Enter();
@@ -882,12 +883,14 @@ public:
         if (capture.bytes == 0 || composite_bytes_ + capture.bytes > budget) {
             return E_OUTOFMEMORY;
         }
+        trim_scratch((std::min)(scratch_limit(), budget - composite_bytes_ - capture.bytes));
+        capture.pooled = mode != 0 || clip != nullptr || mask_build || nonisolated;
         const auto properties = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_TARGET,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                              D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
-        result = d2d_context_->CreateBitmap(
-            size, nullptr, 0, properties, &capture.source);
+        result = capture.pooled ? borrow_scratch(size, D2D1_BITMAP_OPTIONS_TARGET, capture.source)
+            : d2d_context_->CreateBitmap(size, nullptr, 0, properties, &capture.source);
         if (FAILED(result)) return result;
         if (nonisolated) {
             result = d2d_context_->Flush();
@@ -898,8 +901,7 @@ public:
             if (FAILED(result)) return result;
         }
         if (clip != nullptr) {
-            result = d2d_context_->CreateBitmap(
-                size, nullptr, 0, properties, &capture.mask);
+            result = borrow_scratch(size, D2D1_BITMAP_OPTIONS_TARGET, capture.mask);
             ComPtr<ID2D1SolidColorBrush> white;
             if (SUCCEEDED(result)) result = create_brush(0xffffffff, &white);
             if (SUCCEEDED(result)) result = d2d_context_->Flush();
@@ -1014,13 +1016,10 @@ public:
             return E_UNEXPECTED;
         }
         auto& capture = composite_captures_.back();
-        const auto properties = D2D1::BitmapProperties1(
-            D2D1_BITMAP_OPTIONS_TARGET, capture.source->GetPixelFormat(), dpi_, dpi_);
         ComPtr<ID2D1Bitmap1> coverage, content;
-        auto result = d2d_context_->CreateBitmap(
-            capture.source->GetPixelSize(), nullptr, 0, properties, &coverage);
-        if (SUCCEEDED(result)) result = d2d_context_->CreateBitmap(
-            capture.source->GetPixelSize(), nullptr, 0, properties, &content);
+        auto result = borrow_scratch(capture.source->GetPixelSize(), D2D1_BITMAP_OPTIONS_TARGET, coverage);
+        if (SUCCEEDED(result)) result = borrow_scratch(
+            capture.source->GetPixelSize(), D2D1_BITMAP_OPTIONS_TARGET, content);
         ComPtr<ID2D1RectangleGeometry> area;
         if (SUCCEEDED(result)) result = d2d_factory_->CreateRectangleGeometry(
             capture.mask_area, &area);
@@ -1082,6 +1081,9 @@ public:
         }
         // Reuse the same stack entry for the applied mask scope. Children now
         // see the backdrop; clip-pop applies the finished coverage exactly once.
+        // The coverage draw has been flushed before its old mask input is
+        // returned. Every borrower clears or fully overwrites these pixels.
+        recycle_scratch(capture.source);
         capture.mask = coverage;
         capture.source = content;
         capture.building_mask = false;
@@ -1107,12 +1109,7 @@ public:
                 capture.opacity, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         } else {
             ComPtr<ID2D1Bitmap1> backdrop;
-            const auto properties = D2D1::BitmapProperties1(
-                D2D1_BITMAP_OPTIONS_NONE,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-                                 D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
-            result = d2d_context_->CreateBitmap(
-                capture.source->GetPixelSize(), nullptr, 0, properties, &backdrop);
+            result = borrow_scratch(capture.source->GetPixelSize(), D2D1_BITMAP_OPTIONS_NONE, backdrop);
             if (SUCCEEDED(result)) {
                 d2d_context_->SetTarget(nullptr);
                 D2D1_POINT_2U destination{};
@@ -1147,6 +1144,7 @@ public:
                     result = d2d_context_->Flush();
                 }
                 d2d_context_->SetTransform(capture.previous_transform);
+                if (SUCCEEDED(result)) recycle_capture(capture, backdrop);
                 return result;
             }
             if (clip) {
@@ -1198,6 +1196,7 @@ public:
                     result = d2d_context_->Flush();
                 }
                 d2d_context_->SetTransform(capture.previous_transform);
+                if (SUCCEEDED(result)) recycle_capture(capture, backdrop);
                 return result;
             }
             ComPtr<ID2D1Effect> alpha;
@@ -1232,6 +1231,7 @@ public:
                     result = d2d_context_->Flush();
                 }
             }
+            if (SUCCEEDED(result)) recycle_capture(capture, backdrop);
         }
         d2d_context_->SetTransform(capture.previous_transform);
         return result;
@@ -1735,9 +1735,75 @@ private:
         bool knockout = false;
         bool nonisolated = false;
         bool cropped = false;
+        bool pooled = false;
         D2D1_PRIMITIVE_BLEND previous_blend = D2D1_PRIMITIVE_BLEND_SOURCE_OVER;
         std::uint64_t bytes = 0;
     };
+    struct ScratchEntry {
+        ComPtr<ID2D1Bitmap1> bitmap;
+        UINT32 width = 0, height = 0;
+        D2D1_BITMAP_OPTIONS options = D2D1_BITMAP_OPTIONS_NONE;
+        float dpi = 96;
+        std::uint64_t bytes = 0;
+    };
+    std::vector<ScratchEntry> scratch_pool_;
+    std::uint64_t scratch_bytes_ = 0;
+
+    std::uint64_t scratch_limit() noexcept {
+        const auto budget = scene_cache_budget();
+        const auto active_limit = (std::max)(256ULL * 1024 * 1024, budget);
+        const auto room = active_limit > composite_bytes_ ? active_limit - composite_bytes_ : 0;
+        return (std::min)({64ULL * 1024 * 1024, budget / 8, room});
+    }
+    void trim_scratch(std::uint64_t limit) noexcept {
+        while (!scratch_pool_.empty() && (scratch_bytes_ > limit || scratch_pool_.size() > 64)) {
+            scratch_bytes_ -= scratch_pool_.front().bytes;
+            scratch_pool_.erase(scratch_pool_.begin());
+        }
+    }
+    HRESULT borrow_scratch(D2D1_SIZE_U size, D2D1_BITMAP_OPTIONS options,
+            ComPtr<ID2D1Bitmap1>& bitmap) noexcept {
+        for (auto i = scratch_pool_.size(); i > 0; --i) {
+            const auto& entry = scratch_pool_[i - 1];
+            if (entry.width == size.width && entry.height == size.height &&
+                    entry.options == options && entry.dpi == dpi_) {
+                bitmap = entry.bitmap;
+                scratch_bytes_ -= entry.bytes;
+                scratch_pool_.erase(scratch_pool_.begin() + i - 1);
+                return S_OK;
+            }
+        }
+        const auto properties = D2D1::BitmapProperties1(options,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+        auto result = d2d_context_->CreateBitmap(size, nullptr, 0, properties, &bitmap);
+        if (FAILED(result) && !scratch_pool_.empty()) {
+            // Cached scratch must not prevent a different-sized allocation.
+            trim_scratch(0);
+            result = d2d_context_->CreateBitmap(size, nullptr, 0, properties, &bitmap);
+        }
+        return result;
+    }
+    void recycle_scratch(const ComPtr<ID2D1Bitmap1>& bitmap) noexcept {
+        if (!bitmap) return;
+        const auto size = bitmap->GetPixelSize();
+        const auto bytes = static_cast<std::uint64_t>(size.width) * size.height * 4;
+        const auto limit = scratch_limit();
+        if (!bytes || bytes > limit) return;
+        trim_scratch(limit - bytes);
+        try {
+            scratch_pool_.push_back({bitmap, size.width, size.height, bitmap->GetOptions(), dpi_, bytes});
+            scratch_bytes_ += bytes;
+            trim_scratch(limit);
+        } catch (const std::bad_alloc&) { /* Reuse is optional. */ }
+    }
+    void recycle_capture(const CompositeCapture& capture, const ComPtr<ID2D1Bitmap1>& backdrop) noexcept {
+        // Only complex scopes, whose final effect already requires Flush.
+        // Simple source-over scopes retain their original batching behavior.
+        if (!capture.pooled) return;
+        recycle_scratch(capture.source);
+        recycle_scratch(capture.mask);
+        recycle_scratch(backdrop);
+    }
     struct MaskCapture {
         ComPtr<ID2D1Image> previous_target;
         ComPtr<ID2D1CommandList> commands;

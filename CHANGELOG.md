@@ -7,6 +7,10 @@
 - Manage document annotations in a separate window: search notes, highlighted text and authors, filter by type, navigate to their locations, edit comments and delete annotations. Keep saving and undo/redo connected to the original document.
 - Add magnetic image/object placement against page and peer edges/centers, with visible alignment guides and a toolbar/property toggle. Hold Ctrl to move freely while retaining guides; keep Shift axis locking and single-step undo.
 
+### 성능 개선
+
+- Reuse bounded GPU scratch bitmaps for complex transparency and masks, preserving compositing order and pixel output while reducing repeated allocation.
+
 ### 개선
 
 - Close the left thumbnail/bookmark panel directly with its header's X button.

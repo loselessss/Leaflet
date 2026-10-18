@@ -98,3 +98,39 @@ class CompositeIntegrationTests(unittest.TestCase):
                                         zip(actual[offset:offset+4], expected)), expected)
                     outside = tuple(round(c*ad) for c in (192,128,64)) + (backdrop_alpha,)
                     self.assertEqual(tuple(actual[:4]), outside)
+
+    def test_repeated_nested_masks_match_fresh_surfaces_after_dpi_changes(self):
+        def draw(surface, phase):
+            surface.begin_frame(0x80607080)
+            surface.begin_composite_mask((4, 4, 60, 60), False, 0)
+            surface.fill_rect(8 + phase * 5, 8, 32 + phase * 5, 52,
+                              (0x40 + phase * 0x40) << 24 | 0xffffff)
+            surface.end_composite_mask()
+            surface.begin_composite_group(0, .7, isolated=False)
+            surface.begin_composite_group(1, .6)
+            surface.fill_rect(4, 12 + phase * 4, 60, 40 + phase * 4,
+                              (0xc0ff4020, 0x8040ff20, 0xa04020ff)[phase])
+            surface.end_composite_group()
+            surface.end_composite_group()
+            surface.end_clip_group()
+            pixels = surface.read_pixels_bgra(64, 64)
+            surface.end_frame()
+            return pixels
+
+        for dpi in (96, 144, 96):
+            self.surface.resize(64, 64, dpi)
+            expected = {}
+            for phase in range(3):
+                hwnd = self.user32.CreateWindowExW(
+                    0, "STATIC", "fresh composite reference", 0, 0, 0, 64, 64,
+                    None, None, None, None)
+                self.assertTrue(hwnd)
+                try:
+                    with D2DSurface(hwnd, 64, 64, dpi) as fresh:
+                        expected[phase] = draw(fresh, phase)
+                finally:
+                    self.user32.DestroyWindow(hwnd)
+            # Alternate coverage/color/alpha to expose stale scratch pixels.
+            for phase in (0, 1, 2, 0, 2, 1):
+                with self.subTest(dpi=dpi, phase=phase):
+                    self.assertEqual(draw(self.surface, phase), expected[phase])
