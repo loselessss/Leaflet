@@ -79,11 +79,13 @@ HELP_HTML = """
 <table cellpadding="4">
 <tr><td><b>Ctrl+H</b></td><td>선택 영역에 형광펜</td></tr>
 <tr><td><b>Ctrl+M</b></td><td>메모 추가 (그 다음 위치 클릭)</td></tr>
-<tr><td><b>Ctrl+Shift+M</b></td><td>메모 모아보기 패널 열기/닫기</td></tr>
+<tr><td><b>Ctrl+Shift+M</b></td><td>별도 주석 관리 창 열기 — 검색·위치 이동·내용 편집·삭제</td></tr>
 </table>
 <p>메모 아이콘에 <b>마우스를 올리면</b> 내용이 뜨고, <b>클릭</b>하면
-편집됩니다. 우클릭 메뉴로 형광펜/메모/삭제도 됩니다. 모아보기 패널에서
-항목을 클릭하면 해당 위치로 이동합니다. <b>주석은 저장해야 파일에
+편집됩니다. 우클릭 메뉴로 형광펜/메모/삭제도 됩니다. 별도 <b>주석 관리</b> 창에서
+메모·형광펜 텍스트·작성자를 검색하고, 항목을 더블클릭하거나 <b>위치로 이동</b>을
+누르면 해당 위치로 이동합니다. 내용 편집·삭제·실행 취소·저장도 할 수 있습니다.
+왼쪽 미리보기·책갈피 패널은 상단 <b>X</b> 버튼으로 바로 닫습니다. <b>주석은 저장해야 파일에
 남습니다.</b> 리더모드에서도 형광펜과 메모를 사용할 수 있습니다.
 <b>Ctrl+S</b>는 원본 PDF에 반영하고, <b>Ctrl+Shift+S</b>는 다른 이름의
 PDF 사본을 저장합니다. 리더 주석은 원본에 자동 저장하지 않습니다.</p>
@@ -120,6 +122,11 @@ PDF 출력 미리보기를 확인하세요. 글이 넘치면 상자를 늘리거
 mm 단위로 표시합니다. <b>페이지 구성</b>이나 Ctrl+Shift+P는 페이지를 드래그해
 순서를 바꿀 수 있는 별도 바둑판 창을 엽니다. 미저장 변경과 실행 취소·다시 실행
 이력은 두 창에서 이어집니다.</p>
+<p><b>그림·개체 배치</b>에서 그림을 드래그하면 페이지와 다른 개체의 가장자리·중심에
+자석처럼 붙고 분홍색 정렬 안내선이 표시됩니다. <b>자석 정렬</b> 버튼이나 개체 속성창에서
+켜고 끄며 설정은 다음 실행에도 유지합니다. <b>Ctrl</b>을 누르는 동안은 붙지 않고 안내선만
+남겨 미세 조정합니다. <b>Shift</b>는 직선 이동, 방향키는 조금씩 이동합니다.
+안내선은 화면에만 표시되며 PDF에 저장되지 않습니다.</p>
 <p>편집 창의 <b>아트보드</b> 버튼이나 <b>Ctrl+Shift+A</b>로 여러 페이지를 한
 작업면에서 봅니다. Ctrl+휠로 확대·축소하고 Space를 누른 채 드래그하거나 가운데
 버튼으로 이동합니다. 페이지 번호를 드래그해 화면 배치를 바꾸고, <b>정렬</b>로
@@ -233,11 +240,15 @@ PDF or PDF-compatible Illustrator files onto the window.</p>
 <table cellpadding="4">
 <tr><td><b>Ctrl+H</b></td><td>Highlight selected text</td></tr>
 <tr><td><b>Ctrl+M</b></td><td>Add a note at a clicked location</td></tr>
-<tr><td><b>Ctrl+Shift+M</b></td><td>Toggle the notes panel</td></tr>
+<tr><td><b>Ctrl+Shift+M</b></td><td>Open the annotation manager window — search, navigate, edit comments and delete</td></tr>
 </table>
 <p>Highlights and notes are available in reader mode too. <b>Ctrl+S</b>
 saves them into the original PDF; <b>Ctrl+Shift+S</b> saves a PDF copy.
 Reader annotations are not automatically saved into the original.</p>
+<p>The separate <b>Annotation Manager</b> searches notes, highlighted text and
+authors. Double-click a row or use <b>Go to</b> to navigate; edit comments, delete,
+undo/redo and save from the same window. Close the left thumbnail/bookmark panel
+directly with its header's <b>X</b> button.</p>
 <p>Edited AI files are saved as PDF. The <b>Illustrator-compatible save</b> checkbox
 is on by default and removes private editing data so reopening uses the current PDF.
 Unchecking it preserves existing Illustrator data but may reopen old pages or content.
@@ -279,6 +290,11 @@ reader tab and closes the reader process when it was the last tab. A failed or
 timed-out open leaves the reader unchanged.
 <b>Page Organization</b> or Ctrl+Shift+P opens a separate thumbnail grid where
 pages can be reordered. Unsaved changes and undo/redo history remain shared.</p>
+<p>Use <b>Arrange objects</b> to drag images with magnetic alignment to page and object
+edges/centers. Pink guides mark alignment. Toggle <b>Magnetic alignment</b> in the toolbar
+or object properties; the setting is remembered. Hold <b>Ctrl</b> for free movement while
+keeping guides, <b>Shift</b> to constrain movement, or use arrow keys for small adjustments.
+Guides appear only on screen and are not saved into the PDF.</p>
 <p>The editor's <b>Artboards</b> button or <b>Ctrl+Shift+A</b> shows multiple
 pages on one canvas. Zoom with Ctrl+wheel and pan with Space-drag or the middle
 mouse button. Drag page labels to change their screen positions, or use

@@ -211,6 +211,16 @@ def set_thumbnail_width(width):
     _save(d)
 
 
+def object_snapping():
+    return bool(_load().get("object_snapping", True))
+
+
+def set_object_snapping(enabled):
+    data = _load()
+    data["object_snapping"] = bool(enabled)
+    _save(data)
+
+
 def sidebar_mode():
     mode = str(_load().get("sidebar_mode", DEFAULT_SIDEBAR_MODE)).lower()
     return mode if mode in SIDEBAR_MODES else DEFAULT_SIDEBAR_MODE

@@ -7,9 +7,10 @@ from PyQt5.QtWidgets import (QAction, QCheckBox, QDockWidget, QDoubleSpinBox, QF
                              QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
                              QVBoxLayout, QWidget)
 
-from . import editor_objects as model
+from . import editor_objects as model, settings
 from .i18n import localize
 from .icons import fluent_icon
+from .object_snapping import SnapTargets
 
 
 class ObjectController:
@@ -23,10 +24,14 @@ class ObjectController:
         self.context = None
         self.drag = None
         self.preview = None
+        self.guides = []
+        self._snap_targets = None
+        self._drag_point = None
+        self._drag_modifiers = Qt.NoModifier
         self.hovered = None
         self._temporary_mode = None
         self._ratios = {}
-        self.action = QAction(localize("Select object", "개체 선택"), tab)
+        self.action = QAction(localize("Arrange objects", "그림·개체 배치"), tab)
         self.action.setIcon(fluent_icon("object_select"))
         self.action.setCheckable(True)
         self.action.triggered.connect(self.activate)
@@ -36,6 +41,14 @@ class ObjectController:
         self.image_action = QAction(localize("Place image…", "이미지 배치…"), tab)
         self.image_action.setIcon(fluent_icon("image"))
         self.image_action.triggered.connect(self.add_image)
+        self.snap_action = QAction(localize("Magnetic alignment", "자석 정렬"), tab)
+        self.snap_action.setIcon(fluent_icon("magnet"))
+        self.snap_action.setCheckable(True)
+        self.snap_action.setChecked(settings.object_snapping())
+        self.snap_action.setToolTip(localize(
+            "Snap to page and object edges/centers. Hold Ctrl for guides without snapping.",
+            "페이지와 개체의 가장자리·중심에 맞춥니다. Ctrl을 누르면 안내선만 표시합니다."))
+        self.snap_action.toggled.connect(self._set_snapping)
         self.dock = QDockWidget(localize("Object properties", "개체 속성"), tab)
         self.dock.setObjectName("editorObjectProperties")
         self.dock.setAllowedAreas(Qt.RightDockWidgetArea)
@@ -45,6 +58,17 @@ class ObjectController:
         self.label.setWordWrap(True)
         self.label.setStyleSheet("font-weight: 600;")
         layout.addWidget(self.label)
+        self.snap_check = QCheckBox(self.snap_action.text())
+        self.snap_check.setChecked(self.snap_action.isChecked())
+        self.snap_check.setToolTip(self.snap_action.toolTip())
+        self.snap_check.toggled.connect(self.snap_action.setChecked)
+        self.snap_action.toggled.connect(self.snap_check.setChecked)
+        layout.addWidget(self.snap_check)
+        hint = QLabel(localize(
+            "Drag to align · Ctrl: guides only · Shift: straight movement",
+            "드래그로 정렬 · Ctrl: 안내선만 · Shift: 직선 이동"))
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         self.geometry_group = QGroupBox(localize("Position and size", "위치와 크기"))
         geometry = QFormLayout(self.geometry_group)
         layout.addWidget(self.geometry_group)
@@ -248,6 +272,70 @@ class ObjectController:
     def cancel(self):
         self.drag = None
         self.preview = None
+        self.guides = []
+        self._snap_targets = None
+        self._drag_point = None
+
+    def _set_snapping(self, enabled):
+        settings.set_object_snapping(enabled)
+        if self.drag and self._drag_point is not None:
+            self._update_drag(self._drag_point, self._drag_modifiers)
+        else:
+            self.guides = []
+            self.tab.view.viewport().update()
+
+    def _snap_tolerance(self):
+        view = self.tab.view
+        transform = view._page_transforms[self.tab.page_index]
+        origin = view.viewportTransform().map(transform.map(QPointF()))
+        # Qt viewport coordinates are device-independent pixels, including HiDPI.
+        return tuple(6 / max(.001, (view.viewportTransform().map(
+            transform.map(point)) - origin).manhattanLength())
+            for point in (QPointF(1, 0), QPointF(0, 1)))
+
+    def _update_drag(self, point, modifiers):
+        self._drag_point = point
+        self._drag_modifiers = modifiers
+        start, original, resize = self.drag
+        page = self.tab.doc._doc[self.tab.page_index]
+        view = self.tab.view
+        dx, dy = point.x - start.x, point.y - start.y
+        self.guides = []
+        if resize is None:
+            allowed = (True, True)
+            if modifiers & Qt.ShiftModifier:
+                # Constrain in screen axes, including rotated pages.
+                delta = fitz.Point(dx, dy) * page.rotation_matrix - fitz.Point(0, 0) * page.rotation_matrix
+                horizontal = abs(delta.x) >= abs(delta.y)
+                allowed = (horizontal, not horizontal)
+                delta = fitz.Point(delta.x, 0) if horizontal else fitz.Point(0, delta.y)
+                delta = delta * page.derotation_matrix - fitz.Point(0, 0) * page.derotation_matrix
+                dx, dy = delta.x, delta.y
+            rect = fitz.Rect(original.x0 + dx, original.y0 + dy, original.x1 + dx, original.y1 + dy)
+            if self.snap_action.isChecked() and self._snap_targets is not None:
+                display, self.guides = self._snap_targets.place(
+                    rect * page.rotation_matrix, self._snap_tolerance(),
+                    bypass=bool(modifiers & Qt.ControlModifier), allowed=allowed)
+                rect = fitz.Rect(display) * page.derotation_matrix
+            self.preview = rect
+            view.viewport().setCursor(Qt.ClosedHandCursor)
+        else:
+            x, y = resize
+            width = max(.3, original.width + dx * (1 if x == 1 else -1)) if x != .5 else original.width
+            height = max(.3, original.height + dy * (1 if y == 1 else -1)) if y != .5 else original.height
+            if self.current()["kind"] == "image" and self.ratio_lock.isChecked():
+                if x == .5 or (y != .5 and abs(height / original.height - 1) > abs(width / original.width - 1)):
+                    width = height * original.width / original.height
+                else:
+                    height = width * original.height / original.width
+                scale = max(1, .3 / width, .3 / height)
+                width, height = width * scale, height * scale
+            left = original.x1 - width if x == 0 else (original.x0 + (original.width - width) / 2 if x == .5 else original.x0)
+            top = original.y1 - height if y == 0 else (original.y0 + (original.height - height) / 2 if y == .5 else original.y0)
+            self.preview = fitz.Rect(left, top, left + width, top + height)
+            self._cursor(resize)
+        self._show_measurement(self.preview)
+        view.viewport().update()
 
     def restore_hand(self):
         if self._temporary_mode is not None:
@@ -285,6 +373,11 @@ class ObjectController:
 
     def key(self, event, release=False):
         view = self.tab.view
+        if self.drag and self._drag_point is not None and event.key() in (Qt.Key_Control, Qt.Key_Shift):
+            flag = Qt.ControlModifier if event.key() == Qt.Key_Control else Qt.ShiftModifier
+            modifiers = event.modifiers() & ~flag if release else event.modifiers() | flag
+            self._update_drag(self._drag_point, modifiers)
+            return True
         if release and event.key() == Qt.Key_Space and self._temporary_mode is not None:
             if not event.isAutoRepeat():
                 self.restore_hand()
@@ -377,39 +470,15 @@ class ObjectController:
             self.refresh()
             if item:
                 self.drag = (point, fitz.Rect(item["rect"]), resize)
+                self._snap_targets = SnapTargets([tuple(page.rect)] + [
+                    tuple(fitz.Rect(peer["rect"]) * page.rotation_matrix)
+                    for peer in self.items if peer["id"] != item["id"]])
                 self._consume_release = True
             elif automatic:
                 return False
             view.setFocus()
         elif name == "mouseMoveEvent" and self.drag:
-            start, original, resize = self.drag
-            dx, dy = point.x - start.x, point.y - start.y
-            if resize is None:
-                if event.modifiers() & Qt.ShiftModifier:
-                    # Constrain in screen axes, including rotated pages.
-                    delta = fitz.Point(dx, dy) * page.rotation_matrix - fitz.Point(0, 0) * page.rotation_matrix
-                    delta = fitz.Point(delta.x, 0) if abs(delta.x) >= abs(delta.y) else fitz.Point(0, delta.y)
-                    delta = delta * page.derotation_matrix - fitz.Point(0, 0) * page.derotation_matrix
-                    dx, dy = delta.x, delta.y
-                self.preview = fitz.Rect(original.x0 + dx, original.y0 + dy, original.x1 + dx, original.y1 + dy)
-                view.viewport().setCursor(Qt.ClosedHandCursor)
-            else:
-                x, y = resize
-                width = max(.3, original.width + dx * (1 if x == 1 else -1)) if x != .5 else original.width
-                height = max(.3, original.height + dy * (1 if y == 1 else -1)) if y != .5 else original.height
-                if self.current()["kind"] == "image" and self.ratio_lock.isChecked():
-                    if x == .5 or (y != .5 and abs(height / original.height - 1) > abs(width / original.width - 1)):
-                        width = height * original.width / original.height
-                    else:
-                        height = width * original.height / original.width
-                    scale = max(1, .3 / width, .3 / height)
-                    width, height = width * scale, height * scale
-                left = original.x1 - width if x == 0 else (original.x0 + (original.width - width) / 2 if x == .5 else original.x0)
-                top = original.y1 - height if y == 0 else (original.y0 + (original.height - height) / 2 if y == .5 else original.y0)
-                self.preview = fitz.Rect(left, top, left + width, top + height)
-                self._cursor(resize)
-            self._show_measurement(self.preview)
-            view.viewport().update()
+            self._update_drag(point, event.modifiers())
         elif name == "mouseMoveEvent":
             if event.buttons() != Qt.NoButton:
                 self.hovered = None
@@ -429,6 +498,8 @@ class ObjectController:
             if not self._consume_release and automatic:
                 return False
             self._consume_release = False
+            if self.drag and self._drag_point is not None:
+                self._update_drag(point, event.modifiers())
             rect = self.preview
             self.cancel()
             if rect is not None:
@@ -460,6 +531,12 @@ class ObjectController:
 
     def paint(self, painter):
         painter.save()
+        guide_pen = QPen(QColor("#d946a8"))
+        guide_pen.setWidthF(1 / max(.1, self.tab.view.zoom))
+        painter.setPen(guide_pen)
+        for guide in self.guides:
+            start, end = self._guide_points(guide)
+            painter.drawLine(start, end)
         painter.setBrush(Qt.NoBrush)
         pen = QPen(QColor("#2563eb"))
         pen.setWidthF(1.5 / max(.1, self.tab.view.zoom))
@@ -469,6 +546,17 @@ class ObjectController:
         painter.restore()
 
     def paint_native(self, surface):
+        half = .5 / max(.1, self.tab.view.zoom)
+        for guide in self.guides:
+            start, end = self._guide_points(guide)
+            surface.fill_rect(start.x() - half, start.y() - half,
+                              end.x() + half, end.y() + half, 0xffd946a8)
         for rect in self.outlines():
             surface.stroke_rect(rect.left(), rect.top(), rect.right(), rect.bottom(),
                                 0xff2563eb, 1.5 / max(.1, self.tab.view.zoom))
+
+    @staticmethod
+    def _guide_points(guide):
+        if guide.axis == 0:
+            return QPointF(guide.position, guide.start), QPointF(guide.position, guide.end)
+        return QPointF(guide.start, guide.position), QPointF(guide.end, guide.position)

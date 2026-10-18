@@ -349,10 +349,12 @@ class ViewerMixin(NavigationMixin):
         self._sidebar_mode = mode
         if mode == "none":
             self._sidebar_stack.hide()
+            self._sidebar_container.hide()
         else:
             self._sidebar_stack.setCurrentWidget(
                 self.thumbs if mode == "thumbnails" else self.bookmarks)
             self._sidebar_stack.show()
+            self._sidebar_container.show()
             width = settings.thumbnail_width()
             self._viewer_splitter.setSizes(
                 [width, max(1, self._viewer_splitter.width() - width)])
@@ -364,6 +366,8 @@ class ViewerMixin(NavigationMixin):
             "none": tr("없음"), "thumbnails": tr("페이지 미리보기"),
             "bookmarks": tr("책갈피"),
         }
+        self._sidebar_title.setProperty("_spdf_i18n_source_text", labels[mode])
+        self._sidebar_title.setText(labels[mode])
         if hasattr(self, "_sidebar_cycle_act"):
             self._sidebar_cycle_act.setToolTip(
                 localize(

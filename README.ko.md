@@ -7,7 +7,7 @@
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을
 사용할 수 있는 Windows PDF 리더·편집기입니다.
 
-**버전: 1.36.0** · Windows · 한국어·영어
+**버전: 1.37.0 (개발 중, 미배포)** · Windows · 한국어·영어
 
 EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html)가 설치되어 있어야 합니다. 임시 PDF로 변환해 열고 편집 결과는 PDF로 저장합니다. Ghostscript는 설치 파일에 포함되지 않습니다.
 
@@ -33,6 +33,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
   페이지 크기·도련 조정과 제본·접기 안내선 추가.
 - **아트보드:** 편집 작업면에서 여러 페이지를 함께 보고 확대·이동하거나 페이지 번호를 드래그해 화면 배치를 조절합니다. 더블클릭하면 정밀 편집으로 돌아가며 PDF 순서는 그대로입니다.
 - **주석:** 리더·편집모드에서 형광펜과 메모를 추가하고 원본 PDF에 저장하거나 사본으로 저장합니다. 텍스트 워터마크는 편집모드에서 사용할 수 있습니다.
+  Ctrl+Shift+M으로 별도 주석 관리 창을 열어 검색·위치 이동·내용 편집·삭제와 실행 취소·저장을 할 수 있습니다.
 - **OCR:** 한국어·영어 스캔 문서를 컴퓨터에서 인식하고 검색 가능한 텍스트 추가.
 - **출력:** 인쇄, PDF 압축과 PDF·이미지 간 변환.
   다른 이름으로 저장에서 문서 메타데이터·Leaflet 개체 재편집 정보 제거를 각각 선택.
@@ -49,6 +50,9 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 
 ## 단축키
 
+편집 창의 **그림·개체 배치**에서 그림을 드래그하면 페이지·다른 개체의 가장자리와 중심에 자석처럼 붙습니다.
+**자석 정렬** 버튼이나 속성창에서 켜고 끌 수 있습니다. **Ctrl**을 누르면 안내선만 남겨 자유롭게 이동하고, **Shift**는 직선 이동입니다.
+
 | 단축키 | 기능 |
 | --- | --- |
 | Ctrl+O / Ctrl+S / Ctrl+P | 열기 / 저장 / 인쇄 |
@@ -56,6 +60,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 | Ctrl+E | 편집 창 열기 / 텍스트 편집 켜기·끄기 |
 | Ctrl+Shift+P | 페이지 구성 |
 | Ctrl+Shift+A | 편집모드 아트보드 / 정밀 페이지 편집 전환 |
+| Ctrl+Shift+M | 별도 주석 관리 창 열기 |
 | Ctrl+Z / Ctrl+Y | 실행 취소 / 다시 실행 |
 | Delete / 방향키 / Shift+방향키 | 편집 캔버스에서 선택한 개체 삭제 / 이동 / 크게 이동 |
 | Esc / Space 누르기 | 조작 취소 또는 개체 선택 해제 / 편집모드에서 임시 화면 이동 |

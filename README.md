@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Version: 1.36.0** · Windows · English and Korean
+**Version: 1.37.0 (development, unreleased)** · Windows · English and Korean
 
 EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html) installed on the PC. Leaflet converts EPS to a private PDF for viewing and editing; save the result as PDF. Ghostscript is not bundled.
 
@@ -29,6 +29,8 @@ Press **F1** for the full usage guide.
   two-page view, and presentation mode.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
+  Magnetic alignment snaps moving objects to page/object edges and centers; toggle it in
+  the toolbar or properties. Hold Ctrl for free movement with guides, or Shift for straight movement.
 - **Pages:** Reorder, rotate, crop, merge, split, and extract pages.
   Adjust page size and bleed, or add binding and folding guides.
 - **Artboards:** View multiple pages on the editor canvas, zoom and pan, or drag page labels to arrange their screen positions. Double-click a page for precise editing; PDF page order is unchanged.
@@ -48,6 +50,10 @@ again after saving. Click existing direct PDF images to select them in the edito
 images inside groups or clipping scopes and existing vector artwork are not yet editable.
 
 ## Shortcuts
+
+Open **Annotations → Annotation Manager** (Ctrl+Shift+M) to search and manage
+notes and highlights in a separate window. Close the left thumbnail/bookmark
+panel directly with the X button in its header.
 
 | Shortcut | Action |
 | --- | --- |

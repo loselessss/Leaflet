@@ -108,6 +108,8 @@ EN = {
     "선택 영역 형광펜": "Highlight Selection",
     "메모 추가 (위치 클릭)": "Add Note (Click Location)",
     "메모 모아보기": "Notes Panel",
+    "주석 관리...": "Annotation Manager...",
+    "왼쪽 패널 닫기": "Close Left Panel",
     "현재 페이지 OCR": "OCR Current Page",
     "전체 문서 OCR (텍스트 없는 페이지만)": "OCR Document (Pages Without Text)",
     "AI 고품질 OCR 설정...": "High-quality AI OCR Settings...",

@@ -1,5 +1,11 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.0)
+
+- Place images and objects with magnetic edge/center alignment. Toggle it in the toolbar or hold Ctrl for free movement with alignment guides.
+- Search, navigate, edit comments and delete annotations in a separate management window, with document saving and undo/redo.
+- Close the left thumbnail/bookmark panel directly using its X button.
+
 ## 1.36.0 - 2026-10-15
 
 Reader mode now supports highlights and notes. Save applies them to the original PDF, while Save As creates a separate copy.

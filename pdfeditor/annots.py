@@ -1,13 +1,10 @@
-"""AnnotMixin — 형광펜/메모 주석 + 저장 + 변경 추적(dirty).
-
-undo/redo 엔진(v0.4 예정)이 생기기 전까지는 주석 삭제가 되돌리기 대신이다.
-"""
+"""Annotation commands, document-bound management and save/undo integration."""
 
 import os
 
 from PyQt5.QtCore import QRectF, Qt
 from PyQt5.QtWidgets import (
-    QFileDialog, QInputDialog, QListWidgetItem, QMenu, QMessageBox, QToolTip,
+    QFileDialog, QInputDialog, QMenu, QMessageBox, QToolTip,
 )
 
 from .i18n import localize, tr
@@ -33,12 +30,14 @@ class AnnotMixin:
         # 페이지별 주석 목록 캐시 — 마우스 호버마다 PyMuPDF에 물어보면
         # 매 이동 이벤트에 객체를 새로 만들게 되므로 여기서 재사용한다.
         self._annot_cache = {}
+        self._annotation_manager = None
 
     def _reset_annots(self):
         self._dirty = False
         self._note_mode = False
         self._annot_cache.clear()
-        self._notes_list.clear()
+        if self._annotation_manager is not None:
+            self._annotation_manager.reset()
 
     def _annots_cached(self, page):
         a = self._annot_cache.get(page)
@@ -48,10 +47,10 @@ class AnnotMixin:
         return a
 
     def _notes_changed(self):
-        """주석이 바뀌었을 때 — 캐시 무효화 + 모아보기 패널 갱신."""
+        """주석이 바뀌었을 때 캐시를 비우고 열린 관리 창을 갱신한다."""
         self._annot_cache.clear()
-        if self._notes_dock.isVisible():
-            self._rebuild_notes_list()
+        if self._annotation_manager is not None and self._annotation_manager.isVisible():
+            self._annotation_manager.refresh()
 
     # --- 변경 추적 -----------------------------------------------------
 
@@ -301,53 +300,89 @@ class AnnotMixin:
         self.refresh_page(self.page_index)
         self._annotation_changed()
 
-    # --- 메모 모아보기 패널 --------------------------------------------------
+    # --- 별도 주석 관리 창 --------------------------------------------------
 
     def toggle_notes_panel(self):
-        if self._notes_dock.isVisible():
-            self._notes_dock.hide()
-        else:
-            self._rebuild_notes_list()
-            self._notes_dock.show()
-
-    def _rebuild_notes_list(self):
-        self._notes_list.clear()
         if self.doc is None:
-            self._notes_dock.setWindowTitle(tr("메모 모아보기"))
             return
-        n = 0
-        for p in range(self.doc.page_count):
-            for a in self._annots_cached(p):
-                if a["kind"] != "Text":
-                    continue
-                first = a["text"].splitlines()[0] if a["text"] else "(내용 없음)"
-                if len(first) > 40:
-                    first = first[:40] + "…"
-                it = QListWidgetItem(tr("%d쪽 — %s" % (p + 1, first)))
-                it.setToolTip(a["text"])  # 전체 내용은 툴팁으로
-                it.setData(Qt.UserRole, (p, a["xref"], a["rect"]))
-                self._notes_list.addItem(it)
-                n += 1
-        self._notes_dock.setWindowTitle(tr("메모 모아보기 (%d)" % n))
+        if self._annotation_manager is None:
+            from .annotation_manager import AnnotationManager
+            self._annotation_manager = AnnotationManager(self)
+        self._annotation_manager.show()
+        self._annotation_manager.raise_()
+        self._annotation_manager.activateWindow()
 
-    def _note_item_target(self, item):
-        p, xref, rect = item.data(Qt.UserRole)
-        self.show_page(p)
+    def _managed_annotation(self, page, xref):
+        if self.doc is None or not 0 <= page < self.doc.page_count:
+            return None
+        return next((item for item in self.doc.annots(page) if item["xref"] == xref), None)
+
+    def navigate_to_annotation(self, page, xref):
+        annotation = self._managed_annotation(page, xref)
+        if annotation is None:
+            return False
+        self._shell._tabs.setCurrentWidget(self)
+        if self.is_editor_overview():
+            self.open_page_editor(page, edit_text=False)
+        else:
+            self.show_page(page)
+        if self.page_index != page:
+            return False  # An inline edit may have prevented page navigation.
+        rect = annotation["rect"]
         self.view.ensure_rect_visible(
             QRectF(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]))
-        return p, xref
+        self._shell.raise_()
+        return True
 
-    def on_note_item_clicked(self, item):
-        """클릭 — 해당 메모 위치로 이동."""
-        self._note_item_target(item)
+    @annotation_command
+    def edit_managed_annotation(self, page, xref):
+        from .annotation_manager import EDITABLE_COMMENT_KINDS
+        annotation = self._managed_annotation(page, xref)
+        if annotation is None or annotation["kind"] not in EDITABLE_COMMENT_KINDS:
+            return
+        document = self.doc
+        text, ok = QInputDialog.getMultiLineText(
+            self._annotation_manager or self, localize("Edit annotation comment", "주석 내용 편집"),
+            localize("Content:", "내용:"), annotation["text"])
+        if not ok or text == annotation["text"] or self.doc is not document:
+            return
+        current = self._managed_annotation(page, xref)
+        if current is None or current.get("id") != annotation.get("id"):
+            return
+        try:
+            if not document.annotation_mode:
+                self._push_undo()
+            document.set_note_text(page, xref, text)
+        except Exception as error:
+            QMessageBox.warning(self, localize("Annotation edit failed", "주석 편집 실패"), str(error))
+            return
+        self.refresh_page(page)
+        self._annotation_changed()
 
-    def on_note_item_double(self, item):
-        """더블클릭 — 이동한 뒤 바로 편집."""
-        p, xref = self._note_item_target(item)
-        for a in self._annots_cached(p):
-            if a["xref"] == xref:
-                self.edit_annot(a)
-                return
+    @annotation_command
+    def delete_managed_annotation(self, page, xref):
+        annotation = self._managed_annotation(page, xref)
+        if annotation is None:
+            return
+        document = self.doc
+        parent = self._annotation_manager or self
+        answer = QMessageBox.question(parent, tr("주석 삭제"),
+            localize("Delete the selected annotation on page %d?", "%d쪽의 선택한 주석을 삭제할까요?") % (page + 1),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes or self.doc is not document:
+            return
+        current = self._managed_annotation(page, xref)
+        if current is None or current.get("id") != annotation.get("id"):
+            return
+        try:
+            if not document.annotation_mode:
+                self._push_undo()
+            document.delete_annot(page, xref)
+        except Exception as error:
+            QMessageBox.warning(self, tr("주석 삭제"), str(error))
+            return
+        self.refresh_page(page)
+        self._annotation_changed()
 
     # --- 우클릭 메뉴 -------------------------------------------------------
 

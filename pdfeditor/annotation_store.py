@@ -138,8 +138,6 @@ class AnnotationStore:
             if name == "delete_annot":
                 page.delete_annot(annot)
                 return None
-            if annot.type[0] != fitz.PDF_ANNOT_TEXT:
-                raise ValueError("Only text notes can have their content edited.")
             annot.set_info(content=args["text"])
             annot.update()
             return None

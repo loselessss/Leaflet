@@ -836,15 +836,32 @@ class Document:
         annot.update()
         return annot.xref
 
-    def annots(self, index):
+    def annots(self, index, *, include_text=False):
         """페이지의 주석 목록 — 우클릭 히트테스트/편집용."""
         page = self._doc[index]
         out = []
+        words = None
         for a in page.annots():
             r = a.rect
+            info = a.info
+            quote = ""
+            if (include_text and self._doc.permissions & fitz.PDF_PERM_COPY and
+                    a.type[1] in ("Highlight", "Underline", "StrikeOut", "Squiggly")):
+                if words is None:
+                    words = page.get_text("words")
+                vertices = a.vertices or []
+                rectangles = [fitz.Quad(vertices[i:i + 4]).rect
+                              for i in range(0, len(vertices) - 3, 4)]
+                selected = []
+                for word in words:
+                    center = fitz.Point((word[0] + word[2]) / 2, (word[1] + word[3]) / 2)
+                    if any(center in rectangle for rectangle in rectangles):
+                        selected.append(word[4])
+                quote = " ".join(selected)
             out.append({"xref": a.xref, "kind": a.type[1],
                         "rect": (r.x0, r.y0, r.x1, r.y1),
-                        "text": a.info.get("content", "")})
+                        "text": info.get("content", ""), "author": info.get("title", ""),
+                        "id": info.get("id", ""), "quote": quote})
         return out
 
     @document_annotation

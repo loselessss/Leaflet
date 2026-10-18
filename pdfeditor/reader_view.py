@@ -1564,6 +1564,9 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         controller = getattr(self, "object_controller", None)
         if controller is not None:
             controller.restore_hand()
+            if controller.drag:
+                controller.cancel()
+                controller.refresh()
         super().focusOutEvent(event)
 
     def leaveEvent(self, event):

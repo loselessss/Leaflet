@@ -423,5 +423,4 @@ class PagesMixin:
             self._restoring_view = False
         self._schedule_thumbs()
         self.refresh_editor_overview(reset=True)
-        if hasattr(self, "_notes_dock") and self._notes_dock.isVisible():
-            self._rebuild_notes_list()
+        self._notes_changed()

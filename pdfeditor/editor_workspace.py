@@ -42,6 +42,11 @@ class EditorWorkspaceMixin:
                 button = bar.widgetForAction(action)
                 button.setToolButtonStyle(Qt.ToolButtonIconOnly)
             menu.addSeparator()
+            menu.addAction(controller.snap_action)
+            bar.addAction(controller.snap_action)
+            snap_button = bar.widgetForAction(controller.snap_action)
+            snap_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            snap_button.setStyleSheet("min-width: 100px; max-width: 200px;")
             menu.addAction(controller.dock.toggleViewAction())
             bar.addSeparator()
         for action in (self._hand_tool_act, self._select_tool_act, self._edit_act):

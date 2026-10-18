@@ -316,5 +316,4 @@ class EditMixin:
         self._schedule_thumbs()
         if self._edit_mode:
             self._show_edit_boxes()
-        if hasattr(self, "_notes_dock") and self._notes_dock.isVisible():
-            self._rebuild_notes_list()
+        self._notes_changed()

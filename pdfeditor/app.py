@@ -12,8 +12,8 @@ import subprocess
 from PyQt5.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAction, QActionGroup, QApplication, QCheckBox, QDialog, QDialogButtonBox,
-    QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
+    QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
     QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabWidget, QToolBar,
     QToolButton, QVBoxLayout, QWidget,
 )
@@ -342,6 +342,26 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self._sidebar_stack = QStackedWidget()
         self._sidebar_stack.addWidget(self.thumbs)
         self._sidebar_stack.addWidget(self.bookmarks)
+        self._sidebar_container = QWidget()
+        sidebar_layout = QVBoxLayout(self._sidebar_container)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        sidebar_header = QWidget()
+        sidebar_header.setObjectName("sidebarHeader")
+        sidebar_header_layout = QHBoxLayout(sidebar_header)
+        sidebar_header_layout.setContentsMargins(10, 3, 4, 3)
+        self._sidebar_title = QLabel(tr("페이지 미리보기"))
+        sidebar_header_layout.addWidget(self._sidebar_title, 1)
+        self._sidebar_close_button = QToolButton()
+        self._sidebar_close_button.setObjectName("sidebarCloseButton")
+        self._sidebar_close_button.setIcon(fluent_icon("close", size=16))
+        self._sidebar_close_button.setAutoRaise(True)
+        self._sidebar_close_button.setToolTip(tr("왼쪽 패널 닫기"))
+        self._sidebar_close_button.setAccessibleName(tr("왼쪽 패널 닫기"))
+        self._sidebar_close_button.clicked.connect(lambda: self.set_sidebar_mode("none"))
+        sidebar_header_layout.addWidget(self._sidebar_close_button)
+        sidebar_layout.addWidget(sidebar_header)
+        sidebar_layout.addWidget(self._sidebar_stack, 1)
         if self._shell.workspace_mode in ("reader", "editor"):
             from .reader_view import TiledPageView
             self.view = TiledPageView()
@@ -366,7 +386,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             rlay.addWidget(self.view, 1)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._sidebar_stack)
+        splitter.addWidget(self._sidebar_container)
         splitter.addWidget(right)
         splitter.setCollapsible(0, True)
         splitter.setCollapsible(1, False)
@@ -404,15 +424,6 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self.view.canvas.context_requested.connect(self.on_context_menu)
         self.view.canvas.hovered.connect(self.on_canvas_hover)
         self.view.canvas.page_activated.connect(self.show_page)
-
-        # 메모 모아보기 독 (기본 숨김) — 탭마다 독립
-        self._notes_list = QListWidget()
-        self._notes_list.itemClicked.connect(self.on_note_item_clicked)
-        self._notes_list.itemDoubleClicked.connect(self.on_note_item_double)
-        self._notes_dock = QDockWidget("메모 모아보기", self)
-        self._notes_dock.setWidget(self._notes_list)
-        self.addDockWidget(Qt.RightDockWidgetArea, self._notes_dock)
-        self._notes_dock.hide()
 
         self._page_label = QLabel("")
         self._page_size_label = QLabel("")
@@ -610,7 +621,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self._act(a, "메모 추가 (위치 클릭)", "Ctrl+M",
                   self.start_note_mode, "note")
         a.addSeparator()
-        self._act(a, "메모 모아보기", "Ctrl+Shift+M",
+        self._act(a, "주석 관리...", "Ctrl+Shift+M",
                   self.toggle_notes_panel, "notes")
 
         o = self.menuBar().addMenu("OCR(&O)")
@@ -828,13 +839,15 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                 "toolbar": not self._interaction_toolbar.isHidden(),
                 "status": not self.statusBar().isHidden(),
                 "search": not self._search_bar.isHidden(),
-                "notes": not self._notes_dock.isHidden(),
+                "notes": self._annotation_manager is not None and self._annotation_manager.isVisible(),
             }
             self._sidebar_stack.hide()
+            self._sidebar_container.hide()
             self._interaction_toolbar.hide()
             self.statusBar().hide()
             self._search_bar.hide()
-            self._notes_dock.hide()
+            if self._annotation_manager is not None:
+                self._annotation_manager.hide()
             if self._workspace_header is not None:
                 self._workspace_header.hide()
             if self.doc is not None:
@@ -844,10 +857,12 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             if state is None:
                 return
             self._sidebar_stack.setVisible(state["sidebar"])
+            self._sidebar_container.setVisible(state["sidebar"])
             self._interaction_toolbar.setVisible(state["toolbar"])
             self.statusBar().setVisible(state["status"])
             self._search_bar.setVisible(state["search"])
-            self._notes_dock.setVisible(state["notes"])
+            if self._annotation_manager is not None:
+                self._annotation_manager.setVisible(state["notes"])
             if self._workspace_header is not None:
                 self._workspace_header.setVisible(state["workspace_header"])
             del self._presentation_ui_state
@@ -1084,6 +1099,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if stop_rendering is not None:
             stop_rendering()
         self._annotation_timer.stop()
+        if self._annotation_manager is not None:
+            self._annotation_manager.reset()
         self.save_reading_position()
         self._position_timer.stop()
         self._zoom_render_timer.stop()

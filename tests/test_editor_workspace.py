@@ -437,6 +437,107 @@ class EditorWorkspaceTests(unittest.TestCase):
         tab.set_interaction_mode("hand")
         self.assertFalse(controller.active)
 
+    def test_magnetic_drag_ctrl_toggle_commit_and_undo(self):
+        import fitz
+        from PyQt5.QtCore import QPointF, QEvent, Qt
+        from PyQt5.QtGui import QKeyEvent, QMouseEvent
+        from pdfeditor import editor_objects, settings
+        tab = self.open_editor()
+        controller = tab._object_controller
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
+        pix.clear_with(180)
+        identity = editor_objects.create(tab.doc, 0, "image", (20, 110, 70, 150), image=pix.tobytes("png"))
+        editor_objects.create(tab.doc, 0, "rectangle", (150, 180, 230, 240))
+        controller.refresh()
+        controller.selected = identity
+        controller.activate()
+        tab.set_zoom(1.0)
+        self.settle()
+        view = tab.view
+        def event(kind, x, y, modifiers=Qt.NoModifier):
+            point = view.mapFromScene(view._page_transforms[0].map(QPointF(x, y)))
+            return QMouseEvent(kind, QPointF(point), Qt.LeftButton, Qt.LeftButton, modifiers)
+        count = len(tab._undo_stack)
+        controller.mouse("mousePressEvent", event(QEvent.MouseButtonPress, 45, 130))
+        controller.mouse("mouseMoveEvent", event(QEvent.MouseMove, 123, 198))
+        self.assertEqual(tuple(controller.preview), (100, 180, 150, 220))
+        self.assertEqual(len(controller.guides), 2)
+        self.assertEqual(len(tab._undo_stack), count)
+        # Keys update an ongoing gesture even with no additional mouse movement.
+        view.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Control, Qt.ControlModifier))
+        raw = tuple(controller.preview)
+        self.assertAlmostEqual(raw[0], 98, delta=1)
+        self.assertNotEqual(raw, (100, 180, 150, 220))
+        self.assertEqual(len(controller.guides), 2)
+        view.keyReleaseEvent(QKeyEvent(QEvent.KeyRelease, Qt.Key_Control, Qt.NoModifier))
+        self.assertEqual(tuple(controller.preview), (100, 180, 150, 220))
+        controller.snap_check.setChecked(False)
+        self.assertFalse(controller.snap_action.isChecked())
+        self.assertFalse(settings.object_snapping())
+        self.assertEqual(controller.guides, [])
+        self.assertEqual(tuple(controller.preview), raw)
+        controller.snap_action.setChecked(True)
+        self.assertTrue(controller.snap_check.isChecked())
+        # CPU and GPU overlays use the same guide geometry.
+        surface = Mock()
+        controller.paint_native(surface)
+        self.assertEqual(surface.fill_rect.call_count, 2)
+        # Release with Ctrl must save the unsnapped position, in one undo step.
+        controller.mouse("mouseReleaseEvent", event(QEvent.MouseButtonRelease, 123, 198, Qt.ControlModifier))
+        self.assertEqual(tuple(controller.current()["rect"]), raw)
+        self.assertEqual(controller.guides, [])
+        self.assertEqual(len(tab._undo_stack), count + 1)
+        tab.undo()
+        self.assertEqual(controller.current()["rect"], [20, 110, 70, 150])
+        tab.redo()
+        self.assertEqual(tuple(controller.current()["rect"]), raw)
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_magnetic_screen_tolerance_rotations_zoom_and_shift(self):
+        import fitz
+        from PyQt5.QtCore import Qt
+        from pdfeditor import editor_objects
+        tab = self.open_editor()
+        controller = tab._object_controller
+        identity = editor_objects.create(tab.doc, 0, "rectangle", (20, 110, 70, 150))
+        editor_objects.create(tab.doc, 0, "rectangle", (150, 180, 230, 240))
+        for rotation in (0, 90, 180, 270):
+            tab.doc._doc[0].set_rotation(rotation)
+            controller.refresh()
+            controller.selected = identity
+            controller.activate()
+            for zoom in (.5, 1, 4):
+                with self.subTest(rotation=rotation, zoom=zoom):
+                    tab.set_zoom(zoom)
+                    self.settle()
+                    page = tab.doc._doc[0]
+                    original = fitz.Rect(controller.current()["rect"])
+                    # Set the same raw drag geometry through the controller helper.
+                    from pdfeditor.object_snapping import SnapTargets
+                    controller.drag = (fitz.Point(45, 130), original, None)
+                    controller._snap_targets = SnapTargets([tuple(page.rect)] + [tuple(
+                        fitz.Rect(peer["rect"]) * page.rotation_matrix)
+                        for peer in controller.items if peer["id"] != identity])
+                    self.assertAlmostEqual(controller._snap_tolerance()[0], 6 / zoom, places=4)
+                    offset = 1 / zoom
+                    pointer = fitz.Point(125 - offset, 200 - offset)
+                    controller._update_drag(pointer, Qt.NoModifier)
+                    self.assertEqual(tuple(controller.preview), (100, 180, 150, 220))
+                    controller._update_drag(pointer, Qt.ControlModifier)
+                    self.assertEqual(tuple(controller.preview), (
+                        100 - offset, 180 - offset, 150 - offset, 220 - offset))
+                    controller._update_drag(pointer, Qt.ShiftModifier)
+                    preview = controller.preview * page.rotation_matrix
+                    source = original * page.rotation_matrix
+                    if rotation in (0, 180):
+                        self.assertAlmostEqual(preview.y0, source.y0)
+                        self.assertTrue(all(g.axis == 0 for g in controller.guides))
+                    else:
+                        self.assertAlmostEqual(preview.x0, source.x0)
+                        self.assertTrue(all(g.axis == 1 for g in controller.guides))
+                    controller.cancel()
+                    self.assertEqual(controller.guides, [])
+
     def test_object_failed_edit_rolls_back(self):
         from pdfeditor import editor_objects
         tab = self.open_editor()

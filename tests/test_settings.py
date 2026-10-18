@@ -40,6 +40,13 @@ class AutomaticUpdateScheduleTests(unittest.TestCase):
         with patch.object(settings, "_load", return_value={"render_backend": "bad"}):
             self.assertEqual(settings.render_backend(), "auto")
 
+    def test_object_snapping_defaults_on_and_persists(self):
+        self.assertTrue(settings.object_snapping())
+        settings.set_object_snapping(False)
+        self.assertFalse(settings.object_snapping())
+        settings.set_object_snapping(True)
+        self.assertTrue(settings.object_snapping())
+
     def test_render_diagnostics_defaults_off_and_persists(self):
         self.assertFalse(settings.render_diagnostics())
         self.assertTrue(settings.set_render_diagnostics(True))

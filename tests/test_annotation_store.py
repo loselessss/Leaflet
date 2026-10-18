@@ -31,6 +31,21 @@ class AnnotationStoreTests(unittest.TestCase):
         self.addCleanup(doc.close)
         return doc
 
+    def test_highlight_comments_replay_through_sidecar_and_history(self):
+        doc = self.open()
+        xref = doc.add_highlight(0, [(70, 58, 165, 78)])
+        doc.set_note_text(0, xref, "Check this result")
+        doc.save_annotations()
+        reopened = self.open()
+        marked = next(item for item in reopened.annots(0, include_text=True) if item["kind"] == "Highlight")
+        self.assertEqual(marked["text"], "Check this result")
+        self.assertEqual(marked["quote"], "Original text")
+        reopened.step_annotation_history()
+        self.assertEqual(reopened.annots(0)[1]["text"], "")
+        reopened.step_annotation_history(forward=True)
+        self.assertEqual(reopened.annots(0)[1]["text"], "Check this result")
+        self.assertEqual(self.source.read_bytes(), self.original)
+
     def test_notes_highlights_edits_deletes_round_trip_without_source_changes(self):
         doc = self.open()
         self.assertIsNone(doc.annotation_error)

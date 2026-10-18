@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (1.37.0)
+
+### 새 기능
+
+- Manage document annotations in a separate window: search notes, highlighted text and authors, filter by type, navigate to their locations, edit comments and delete annotations. Keep saving and undo/redo connected to the original document.
+- Add magnetic image/object placement against page and peer edges/centers, with visible alignment guides and a toolbar/property toggle. Hold Ctrl to move freely while retaining guides; keep Shift axis locking and single-step undo.
+
+### 개선
+
+- Close the left thumbnail/bookmark panel directly with its header's X button.
+
 ## 1.36.0 - 2026-10-15
 
 ### 새 기능

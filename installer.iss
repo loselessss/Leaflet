@@ -5,7 +5,7 @@
 ; 아래 MyAppVersion을 함께 맞출 것(자동 동기화 안 됨).
 
 #define MyAppName "Leaflet"
-#define MyAppVersion "1.36.0"
+#define MyAppVersion "1.37.0"
 #define MyAppPublisher "Leaflet"
 #define MyAppExeName "Leaflet.exe"
 #define MyProgId "sPDF.Document"

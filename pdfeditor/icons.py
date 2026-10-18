@@ -10,7 +10,7 @@ AVAILABLE_ICONS = frozenset({
     "hand", "help", "highlight", "info", "license", "merge", "new_tab",
     "new_window", "note", "notes", "ocr", "open", "pages", "power",
     "presentation", "print", "recent", "redo", "rotate_ccw", "rotate_cw", "save", "save_as",
-    "image", "object_select", "rectangle", "search", "select_all", "settings", "split", "star", "star_filled",
+    "image", "magnet", "object_select", "rectangle", "search", "select_all", "settings", "split", "star", "star_filled",
     "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out",
 })
 
@@ -302,6 +302,19 @@ def fluent_icon(name, color="#424242", size=20):
         path.lineTo(14.5, 10.2)
         path.closeSubpath()
         painter.drawPath(path)
+    elif name == "magnet":
+        path = QPainterPath(QPointF(3.5, 3.0))
+        path.lineTo(3.5, 11.0)
+        path.cubicTo(3.5, 19.0, 16.5, 19.0, 16.5, 11.0)
+        path.lineTo(16.5, 3.0)
+        path.lineTo(12.5, 3.0)
+        path.lineTo(12.5, 11.0)
+        path.cubicTo(12.5, 14.0, 7.5, 14.0, 7.5, 11.0)
+        path.lineTo(7.5, 3.0)
+        path.closeSubpath()
+        painter.drawPath(path)
+        line(3.5, 6.5, 7.5, 6.5)
+        line(12.5, 6.5, 16.5, 6.5)
     elif name == "rectangle":
         painter.drawRoundedRect(QRectF(3.0, 4.0, 14.0, 12.0), 1.2, 1.2)
         line(10.0, 6.5, 10.0, 13.5)
