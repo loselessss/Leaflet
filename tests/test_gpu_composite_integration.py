@@ -1,6 +1,7 @@
 """Cold retained-scene replay, including backdrop-dependent nested groups."""
 import ctypes
 import os
+import time
 import unittest
 
 import pymupdf
@@ -134,3 +135,172 @@ class CompositeIntegrationTests(unittest.TestCase):
             for phase in (0, 1, 2, 0, 2, 1):
                 with self.subTest(dpi=dpi, phase=phase):
                     self.assertEqual(draw(self.surface, phase), expected[phase])
+
+    def test_nested_captures_preserve_nonuniform_translucent_backdrop(self):
+        # A uniform backdrop hides shifted/cropped snapshot copies. Exercise
+        # drawable offscreen sources, transparent COPY pixels, fractional crop
+        # origins, non-default DPI and the endpoint opacity fast paths together.
+        clip = self.surface.create_path([
+            ("move", 7.25, 5.75), ("line", 43.75, 7.25),
+            ("line", 48.25, 43.75), ("line", 5.75, 48.25), ("close",)])
+        try:
+            for dpi in (96, 120, 144, 192):
+                self.surface.resize(64, 64, dpi)
+                self.surface.begin_frame(0)
+                self.surface.begin_composite_group(0, 1)
+                for y in range(8):
+                    for x in range(8):
+                        color = ((x * 31 + y * 17) % 256 << 24 |
+                                 (x * 37) % 256 << 16 |
+                                 (y * 41) % 256 << 8 | (x * 13 + y * 23) % 256)
+                        self.surface.fill_rect(x * 8, y * 8, (x + 1) * 8,
+                                               (y + 1) * 8, color)
+                expected = self.surface.read_pixels_bgra(64, 64)
+                for opacity in (0, .7, 1):
+                    with self.subTest(dpi=dpi, opacity=opacity):
+                        self.surface.begin_clip_group(clip)
+                        self.surface.begin_composite_mask((9.25, 11.75, 41.25, 45.75), False, 0)
+                        self.surface.fill_rect(0, 0, 64, 64, 0x80ffffff)
+                        self.surface.end_composite_mask()
+                        self.surface.begin_composite_group(0, opacity, isolated=False)
+                        self.surface.end_composite_group()
+                        self.surface.end_clip_group()
+                        self.surface.end_clip_group()
+                        actual = self.surface.read_pixels_bgra(64, 64)
+                        self.assertLessEqual(max(abs(a-b) for a,b in zip(actual, expected)), 2)
+                self.surface.end_composite_group()
+                self.surface.end_frame()
+        finally:
+            clip.close()
+
+    def test_batched_scratch_overwrites_match_explicit_submission_boundaries(self):
+        def draw(fenced):
+            self.surface.begin_frame(0x80607080)
+            for index in range(12):
+                # Equal bitmap sizes deliberately borrow the same scratch
+                # resources for different masks/colors within a single frame.
+                self.surface.begin_composite_mask((0, 0, 64, 64), False, 0)
+                self.surface.fill_rect(0, index * 4, 64, index * 4 + 3,
+                                       (0x40 + index * 13) << 24 | 0xffffff)
+                self.surface.end_composite_mask()
+                self.surface.begin_composite_group(index % 15 + 1, .6)
+                self.surface.fill_rect(0, 0, 64, 64,
+                                       0xc0000000 | (index * 0x173965) % 0x1000000)
+                self.surface.end_composite_group()
+                self.surface.end_clip_group()
+                if fenced:
+                    self.surface.read_pixels_bgra(64, 64)
+            pixels = self.surface.read_pixels_bgra(64, 64)
+            self.surface.end_frame()
+            return pixels
+
+        for dpi in (96, 120, 144):
+            self.surface.resize(64, 64, dpi)
+            with self.subTest(dpi=dpi):
+                expected = draw(True)
+                self.assertEqual(draw(False), expected)
+                self.assertEqual(draw(False), expected)
+
+    def test_worker_culls_sibling_batches_without_skipping_mask_transitions(self):
+        box = self.surface.create_path([
+            ("move", 0, 0), ("line", 6, 0), ("line", 6, 6),
+            ("line", 0, 6), ("close",)])
+        operations = [("composite_mask_begin", (0, 0, 384, 96), False, 0)]
+        # Build/apply runs have enough siblings to form independent cull blocks.
+        # Some scopes lie wholly outside each tile; others straddle its border.
+        for origin in (0, 128, 256):
+            for index in range(144):
+                matrix = (1, 0, 0, 1, origin + index % 12 * 8, index // 12 * 8)
+                operations.append(("path", box, 0x80ffffff, None, 1, matrix, None))
+        operations.append(("composite_mask_end", ()))
+        for origin in (0, 128, 256):
+            for row in range(12):
+                operations.append(("composite_push", 1, .7, False, True))
+                for column in range(12):
+                    matrix = (1, 0, 0, 1, origin + column * 8, row * 8)
+                    operations.append(("path", box, 0xc04080c0, None, 1, matrix, None))
+                operations.append(("composite_pop", None))
+        operations.append(("clip_group_pop", None))
+        scene = self.surface.create_scene(384, 128, operations)
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(64, 64, dpi)
+                for transform in ((1, 0, 0, 1, 0, 0), (1, 0, 0, 1, -128, 0),
+                                  (0, 1, -1, 0, 80, -128),
+                                  (1, .25, .125, 1, -128, -24)):
+                    with self.subTest(dpi=dpi, transform=transform):
+                        self.surface.cancel_sharp()
+                        self.surface.begin_frame(0xffffffff)
+                        self.surface.draw_scene(scene, transform)
+                        expected = self.surface.read_pixels_bgra(64, 64)
+                        self.surface.end_frame()
+                        self.assertTrue(self.surface.request_sharp_scene(scene, transform))
+                        deadline = time.monotonic() + 10
+                        while self.surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertEqual(self.surface.sharp_status(), 2)
+                        self.surface.begin_frame(0xffffffff)
+                        self.assertTrue(self.surface.draw_sharp_scene(scene, transform))
+                        actual = self.surface.read_pixels_bgra(64, 64)
+                        self.surface.end_frame()
+                        error = [abs(a-b) for a,b in zip(actual, expected)]
+                        self.assertLessEqual(max(error), 3)
+        finally:
+            self.surface.cancel_sharp()
+            scene.close()
+            box.close()
+
+    def test_covering_rectangle_clip_matches_original_capture_with_nested_effects(self):
+        fast = self.surface.create_path([
+            ("move", -128, -128), ("line", 256, -128), ("line", 256, 256),
+            ("line", -128, 256), ("close",)])
+        # An extra collinear vertex keeps the identical region on the general
+        # path/capture route, providing an independent scheduling reference.
+        general = self.surface.create_path([
+            ("move", -128, -128), ("line", 64, -128), ("line", 256, -128),
+            ("line", 256, 256), ("line", -128, 256), ("close",)])
+        hole = self.surface.create_path([
+            ("move", -128, -128), ("line", 256, -128), ("line", 256, 256),
+            ("line", -128, 256), ("close",),
+            ("move", 8, 8), ("line", 48, 8), ("line", 48, 48),
+            ("line", 8, 48), ("close",)], even_odd=True)
+
+        def draw(path, transform, knockout):
+            self.surface.begin_frame(0)
+            self.surface.begin_composite_group(0, 1, knockout=knockout)
+            self.surface.fill_rect(0, 0, 64, 64, 0x804080c0)
+            self.surface.set_transform(*transform)
+            self.surface.begin_clip_group(path)
+            self.surface.set_transform(1, 0, 0, 1, 0, 0)
+            self.surface.begin_composite_mask((4, 4, 60, 60), False, 0)
+            self.surface.fill_rect(0, 0, 64, 64, 0xc0ffffff)
+            self.surface.end_composite_mask()
+            self.surface.begin_composite_group(1, .6)
+            self.surface.fill_rect(0, 0, 64, 64, 0xc0c04080)
+            self.surface.end_composite_group()
+            self.surface.end_clip_group()
+            self.surface.end_clip_group()
+            self.surface.set_transform(1, 0, 0, 1, 0, 0)
+            self.surface.fill_rect(0, 0, 4, 64, 0x8000ff00)
+            self.surface.end_composite_group()
+            result = self.surface.read_pixels_bgra(64, 64)
+            self.surface.end_frame()
+            return result
+
+        try:
+            for dpi in (96, 120, 144):
+                self.surface.resize(64, 64, dpi)
+                for transform in ((1, 0, 0, 1, 0, 0), (0, 1, -1, 0, 64, 0),
+                                  (-1, 0, 0, 1, 64, 0), (1, .2, .1, 1, 0, 0)):
+                    for knockout in (False, True):
+                        with self.subTest(dpi=dpi, transform=transform, knockout=knockout):
+                            reference = draw(general, transform, knockout)
+                            self.assertEqual(draw(fast, transform, knockout), reference)
+                # A large bounding box alone cannot prove full coverage: this
+                # even-odd path has a hole that must retain the backdrop.
+                actual = draw(hole, (1, 0, 0, 1, 0, 0), False)
+                offset = (24 * 64 + 24) * 4
+                self.assertEqual(tuple(actual[offset:offset+4]), (96, 64, 32, 128))
+        finally:
+            for path in (fast, general, hole):
+                path.close()

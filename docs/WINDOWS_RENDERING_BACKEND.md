@@ -1,6 +1,6 @@
 # Windows 렌더링 백엔드 설계
 
-작성일: 2026-09-01 · 구현 현황 갱신: 2026-10-06
+작성일: 2026-09-01 · 구현 현황 갱신: 2026-10-19
 
 상태: Direct2D 타일 합성 및 제한형 PDF 벡터·글자 GPU 래스터화 적용
 
@@ -24,7 +24,8 @@
 - 1.28.1은 Hue/Saturation/Color/Luminosity도 Direct2D Blend effect에 연결하여 Normal 외 표준 PDF 혼합 모드 15개를 지원한다. PDF의 SetLum/SetSat·색 범위 보정과 같은 RGB 성분 혼합을 사용하며, 일반 HSL 색상 변환으로 대체하지 않는다. 구형 DLL이 확장된 모드 번호를 받지 않도록 ABI v11로 구분한다.
 - 혼합 장면은 일반 그룹까지 명시적인 GPU 중간 bitmap에 그린다. 그룹을 닫을 때 소스 불투명도를 적용하고 배경 snapshot과 Direct2D Blend effect로 합성한 결과를 이전 target에 복사한다. 배경을 두 번 source-over하지 않으며, 페이지 좌표·DPI 변환은 그대로 유지한다. [Microsoft Blend effect의 입력·알파 합성 정의](https://learn.microsoft.com/en-us/windows/win32/direct2d/blend)를 따른다.
 - 임시 bitmap은 PDF 전체 확대 크기가 아닌 viewport 크기다. 혼합 그룹은 2개, 명시적 클리핑은 3개, 마스크는 생성·변환·적용에 필요한 최대 4개를 중첩 깊이별로 예약한다. 활성 합성 예약 한도는 256 MiB와 동적 장면 캐시 예산 중 큰 값이다. 이는 명시적 bitmap 예약 한도이며 색상표·드라이버·effect 내부 메모리까지 포함한 총 VRAM 한도는 아니다.
-- 미배포 1.37.0에서는 복잡한 합성의 완료된 임시 bitmap을 표면별 풀에서 재사용한다. 크기·용도·DPI가 같은 항목만 사용하고, 입력을 소비하는 합성의 Flush 이후에만 반환한다. 새 사용자는 전체 픽셀을 지우거나 덮어쓴다. 풀은 최대 64개·64 MiB·동적 장면 예산의 1/8·활성 합성 예약 후 남은 공간 중 작은 범위로 제한하며, 화면 크기/DPI 변경과 표면 해제 시 비운다. 단순 source-over 합성에 추가 Flush를 넣지 않는다. 부분 갱신은 후속 과제로 남긴다.
+- 미배포 1.37.0에서는 복잡한 합성의 임시 bitmap을 표면별 풀에서 재사용한다. 크기·용도·DPI가 같은 항목만 사용하고, 같은 컨텍스트에서 입력 소비 명령 뒤에 후속 덮어쓰기를 예약한다. 새 사용자는 전체 픽셀을 지우거나 덮어쓴다. 풀은 최대 64개·64 MiB·동적 장면 예산의 1/8·활성 합성 예약 후 남은 공간 중 작은 범위로 제한하며, 화면 크기/DPI 변경과 표면 해제 시 비운다. 부분 갱신은 후속 과제로 남긴다.
+- 같은 컨텍스트의 target 전환 순서를 이용해 중첩 합성의 불필요한 마스크 coverage·범위 종료 Flush를 줄인다. GPU backdrop은 기존 Flush/CopyFromBitmap 경계로 복사한다. GPU 그리기로 복사를 대체한 후보는 ACB 2015에서 지연이 늘어 최종 구현에서 제외했다. 마스크 원본은 적용 범위가 닫힐 때까지 기존 4개 bitmap 예약 안에서 보유한다. 불투명도 0/1인 비격리 Normal 그룹의 보간과 불투명도 1인 blend 입력의 ColorMatrix를 생략한다. 명령별 1 byte 실행 분류로 정밀 타일마다 반복하던 scope·simple·no-op 해시 검색도 줄인다. 최종 EndDraw·진단 readback·다른 컨텍스트와의 기존 동기화는 유지한다. 원리는 [Microsoft의 같은 컨텍스트 target 전환 순서 보장](https://learn.microsoft.com/en-us/windows/win32/direct2d/devices-and-device-contexts)에 따른다.
 - 1.28.2는 혼합 장면의 geometry/text/stroked clip을 ABI v12의 명시적 clip capture로 처리한다. 기존 배경을 복사한 target에서 자식 혼합을 처리하고, 종료 시 `result * coverage + backdrop * (1 - coverage)`를 GPU 효과로 계산해 SOURCE_COPY한다. 이로써 클리핑 밖의 배경과 반투명 알파를 보존하며 경계 coverage를 해당 clip당 한 번 적용한다. coverage는 일반 Direct2D clip layer와 같은 래스터화 경로를 사용한다. [Microsoft Composite effect 입력 순서와 연산 정의](https://learn.microsoft.com/en-us/windows/win32/direct2d/composite)를 따른다.
 - 혼합 또는 마스크 장면의 모든 PDF 투명도 그룹은 여전히 격리되어야 한다. 1.28.3에서는 마스크 생성과 적용을 명시적 bitmap capture로 나눠, 두 범위 안의 격리 혼합·geometry clip 및 중첩 마스크를 GPU로 처리한다. mask-end는 색상/알파를 coverage로 바꾼 뒤 배경을 복사한 content target으로 전환하고, clip-pop에서 coverage를 적용한다. 범위가 교차하는 잘못된 스택은 사전 검증으로 거부한다.
 - 밝기 마스크는 MuPDF의 `FZ_RI_IN_SOFTMASK` 색 변환으로 만든 65³ RGB→Gray LUT를 [Direct2D LookupTable3D](https://learn.microsoft.com/en-us/windows/win32/direct2d/3d-lookup-table-effect)에 올린 뒤 알파로 변환한다. 일반 RGB→Gray 변환과 마스크 전용 변환은 다르다. LUT는 약 1.05 MiB로 필요할 때 한 번 생성·업로드하고 기본 ICC 변환이 바뀌면 갱신한다. 픽셀별 변환과 래스터화는 GPU가 수행한다. Windows 10 이상의 해당 GPU 효과를 사용할 수 없으면 기존 안전 경로가 적용된다. 회색조(+alpha) 이미지도 RGBA로 정규화하고 PDF의 Interpolate 설정을 전달한다.
@@ -41,6 +42,17 @@
 - 1.29.5는 혼합·마스크 target 전환을 가로지르는 geometry clip만 bitmap-backed clip group으로 만들고, 그 밖의 clip은 일반 Direct2D layer로 유지한다. retained scene 생성 시 linear/radial gradient brush와 stop collection을 한 번 만들고 반복 프레임에서 재사용한다. 자동·GPU 강제 모드의 단순 사각형 경로는 ABI v19의 axis-aligned clip으로 기록하며, CPU 대체 경로와 페이지 좌표·변환은 변경하지 않는다. 자동 모드에서 복잡하다고 판정된 쪽은 현재 쪽만 복사한 메모리 snapshot을 별도 작업 프로세스에서 최대 10초 동안 장면으로 변환한다. GUI의 원본 MuPDF 문서 객체를 공유하지 않으며, 완료 결과는 문서 변경 세대와 이미지 배율을 검증한 뒤 메모리 캐시에 설치하고 CPU 화면을 GPU 장면으로 교체한다. 처음 숨겨진 상태로 배치된 탭은 화면에 나타나는 시점에 미뤄진 작업을 예약한다. 다시 숨김·문서 교체·닫기에서는 작업과 임시 snapshot을 정리한다.
 - 실제 Direct2D 출력 픽셀을 읽는 명시적 진단 API를 추가했다. 11개 모드의 반투명 배경·소스·그룹 opacity 결과를 수식과 비교하고, 실제 PDF의 GPU 장면을 CPU 렌더의 내부 픽셀과 비교한다. 픽셀 readback은 테스트용 호출에만 사용하며 일반 repaint 경로에는 넣지 않는다. 임의 포스터·색 관리·모든 중첩 조합의 품질이나 속도 우위를 이 테스트만으로 보장하지 않는다.
 - 추가한 성분 혼합 4개는 12가지 배경/소스 색 쌍(6개 색조 영역, 회색, 흑백)과 4가지 알파/불투명도 조건의 192개 조합을 독립 SetLum/SetSat 수식과 비교한다. 실제 PDF 15개 모드를 일반 장면과 중첩/even-odd 클리핑 장면에서 CPU 내부 픽셀과 비교한다. 반투명 배경·소수점 clip 경계·중첩·회전·96/120 DPI를 별도로 비교하고, 잘못된 capture 종료와 미완료 프레임 정리도 검증한다. 알파/밝기 마스크 내부·외부 혼합, RGB 원색·회색 마스크, 이미지 마스크를 CPU 출력과 비교하며, 중첩 적용·마스크 영역 밖 보존·오류 후 프레임 재시작도 확인한다.
+
+### 1.37.0 정밀 타일의 화면 밖 명령 묶음 제외
+
+- 개별 개체·그룹 제외에 더해, 같은 깊이에 있는 연속 그리기 명령과 완결된 하위 범위를 묶는다. 묶음의 보수적인 페이지 경계가 타일 밖이면 내부의 개별 경계 검사도 건너뛴다. 합집합 경계와 기존 2px 여유를 사용하므로 회전·고DPI의 기존 제외 조건을 좁히지 않는다.
+- 마스크 생성에서 적용으로 바뀌는 지점, 경계를 확인하지 못한 명령, 미완결 범위는 묶음 경계로 취급한다. 부분 재생 요청의 끝을 넘지 않는다. 원래 표시 순서·backdrop 의존성·벡터 밀도는 그대로 유지한다.
+- 명령 시작 위치별 index와 묶음의 종료 위치·경계만 보유한다. 새 장면에 다시 만들고 정밀 worker에 복사하며, 렌더 결과를 저장하거나 장면 사이에서 공유하지 않는다. 자세한 측정 조건과 결과는 [화면 밖 명령 묶음 비교](GPU_VIEWPORT_CULL_BENCHMARK_2026-10-19.md)에 기록한다.
+
+### 1.37.0 첫 정밀 타일 지연 분석과 사각형 클립 생략
+
+- 실제 네 모서리만 가진 사각형 경로가 축 정렬 변환에서 현재 target 전체와 추가 2물리px를 덮으면, 그 클립의 중간 source·mask·backdrop 및 복사/최종 합성을 생략한다. 범위를 닫을 때 기존 transform·primitive blend를 복원하며, 구멍·추가 꼭짓점·부분 coverage·기울이기는 일반 경로를 유지한다. 장면과 worker 복제 모두 경로의 사각형 여부를 보존한다.
+- ACB 2015 첫 타일은 요청 준비·타일 가져오기보다 중첩 합성 replay, 특히 배경 복사 전 Flush의 CPU 관측 시간이 컸다. 같은 배경을 앞에서 복사하는 후보는 중첩 출력이 달라 제외했고, 작은 중앙 타일을 추가하는 후보도 전체 완료 지연이 늘어 제외했다. 최종 타일 격자와 결과 캐시 정책은 그대로다. 상세 조건·측정값·한계는 [첫 타일 지연 비교](GPU_FIRST_TILE_LATENCY_2026-10-19.md)에 기록한다.
 
 ### 1.25.0 구현 이력
 

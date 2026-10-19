@@ -55,6 +55,29 @@ rasterized or composed through Direct2D; unsupported page features keep the
 bounded 512 px CPU-tile path.
 Native resources are released with the tab, and page image scene data is capped
 at 64 MiB before falling back.
+Composite captures retain explicit Flush/CopyFromBitmap boundaries for GPU
+backdrop copies, while redundant mask-coverage and scope-ending Flush calls are
+omitted. Later scratch writes follow consuming draws on that context; raw mask
+inputs remain owned until the applied scope closes, within its existing
+four-bitmap reservation. Diagnostic readback and EndDraw retain their submission
+boundaries. A compact byte per scene command classifies replay roles up front,
+avoiding repeated scope/simple/no-op hash searches for every command in each tile.
+Exact worker replay also culls bounded batches of consecutive sibling draws and
+complete scopes before walking their individual commands. Mask build/apply
+transitions and unknown bounds break a batch; partial replay ranges never jump
+beyond their end. The index contains only command ranges and conservative page
+bounds, is rebuilt with each scene, and is cloned to its worker context. It does
+not retain rendered output or change display density, backdrop dependencies,
+rotation or the existing antialiasing border.
+An exact four-corner rectangular clip may bypass its bitmap capture only when
+its axis-aligned transformed bounds cover the entire current target plus a
+two-physical-pixel antialiasing margin. The lightweight scope preserves the
+parent transform and primitive blend; arbitrary paths, holes, partial coverage
+and sheared transforms retain the general capture path. This removes copies
+without retaining rendered results or changing the final refinement tile grid.
+Zero/full non-isolated opacity avoids unnecessary interpolation, and full-opacity
+blend input avoids an identity ColorMatrix. These changes apply to fresh exact
+composition as well as display rendering; no additional result cache is needed.
 Group snapshots share the existing adaptive GPU raster-cache budget and LRU
 eviction. Each is capped at 64 MiB or one eighth of that budget. Visible group
 portions can be stored with explicit coverage checks; panning into missing areas
