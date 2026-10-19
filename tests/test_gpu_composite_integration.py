@@ -250,6 +250,43 @@ class CompositeIntegrationTests(unittest.TestCase):
             scene.close()
             box.close()
 
+    def test_mask_interpolation_preserves_unorm_intermediate_rounding(self):
+        # The legacy graph rounds inside/outside premultiplied RGBA to UNORM8
+        # separately. A fused float lerp must preserve those intermediate steps,
+        # including colored alpha masks, transparent backdrops and endpoints.
+        def center():
+            pixels = self.surface.read_pixels_bgra(64, 64)
+            return pixels[(32 * 64 + 32) * 4:(32 * 64 + 32) * 4 + 4]
+
+        for dpi in (96, 120, 144):
+            self.surface.resize(64, 64, dpi)
+            for backdrop_alpha in (0, 128, 255):
+                background = backdrop_alpha << 24 | 0x4080c0
+                for source_alpha in (0, 85, 192, 255):
+                    color = source_alpha << 24 | 0xc04080
+                    self.surface.begin_frame(background)
+                    backdrop = center()
+                    self.surface.fill_rect(0, 0, 64, 64, color)
+                    painted = center()
+                    self.surface.end_frame()
+                    for coverage in (0, 1, 63, 127, 191, 254, 255):
+                        with self.subTest(dpi=dpi, backdrop=backdrop_alpha,
+                                          source=source_alpha, mask=coverage):
+                            self.surface.begin_frame(background)
+                            self.surface.begin_composite_mask((0, 0, 64, 64), False, 0)
+                            self.surface.fill_rect(0, 0, 64, 64,
+                                                   coverage << 24 | 0x206040)
+                            self.surface.end_composite_mask()
+                            self.surface.fill_rect(0, 0, 64, 64, color)
+                            self.surface.end_clip_group()
+                            actual = center()
+                            self.surface.end_frame()
+                            expected = bytes(min(255,
+                                round(b * (255-coverage) / 255) +
+                                round(r * coverage / 255))
+                                for b, r in zip(backdrop, painted))
+                            self.assertEqual(actual, expected)
+
     def test_covering_rectangle_clip_matches_original_capture_with_nested_effects(self):
         fast = self.surface.create_path([
             ("move", -128, -128), ("line", 256, -128), ("line", 256, 256),

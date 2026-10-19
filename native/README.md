@@ -15,6 +15,9 @@ native\build_d2d_renderer.bat
 
 Generated objects, import libraries, and PDBs under `native\bin` are not committed.
 The tracked x64 `spdf_d2d_renderer.dll` must match the Python backend ABI.
+The build also uses the Windows SDK's x64 `fxc.exe` to compile
+`d2d_renderer/mask_lerp.hlsl` into an ignored header in `native/bin`. The shader
+bytecode is embedded in the DLL; runtime shader compilation is not required.
 
 ## Current ABI
 
@@ -62,6 +65,12 @@ inputs remain owned until the applied scope closes, within its existing
 four-bitmap reservation. Diagnostic readback and EndDraw retain their submission
 boundaries. A compact byte per scene command classifies replay roles up front,
 avoiding repeated scope/simple/no-op hash searches for every command in each tile.
+Clip/mask closing can replace the three Composite effect nodes with one custom
+pixel shader. It quantizes the inside and outside terms separately to preserve
+the original UNORM8 intermediate rounding, then adds them. Backdrop copying,
+cropped origins, transforms and submission boundaries remain the same. Failed
+effect registration or creation keeps the original graph, including on worker
+contexts. This does not add a rendered-result cache or change tile dimensions.
 Exact worker replay also culls bounded batches of consecutive sibling draws and
 complete scopes before walking their individual commands. Mask build/apply
 transitions and unknown bounds break a batch; partial replay ranges never jump

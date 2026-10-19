@@ -9,6 +9,7 @@
 
 ### 성능 개선
 
+- Fuse the three clip/mask composition nodes into one GPU shader, preserving intermediate UNORM8 rounding, backdrop copies and submission boundaries. Fall back to the original graph when the shader is unavailable.
 - Omit intermediate bitmaps, backdrop copies and mask composition for exact rectangular clips that fully cover the current render target with an antialiasing margin. Restrict this to axis-aligned transforms, preserving nested mask/blend state and the final tile grid.
 - Skip offscreen batches of consecutive drawing commands and complete sibling scopes during exact viewport refinement. Preserve mask build/apply barriers and clipping boundaries without adding rendered-result caches.
 - Reduce redundant submissions and opacity effects in nested transparency/masks, and classify command replay roles up front to avoid repeated per-tile hash searches. Preserve GPU backdrop copy and final submission boundaries.

@@ -54,6 +54,12 @@
 - 실제 네 모서리만 가진 사각형 경로가 축 정렬 변환에서 현재 target 전체와 추가 2물리px를 덮으면, 그 클립의 중간 source·mask·backdrop 및 복사/최종 합성을 생략한다. 범위를 닫을 때 기존 transform·primitive blend를 복원하며, 구멍·추가 꼭짓점·부분 coverage·기울이기는 일반 경로를 유지한다. 장면과 worker 복제 모두 경로의 사각형 여부를 보존한다.
 - ACB 2015 첫 타일은 요청 준비·타일 가져오기보다 중첩 합성 replay, 특히 배경 복사 전 Flush의 CPU 관측 시간이 컸다. 같은 배경을 앞에서 복사하는 후보는 중첩 출력이 달라 제외했고, 작은 중앙 타일을 추가하는 후보도 전체 완료 지연이 늘어 제외했다. 최종 타일 격자와 결과 캐시 정책은 그대로다. 상세 조건·측정값·한계는 [첫 타일 지연 비교](GPU_FIRST_TILE_LATENCY_2026-10-19.md)에 기록한다.
 
+### 1.37.0 클립·마스크 합성 셰이더 통합
+
+- 클립 종료의 inside·outside·combined Composite 노드 세 개를 전용 픽셀 셰이더 하나로 대체한다. 배경·그리기 결과·마스크를 같은 좌표에서 읽어, 기존 두 중간 결과를 각각 UNORM8로 반올림한 뒤 더한다. 단순 float 보간의 누적 색 차이를 피하고, 기존 cropped origin·투명 배경·마스크 coverage를 보존한다.
+- 기존 Flush·배경 CopyFromBitmap·타일 격자·출력 밀도는 유지한다. 등록이나 생성에 실패하면 원래 세 노드를 쓰며, worker도 같은 factory 등록 상태를 이어받는다. 셰이더는 Windows SDK FXC로 빌드 시 컴파일해 DLL에 포함하고 런타임 컴파일이나 새 결과 캐시를 추가하지 않는다.
+- 배경을 직접 지우고 더하는 후보와 타일 크기 변경도 비교했지만, 출력 오류 또는 화면 맞춤/확대의 일관되지 않은 성능 때문에 제외했다. 정식 ACB 비교와 한계는 [마스크 셰이더 비교](GPU_MASK_SHADER_BENCHMARK_2026-10-19.md)에 기록한다.
+
 ### 1.25.0 구현 이력
 
 구현 현황: sPDF 1.25.0에서 ABI v6 DLL을 독립 실행 리더·편집기의 실제 Qt HWND에 연결한다. Intel Iris Xe의 하드웨어 D3D feature level 11.1에서 D3D11/DXGI 장치, Direct2D device context, DirectWrite factory와 flip-model swap chain을 검증했다. PyMuPDF의 512px BGRA 타일, 페이지 회전 행렬, 검색·선택·편집 테두리를 Direct2D로 합성한다. 지원되는 페이지는 MuPDF가 CPU에서 해석한 선·사각형·베지어와 원래 글꼴 glyph 윤곽을 immutable Direct2D geometry 및 realization으로 만들어 상세 CPU 타일 없이 GPU 래스터화한다. CPU에서 디코딩한 배치 이미지와 색상 스텐실 마스크는 원래 PDF 행렬로 Direct2D가 확대·합성하며, 중첩된 벡터·텍스트 클리핑은 표시 순서대로 Direct2D layer에 적용한다. 모든 shading 유형은 제한된 고품질 이미지로 변환해 합성하고 일반 격리 투명도 그룹은 opacity layer로 처리한다. 숨김·닫기 때 네이티브 캐시를 해제하며 실패하면 같은 문서와 좌표를 유지한 채 Qt 표시로 전환한다.

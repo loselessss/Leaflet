@@ -30,6 +30,8 @@
 
 using Microsoft::WRL::ComPtr;
 
+#include "mask_lerp_effect.h"
+
 namespace {
 
 struct Scene;
@@ -175,6 +177,7 @@ public:
         if (FAILED(result)) {
             return result;
         }
+        mask_lerp_available_ = SUCCEEDED(MaskLerpEffect::Register(d2d_factory_.Get()));
         result = d2d_factory_->CreateDevice(dxgi_device_.Get(), &d2d_device_);
         if (FAILED(result)) {
             return result;
@@ -1171,29 +1174,41 @@ public:
                 // premultiplied output = result * mask + backdrop * (1 - mask).
                 // SOURCE_COPY preserves translucent alpha and untouched pixels.
                 ComPtr<ID2D1Effect> inside, outside, combined;
-                if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
-                    CLSID_D2D1Composite, &inside);
-                if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
-                    CLSID_D2D1Composite, &outside);
-                if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
-                    CLSID_D2D1Composite, &combined);
-                if (SUCCEEDED(result)) {
-                    inside->SetInput(0, capture.mask.Get());
-                    inside->SetInput(1, capture.source.Get());
-                    result = inside->SetValue(D2D1_COMPOSITE_PROP_MODE,
-                                              D2D1_COMPOSITE_MODE_SOURCE_IN);
+                if (SUCCEEDED(result) && mask_lerp_available_) {
+                    if (SUCCEEDED(d2d_context_->CreateEffect(CLSID_SpdfMaskLerp, &combined))) {
+                        combined->SetInput(0, backdrop.Get());
+                        combined->SetInput(1, capture.source.Get());
+                        combined->SetInput(2, capture.mask.Get());
+                    } else {
+                        // Older/unsupported devices keep the original graph.
+                        mask_lerp_available_ = false;
+                    }
                 }
-                if (SUCCEEDED(result)) {
-                    outside->SetInput(0, backdrop.Get());
-                    outside->SetInput(1, capture.mask.Get());
-                    result = outside->SetValue(D2D1_COMPOSITE_PROP_MODE,
-                                               D2D1_COMPOSITE_MODE_DESTINATION_OUT);
-                }
-                if (SUCCEEDED(result)) {
-                    combined->SetInputEffect(0, outside.Get());
-                    combined->SetInputEffect(1, inside.Get());
-                    result = combined->SetValue(D2D1_COMPOSITE_PROP_MODE,
-                                                D2D1_COMPOSITE_MODE_PLUS);
+                if (SUCCEEDED(result) && !combined) {
+                    if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
+                        CLSID_D2D1Composite, &inside);
+                    if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
+                        CLSID_D2D1Composite, &outside);
+                    if (SUCCEEDED(result)) result = d2d_context_->CreateEffect(
+                        CLSID_D2D1Composite, &combined);
+                    if (SUCCEEDED(result)) {
+                        inside->SetInput(0, capture.mask.Get());
+                        inside->SetInput(1, capture.source.Get());
+                        result = inside->SetValue(D2D1_COMPOSITE_PROP_MODE,
+                                                  D2D1_COMPOSITE_MODE_SOURCE_IN);
+                    }
+                    if (SUCCEEDED(result)) {
+                        outside->SetInput(0, backdrop.Get());
+                        outside->SetInput(1, capture.mask.Get());
+                        result = outside->SetValue(D2D1_COMPOSITE_PROP_MODE,
+                                                   D2D1_COMPOSITE_MODE_DESTINATION_OUT);
+                    }
+                    if (SUCCEEDED(result)) {
+                        combined->SetInputEffect(0, outside.Get());
+                        combined->SetInputEffect(1, inside.Get());
+                        result = combined->SetValue(D2D1_COMPOSITE_PROP_MODE,
+                                                    D2D1_COMPOSITE_MODE_PLUS);
+                    }
                 }
                 if (SUCCEEDED(result)) {
                     if (capture.cropped) {
@@ -1642,6 +1657,7 @@ public:
         d3d_device_ = parent.d3d_device_;
         dxgi_device_ = parent.dxgi_device_;
         d2d_factory_ = parent.d2d_factory_;
+        mask_lerp_available_ = parent.mask_lerp_available_;
         d2d_device_ = parent.d2d_device_;
         dwrite_factory_ = parent.dwrite_factory_;
         luminosity_lut_ = parent.luminosity_lut_;
@@ -1955,6 +1971,7 @@ private:
     ComPtr<IDXGIFactory2> dxgi_factory_;
     ComPtr<IDXGISwapChain1> swap_chain_;
     ComPtr<ID2D1Factory1> d2d_factory_;
+    bool mask_lerp_available_ = false;
     ComPtr<ID2D1Multithread> multithread_;
     ComPtr<ID2D1Device> d2d_device_;
     ComPtr<ID2D1DeviceContext> d2d_context_;
