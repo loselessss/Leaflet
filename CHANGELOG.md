@@ -9,6 +9,7 @@
 
 ### 성능 개선
 
+- Reduce exact GPU job preparation and per-tile scope lookup with packed scope ranges and a direct command index. Stop copying four construction-only classification sets into the worker, preserving culling, mask boundaries and output density without adding result caches.
 - Combine an isolated Normal group and its sole geometric clip during exact GPU refinement, removing redundant captures and backdrop copies without caching rendered results. Preserve the general route for mask construction, special blend/group modes and rectangles already eligible for clip bypass.
 - Fuse the three clip/mask composition nodes into one GPU shader, preserving intermediate UNORM8 rounding, backdrop copies and submission boundaries. Fall back to the original graph when the shader is unavailable.
 - Omit intermediate bitmaps, backdrop copies and mask composition for exact rectangular clips that fully cover the current render target with an antialiasing margin. Restrict this to axis-aligned transforms, preserving nested mask/blend state and the final tile grid.

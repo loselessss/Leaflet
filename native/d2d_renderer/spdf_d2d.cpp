@@ -2085,7 +2085,9 @@ struct Scene {
         D2D1_RECT_F bounds{};
     };
     std::unordered_map<std::size_t, RasterGroup> raster_groups;
-    std::unordered_map<std::size_t, RasterGroup> scopes;
+    // Dense command index plus packed scopes avoid per-request hash-node copies.
+    std::vector<std::uint32_t> scope_at;
+    std::vector<RasterGroup> scopes;
     std::unordered_set<std::size_t> simple_scopes;
     std::unordered_set<std::size_t> simple_ends;
     std::unordered_set<std::size_t> noop_scopes;
@@ -2141,6 +2143,7 @@ void prepare_raster_groups(Scene* scene) {
         D2D1_RECT_F bounds = D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
     };
     std::vector<Scope> stack;
+    scene->scope_at.assign(scene->commands.size(), UINT32_MAX);
     scene->command_bounds.resize(scene->commands.size(), D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX));
     std::vector<std::pair<std::size_t, Scene::RasterGroup>> groups;
     const auto include = [](D2D1_RECT_F& a, const D2D1_RECT_F& b) {
@@ -2203,8 +2206,10 @@ void prepare_raster_groups(Scene* scene) {
             if (scope.valid && scope.bounds.right > scope.bounds.left &&
                     scope.bounds.bottom > scope.bounds.top && std::isfinite(scope.bounds.left) &&
                     std::isfinite(scope.bounds.top) && std::isfinite(scope.bounds.right) &&
-                    std::isfinite(scope.bounds.bottom))
-                scene->scopes.emplace(scope.first, Scene::RasterGroup{index, scope.bounds});
+                    std::isfinite(scope.bounds.bottom)) {
+                scene->scope_at[scope.first] = static_cast<std::uint32_t>(scene->scopes.size());
+                scene->scopes.push_back(Scene::RasterGroup{index, scope.bounds});
+            }
             if (scope.valid && scope.simple && (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
                     start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH)) {
                 scene->simple_scopes.insert(scope.first);
@@ -2305,9 +2310,9 @@ void prepare_cull_blocks(Scene* scene) {
             auto frame = stack.back();
             stack.pop_back();
             flush(frame.batch);
-            const auto scope = scene->scopes.find(frame.first);
-            if (scope != scene->scopes.end() && scope->second.end == index) {
-                append(stack.back().batch, frame.first, index, scope->second.bounds);
+            const auto scope = scene->scope_at[frame.first];
+            if (scope != UINT32_MAX && scene->scopes[scope].end == index) {
+                append(stack.back().batch, frame.first, index, scene->scopes[scope].bounds);
             } else {
                 // Invalid/unknown bounds must never hide a state transition.
                 flush(stack.back().batch);
@@ -2372,11 +2377,10 @@ HRESULT replay_scene(
                     !surface->command_visible(bounds, page)) continue;
         }
         if (vector_scopes && (role & Scene::Scope)) {
-            const auto scope = scene->scopes.find(index);
-            if (scope != scene->scopes.end() &&
-                    !(refining ? surface->command_visible(scope->second.bounds, page)
-                        : surface->group_visible(scope->second.bounds, page))) {
-                index = scope->second.end;
+            const auto& scope = scene->scopes[scene->scope_at[index]];
+            if (!(refining ? surface->command_visible(scope.bounds, page)
+                        : surface->group_visible(scope.bounds, page))) {
+                index = scope.end;
                 continue;
             }
         }
@@ -2973,15 +2977,12 @@ bool Surface::sharp_pending() const noexcept {
 std::unique_ptr<Scene> clone_scene(Surface* owner, const Scene& source) {
     auto result = std::make_unique<Scene>();
     result->owner = owner;
+    result->scope_at = source.scope_at;
     result->scopes = source.scopes;
     result->command_bounds = source.command_bounds;
     result->replay_roles = source.replay_roles;
     result->cull_block_at = source.cull_block_at;
     result->cull_blocks = source.cull_blocks;
-    result->simple_scopes = source.simple_scopes;
-    result->simple_ends = source.simple_ends;
-    result->noop_scopes = source.noop_scopes;
-    result->noop_ends = source.noop_ends;
     result->commands.reserve(source.commands.size());
     for (const auto& original : source.commands) {
         SceneCommand copy;
@@ -3939,7 +3940,8 @@ std::int32_t spdf_d2d_create_scene(
             prepare_raster_groups(created.get());
             prepare_cull_blocks(created.get());
             created->replay_roles.resize(created->commands.size(), 0);
-            for (const auto& scope : created->scopes) created->replay_roles[scope.first] |= Scene::Scope;
+            for (std::size_t index = 0; index < created->scope_at.size(); ++index)
+                if (created->scope_at[index] != UINT32_MAX) created->replay_roles[index] |= Scene::Scope;
             for (const auto& group : created->raster_groups) created->replay_roles[group.first] |= Scene::Raster;
             for (auto index : created->noop_scopes) created->replay_roles[index] |= Scene::Noop;
             for (auto index : created->noop_ends) created->replay_roles[index] |= Scene::Noop;
@@ -3947,17 +3949,19 @@ std::int32_t spdf_d2d_create_scene(
             for (auto index : created->simple_ends) created->replay_roles[index] |= Scene::SimpleEnd;
             // A Normal isolated group with one geometry clip can share one
             // capture. Leave simple scopes on the existing native-layer route.
-            for (const auto& scope : created->scopes) {
-                const auto first = scope.first;
+            for (std::size_t first = 0; first < created->scope_at.size(); ++first) {
+                const auto scope = created->scope_at[first];
+                if (scope == UINT32_MAX) continue;
                 const auto& command = created->commands[first].command;
                 if (command.type != SPDF_D2D_SCENE_COMPOSITE_PUSH || command.uint_values[0] != 0 ||
                         command.uint_values[1] != 0 || created->simple_scopes.count(first)) continue;
-                const auto child = created->scopes.find(first + 1);
-                if (child == created->scopes.end() || child->second.end + 1 != scope.second.end ||
+                if (first + 1 >= created->scope_at.size()) continue;
+                const auto child = created->scope_at[first + 1];
+                if (child == UINT32_MAX || created->scopes[child].end + 1 != created->scopes[scope].end ||
                         created->commands[first + 1].command.type != SPDF_D2D_SCENE_CLIP_GROUP_PUSH) continue;
                 created->replay_roles[first] |= Scene::IsolatedClipOpen;
                 created->replay_roles[first + 1] |= Scene::FusedClipBoundary;
-                created->replay_roles[child->second.end] |= Scene::FusedClipBoundary;
+                created->replay_roles[created->scopes[child].end] |= Scene::FusedClipBoundary;
             }
         }
         *scene = created.release();

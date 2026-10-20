@@ -66,6 +66,11 @@
 - 부모가 COPY인 경우, 마스크 생성 중인 조상이 있는 경우, 비격리·knockout·다른 혼합 모드 그룹은 기존 경로를 쓴다. 전체 target을 덮는 축 정렬 사각형은 이미 mask가 필요 없는 생략 경로를 유지한다. mask 자체의 coverage 래스터화는 유지하며 FillOpacityMask 호출에 필요한 aliased 상태는 호출 직후 원복한다.
 - 새 렌더 결과 캐시를 추가하지 않고 기존 비트맵 예산·512px 타일·공개 ABI 24를 유지한다. 비교 조건, 제외 후보와 검증 한계는 [격리 그룹·클립 비교](GPU_ISOLATED_CLIP_BENCHMARK_2026-10-20.md)에 기록한다.
 
+### 1.37.0 정밀 작업 준비·범위 인덱스 단순화
+
+- 그룹의 유효 경계·종료 위치를 연속 배열에 담고 명령 위치에서 바로 접근한다. 기존 경계 계산과 제외 조건은 유지하며, 타일마다 그룹 범위를 해시 검색하지 않는다. worker 복제도 이 배열을 복사하고, 이미 실행 분류 byte에 반영된 simple/no-op 분류표 4개는 복사하지 않는다.
+- UI 스레드의 정밀 요청 준비 비용을 줄이는 변경이며 렌더 결과 캐시나 별도 병렬 worker를 늘리지 않는다. 요청 반환 시간과 화면 전체 완료 시간을 구분한 비교 및 제외 후보는 [범위 인덱스 비교](GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)에 기록한다. 공개 ABI 24와 출력 밀도를 유지한다.
+
 ### 1.25.0 구현 이력
 
 구현 현황: sPDF 1.25.0에서 ABI v6 DLL을 독립 실행 리더·편집기의 실제 Qt HWND에 연결한다. Intel Iris Xe의 하드웨어 D3D feature level 11.1에서 D3D11/DXGI 장치, Direct2D device context, DirectWrite factory와 flip-model swap chain을 검증했다. PyMuPDF의 512px BGRA 타일, 페이지 회전 행렬, 검색·선택·편집 테두리를 Direct2D로 합성한다. 지원되는 페이지는 MuPDF가 CPU에서 해석한 선·사각형·베지어와 원래 글꼴 glyph 윤곽을 immutable Direct2D geometry 및 realization으로 만들어 상세 CPU 타일 없이 GPU 래스터화한다. CPU에서 디코딩한 배치 이미지와 색상 스텐실 마스크는 원래 PDF 행렬로 Direct2D가 확대·합성하며, 중첩된 벡터·텍스트 클리핑은 표시 순서대로 Direct2D layer에 적용한다. 모든 shading 유형은 제한된 고품질 이미지로 변환해 합성하고 일반 격리 투명도 그룹은 opacity layer로 처리한다. 숨김·닫기 때 네이티브 캐시를 해제하며 실패하면 같은 문서와 좌표를 유지한 채 Qt 표시로 전환한다.

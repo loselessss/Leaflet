@@ -3,7 +3,8 @@
 Run with ``python -m tests.benchmark_gpu_pipeline --help``. Input PDFs and
 generated measurements stay outside source control. Sharp timings include the
 reader's 30 ms polling cadence; direct timings include synchronized readback.
-Neither mode includes vsync/present or immutable geometry upload.
+Request mode times only the queueing call, then cancels outside the timer.
+No mode includes vsync/present or immutable geometry upload.
 """
 import argparse
 from collections import Counter
@@ -40,6 +41,16 @@ def process_memory():
 
 
 def render_sample(surface, retained, transform, width, height, mode, poll_seconds):
+    if mode == "request":
+        started = time.perf_counter()
+        try:
+            if not surface.request_sharp_scene(retained, transform):
+                raise RuntimeError("fresh sharp job was not queued")
+            elapsed = (time.perf_counter() - started) * 1000
+            return elapsed, elapsed, None, None
+        finally:
+            surface.cancel_sharp()
+            time.sleep(.025)  # Drain cancellation outside the timer.
     started = time.perf_counter()
     first_tile = None
     try:
@@ -86,7 +97,7 @@ def main():
                         help="Repeat to interleave builds in alternating order.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=15)
-    parser.add_argument("--mode", choices=("direct", "sharp"), default="sharp")
+    parser.add_argument("--mode", choices=("direct", "sharp", "request"), default="sharp")
     parser.add_argument("--poll-ms", type=float, default=30,
                         help="Sharp completion polling interval, matching the reader by default.")
     args = parser.parse_args()
@@ -116,10 +127,12 @@ def main():
     user32.DestroyWindow.argtypes = [ctypes.c_void_p]
     width, height = 1200, 900
     results = {"viewport": [width, height], "dpi": 96, "repeats": args.repeats,
-               "poll_ms": args.poll_ms, "raster_scale": 1,
+               "poll_ms": args.poll_ms if args.mode == "sharp" else None, "raster_scale": 1,
                "mode": args.mode,
-               "metric": ("fresh scene request to complete sharp atlas (ms)" if args.mode == "sharp"
-                          else "begin + fresh exact replay + synchronized BGRA readback (ms)"),
+               "metric": {
+                   "request": "request_sharp_scene call until return; immediate cancellation after timer (ms)",
+                   "sharp": "fresh scene request to complete sharp atlas (ms)",
+                   "direct": "begin + fresh exact replay + synchronized BGRA readback (ms)"}[args.mode],
                "snapshot_reuse": False, "documents": []}
     for filename in args.pdf:
         started = time.perf_counter()
@@ -182,7 +195,7 @@ def main():
                         try:
                             elapsed, submitted, first_tile, pixels = render_sample(
                                 surface, retained, transform, width, height, args.mode, args.poll_ms / 1000)
-                            if index == 0:
+                            if index == 0 and pixels is not None:
                                 image = args.output / lane["name"] / f"{filename.stem}-{name}.bgra"
                                 image.write_bytes(pixels)
                             if index >= 3:
