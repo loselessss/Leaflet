@@ -71,6 +71,16 @@ the original UNORM8 intermediate rounding, then adds them. Backdrop copying,
 cropped origins, transforms and submission boundaries remain the same. Failed
 effect registration or creation keeps the original graph, including on worker
 contexts. This does not add a rendered-result cache or change tile dimensions.
+Exact worker replay can also combine an isolated Normal group and its sole
+geometric clip into one transparent source and coverage mask. A bitmap brush and
+FillOpacityMask apply coverage and group opacity directly over the parent,
+removing both clip backdrop copies and one explicit Flush for each eligible pair.
+The opening Flush remains before pooled mask writes. COPY parents, mask-building
+ancestors, non-isolated/knockout/blended groups and existing full-target rectangle
+bypasses retain their general routes. The mask keeps its original antialiasing;
+the context temporarily uses aliased mode only for FillOpacityMask, then restores
+it. The same bitmap budget, final tile grid and ABI 24 remain in use. See the
+[ACB comparison](../docs/GPU_ISOLATED_CLIP_BENCHMARK_2026-10-20.md).
 Exact worker replay also culls bounded batches of consecutive sibling draws and
 complete scopes before walking their individual commands. Mask build/apply
 transitions and unknown bounds break a batch; partial replay ranges never jump

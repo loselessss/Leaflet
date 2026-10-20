@@ -250,6 +250,114 @@ class CompositeIntegrationTests(unittest.TestCase):
             scene.close()
             box.close()
 
+    def test_isolated_group_clip_fusion_matches_general_worker(self):
+        clip = self.surface.create_path([
+            ("move", 7.25, 5.75), ("line", 43.75, 7.25),
+            ("line", 48.25, 43.75), ("line", 5.75, 48.25), ("close",)])
+        outer = self.surface.create_path([
+            ("move", -20, -20), ("line", 100, -20),
+            ("line", 100, 100), ("line", -20, 100), ("close",)])
+        paint = self.surface.create_path([
+            ("move", 2, 2), ("line", 58, 2), ("line", 58, 58),
+            ("line", 2, 58), ("close",)])
+        dot = self.surface.create_path([
+            ("move", 0, 0), ("line", 4, 0), ("line", 4, 4),
+            ("line", 0, 4), ("close",)])
+        wide = self.surface.create_path([
+            ("move", -500, -500), ("line", 0, -500), ("line", 500, -500),
+            ("line", 500, 500), ("line", -500, 500), ("close",)])
+        full_rect = self.surface.create_path([
+            ("move", -500, -500), ("line", 500, -500),
+            ("line", 500, 500), ("line", -500, 500), ("close",)])
+
+        def path(resource, color):
+            return ("path", resource, color, None, 1, None, None)
+
+        def render(operations, transform):
+            scene = self.surface.create_scene(64, 64, operations)
+            try:
+                self.assertTrue(self.surface.request_sharp_scene(scene, transform))
+                deadline = time.monotonic() + 15
+                while self.surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                    time.sleep(.002)
+                self.assertEqual(self.surface.sharp_status(), 2)
+                self.surface.begin_frame(0)
+                self.assertTrue(self.surface.draw_sharp_scene(scene, transform))
+                pixels = self.surface.read_pixels_bgra(64, 64)
+                self.surface.end_frame()
+                return pixels
+            finally:
+                self.surface.cancel_sharp()
+                scene.close()
+
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(64, 64, dpi)
+                for opacity in (0, .58, 1):
+                    for kind in ("eligible", "copy_parent", "nonisolated", "sibling",
+                                 "nested", "knockout_group", "blended_group", "mask_build",
+                                 "repeated", "full_rectangle"):
+                        operations = [
+                            ("composite_push", 0, 1, kind == "copy_parent", True),
+                            path(paint, 0x804080c0)]
+                        if kind != "copy_parent":
+                            operations.append(("clip_group_push", outer, None))
+                        target_start = len(operations)
+                        operations.append(("composite_push", 5 if kind == "blended_group" else 0,
+                                           opacity, kind == "knockout_group", kind != "nonisolated"))
+                        if kind == "sibling":
+                            operations.append(path(dot, 0xff00a060))
+                        child_clip = wide if kind == "repeated" else full_rect if kind == "full_rectangle" else clip
+                        operations.append(("clip_group_push", child_clip, None))
+                        if kind == "nested":
+                            operations.extend((("composite_push", 0, .7, False, True),
+                                               ("clip_group_push", clip, (.9, .1, -.05, 1, 2, 3))))
+                        operations.extend((
+                            ("composite_push", 1, .6, False, True), path(paint, 0xc0c04080),
+                            ("composite_pop", None),
+                            ("composite_mask_begin", (9, 9, 50, 50), False, 0),
+                            path(paint, 0x80ffffff), ("composite_mask_end", ()),
+                            path(paint, 0x8060c020), ("clip_group_pop", None)))
+                        if kind == "nested":
+                            operations.extend((("clip_group_pop", None), ("composite_pop", None)))
+                        operations.extend((("clip_group_pop", None), ("composite_pop", None)))
+                        if kind == "repeated":
+                            target = list(operations[target_start:])
+                            for phase in range(3):
+                                if phase:
+                                    operations.extend(target)
+                                # A following full-size blend can overwrite the
+                                # same scratch dimensions before its next Flush.
+                                operations.extend((("composite_push", 3, .7, False, True),
+                                    path(paint, (0x90c04080, 0xa040c080, 0x806080c0)[phase]),
+                                    ("composite_pop", None)))
+                        if kind != "copy_parent":
+                            operations.append(("clip_group_pop", None))
+                        operations.append(("composite_pop", None))
+                        if kind == "mask_build":
+                            operations = [("composite_mask_begin", (0, 0, 64, 64), True, 0)] + operations
+                            operations.extend((("composite_mask_end", tuple(
+                                0.0 if index < 128 else 1.0 for index in range(256))),
+                                path(paint, 0xffff8020), ("clip_group_pop", None)))
+                        reference = []
+                        for operation in operations:
+                            reference.append(operation)
+                            if (operation[0] == "composite_push" and operation[1] == 0
+                                    and not operation[3] and operation[4]):
+                                # A transparent source-over sibling preserves the
+                                # pixels but selects the independent general route.
+                                reference.append(path(clip, 0))
+                        for transform in ((1, 0, 0, 1, .25, .5), (0, 1, -1, 0, 63.25, .5),
+                                          (-1, 0, 0, 1, 63.25, .5),
+                                          (1, .2, .1, 1, -3.25, -4.5)):
+                            with self.subTest(dpi=dpi, opacity=opacity, kind=kind, transform=transform):
+                                expected = render(reference, transform)
+                                actual = render(operations, transform)
+                                self.assertLessEqual(max(abs(a-b) for a, b in zip(actual, expected)), 3)
+        finally:
+            for resource in (clip, outer, paint, dot, wide, full_rect):
+                resource.close()
+
     def test_mask_interpolation_preserves_unorm_intermediate_rounding(self):
         # The legacy graph rounds inside/outside premultiplied RGBA to UNORM8
         # separately. A fused float lerp must preserve those intermediate steps,

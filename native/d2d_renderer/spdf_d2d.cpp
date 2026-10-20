@@ -810,12 +810,13 @@ public:
         std::uint32_t mode, float opacity, Path* clip = nullptr,
         bool mask_build = false, bool knockout = false,
         const D2D1_RECT_F* capture_bounds = nullptr,
-        bool nonisolated = false) noexcept {
+        bool nonisolated = false, bool isolated_clip = false) noexcept {
         // No implicit layer may cross a target switch. The scene validator
         // rejects these combinations before any page drawing starts.
         if (!drawing_ || layer_depth_ != 0 || axis_clip_depth_ != 0 ||
                 !mask_captures_.empty() ||
                 mode > 15 || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
+                (isolated_clip && (clip == nullptr || mode != 0 || mask_build || knockout || nonisolated)) ||
                 (nonisolated && (mode != 0 || knockout || mask_build || clip != nullptr)) ||
                 (clip != nullptr && (clip->owner != this || !clip->resource))) {
             return E_INVALIDARG;
@@ -842,7 +843,7 @@ public:
                 const auto guard = 2.0f * 96.0f / dpi_;
                 const bool axis_aligned = (matrix._12 == 0 && matrix._21 == 0) ||
                     (matrix._11 == 0 && matrix._22 == 0);
-                if (clip->rectangle && axis_aligned &&
+                if (!isolated_clip && clip->rectangle && axis_aligned &&
                         device_bounds.left <= -guard && device_bounds.top <= -guard &&
                         device_bounds.right >= dip_size.width + guard &&
                         device_bounds.bottom >= dip_size.height + guard) {
@@ -916,7 +917,7 @@ public:
         }
         // Source + temporary backdrop, plus a coverage mask for explicit clips.
         capture.bytes = static_cast<std::uint64_t>(size.width) * size.height * 4 *
-            (mask_build ? 4 : (clip == nullptr ? 2 : 3));
+            (mask_build ? 4 : (isolated_clip || clip == nullptr ? 2 : 3));
         const auto budget = (std::max)(256ULL * 1024 * 1024, scene_cache_budget());
         if (capture.bytes == 0 || composite_bytes_ + capture.bytes > budget) {
             return E_OUTOFMEMORY;
@@ -939,10 +940,15 @@ public:
             ComPtr<ID2D1SolidColorBrush> white;
             if (SUCCEEDED(result)) result = create_brush(0xffffffff, &white);
             if (FAILED(result)) return result;
-            // A clip is not an isolated transparency group: its children must
-            // blend against the existing backdrop. Apply coverage only on exit.
-            result = copy_composite_pixels(capture.source.Get(), capture.previous.Get(),
-                                           capture.source_origin);
+            if (isolated_clip) {
+                // The enclosing isolated group starts transparent. Submit any
+                // previous borrowers before overwriting pooled mask inputs.
+                result = d2d_context_->Flush();
+            } else {
+                // Ordinary clips preserve the existing backdrop for child blends.
+                result = copy_composite_pixels(capture.source.Get(), capture.previous.Get(),
+                                               capture.source_origin);
+            }
             if (SUCCEEDED(result)) {
                 d2d_context_->SetTarget(capture.mask.Get());
                 d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
@@ -973,6 +979,7 @@ public:
             d2d_context_->SetTransform(capture.previous_transform);
             if (FAILED(result)) return result;
         }
+        capture.isolated_clip = isolated_clip;
         capture.mode = mode;
         capture.opacity = opacity;
         capture.building_mask = mask_build;
@@ -988,7 +995,7 @@ public:
             adjusted._32 -= capture.destination_origin.y;
             d2d_context_->SetTransform(adjusted);
         }
-        if (clip == nullptr && !nonisolated) d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
+        if ((clip == nullptr || isolated_clip) && !nonisolated) d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
         // Offscreen captures have their own compositing state. Inheriting COPY
         // here makes nested bitmaps erase earlier content in the capture.
         // The parent's state is restored when this capture closes.
@@ -1107,8 +1114,9 @@ public:
         if (!drawing_ || composite_captures_.empty() || layer_depth_ != 0 ||
                 !mask_captures_.empty() ||
                 composite_captures_.back().building_mask ||
-                (composite_captures_.back().mask != nullptr ||
-                 composite_captures_.back().passthrough) != clip) return E_UNEXPECTED;
+                ((composite_captures_.back().mask != nullptr ||
+                  composite_captures_.back().passthrough) &&
+                 !composite_captures_.back().isolated_clip) != clip) return E_UNEXPECTED;
         auto capture = composite_captures_.back();
         composite_captures_.pop_back();
         composite_bytes_ -= capture.bytes;
@@ -1124,6 +1132,28 @@ public:
         d2d_context_->SetPrimitiveBlend(capture.previous_blend);
         d2d_context_->SetTarget(capture.previous.Get());
         d2d_context_->SetTransform(D2D1::Matrix3x2F::Identity());
+        if (capture.isolated_clip) {
+            // Isolated source + geometric coverage + group opacity can be
+            // source-overed directly, without a second backdrop snapshot.
+            ComPtr<ID2D1BitmapBrush1> brush;
+            result = d2d_context_->CreateBitmapBrush(capture.source.Get(),
+                D2D1::BitmapBrushProperties1(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
+                    D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
+                D2D1::BrushProperties(capture.opacity, D2D1::Matrix3x2F::Translation(
+                    capture.destination_origin.x, capture.destination_origin.y)), &brush);
+            if (SUCCEEDED(result)) {
+                const auto size = capture.source->GetSize();
+                const auto destination = D2D1::RectF(capture.destination_origin.x, capture.destination_origin.y,
+                    capture.destination_origin.x + size.width, capture.destination_origin.y + size.height);
+                const auto previous_aa = d2d_context_->GetAntialiasMode();
+                d2d_context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                d2d_context_->FillOpacityMask(capture.mask.Get(), brush.Get(), &destination, nullptr);
+                d2d_context_->SetAntialiasMode(previous_aa);
+            }
+            d2d_context_->SetTransform(capture.previous_transform);
+            if (SUCCEEDED(result)) recycle_capture(capture, nullptr);
+            return result;
+        }
         if (capture.nonisolated && (capture.opacity == 0 || capture.opacity == 1)) {
             // Endpoint interpolation needs neither a backdrop snapshot nor an
             // ArithmeticComposite effect. The source already has the backdrop.
@@ -1651,6 +1681,48 @@ public:
     HRESULT draw_sharp_partial(Scene* scene, const SpdfD2DTransform& transform) noexcept;
     std::int32_t sharp_status() noexcept;
     void cancel_sharp() noexcept;
+    bool isolated_clip_active() const noexcept {
+        return !composite_captures_.empty() && composite_captures_.back().isolated_clip;
+    }
+    bool can_fuse_isolated_clip(Path* path, D2D1_MATRIX_3X2_F matrix) const noexcept {
+        // COPY/knockout parents must preserve the original clearing extent.
+        if (d2d_context_->GetPrimitiveBlend() != D2D1_PRIMITIVE_BLEND_SOURCE_OVER) return false;
+        // Mask transfer functions can magnify a one-unit color/alpha rounding
+        // change. Preserve the original graph while any mask is being built.
+        for (const auto& capture : composite_captures_)
+            if (capture.building_mask) return false;
+        if (path->rectangle && ((matrix._12 == 0 && matrix._21 == 0) ||
+                (matrix._11 == 0 && matrix._22 == 0))) {
+            for (const auto& parent : composite_captures_) {
+                if (!parent.cropped) continue;
+                matrix._31 -= parent.destination_origin.x;
+                matrix._32 -= parent.destination_origin.y;
+            }
+            D2D1_RECT_F bounds{};
+            ComPtr<ID2D1Image> image;
+            ComPtr<ID2D1Bitmap1> target;
+            d2d_context_->GetTarget(&image);
+            if (SUCCEEDED(image.As(&target)) && SUCCEEDED(path->resource->GetBounds(&matrix, &bounds))) {
+                const auto size = target->GetSize();
+                const auto guard = 2.0f * 96.0f / dpi_;
+                if (bounds.left <= -guard && bounds.top <= -guard &&
+                        bounds.right >= size.width + guard && bounds.bottom >= size.height + guard)
+                    return false; // The original rectangle passthrough needs no mask.
+            }
+        }
+        return true;
+    }
+    HRESULT begin_isolated_clipped_group(float opacity, Path* path,
+            const D2D1_MATRIX_3X2_F& matrix) noexcept {
+        D2D1_MATRIX_3X2_F previous;
+        d2d_context_->GetTransform(&previous);
+        auto result = set_transform(matrix._11, matrix._12, matrix._21, matrix._22, matrix._31, matrix._32);
+        if (SUCCEEDED(result)) result = begin_composite_group(0, opacity, path,
+            false, false, nullptr, false, true);
+        if (SUCCEEDED(result)) composite_captures_.back().previous_transform = previous;
+        else d2d_context_->SetTransform(previous);
+        return result;
+    }
     bool refining() const noexcept { return static_cast<bool>(cancel_token_); }
     bool cancelled() const noexcept { return cancel_token_ && cancel_token_->load(); }
     HRESULT initialize_worker(const Surface& parent, UINT32 width, UINT32 height) noexcept {
@@ -1761,6 +1833,7 @@ private:
         ComPtr<ID2D1Bitmap1> source;
         ComPtr<ID2D1Bitmap1> mask;
         ComPtr<ID2D1Bitmap1> mask_input;
+        bool isolated_clip = false;
         bool building_mask = false;
         bool luminosity = false;
         D2D1_RECT_F mask_area{};
@@ -2018,7 +2091,8 @@ struct Scene {
     std::unordered_set<std::size_t> noop_scopes;
     std::unordered_set<std::size_t> noop_ends;
     enum ReplayRole : std::uint8_t {
-        Scope = 1, Raster = 2, Noop = 4, SimpleOpen = 8, SimpleEnd = 16
+        Scope = 1, Raster = 2, Noop = 4, SimpleOpen = 8, SimpleEnd = 16,
+        IsolatedClipOpen = 32, FusedClipBoundary = 64
     };
     std::vector<std::uint8_t> replay_roles;
     // Structural batches contain only complete sibling scopes/draw commands.
@@ -2291,6 +2365,7 @@ HRESULT replay_scene(
         }
         // One sequential byte replaces several hash probes per command/tile.
         const auto role = index < scene->replay_roles.size() ? scene->replay_roles[index] : 0;
+        if (refining && (role & Scene::FusedClipBoundary) && surface->isolated_clip_active()) continue;
         if (refining && index < scene->command_bounds.size()) {
             const auto& bounds = scene->command_bounds[index];
             if (bounds.left <= bounds.right && bounds.top <= bounds.bottom &&
@@ -2381,6 +2456,17 @@ HRESULT replay_scene(
             if ((command.uint_values[1] & ~3U) != 0) {
                 result = E_INVALIDARG;
                 break;
+            }
+            if (refining && (role & Scene::IsolatedClipOpen)) {
+                const auto& child = scene->commands[index + 1].command;
+                const auto matrix = (child.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)
+                    ? compose_transform(page, child.transform)
+                    : D2D1::Matrix3x2F(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
+                auto* path = static_cast<Surface::Path*>(child.resource);
+                if (surface->can_fuse_isolated_clip(path, matrix)) {
+                    result = surface->begin_isolated_clipped_group(command.values[0], path, matrix);
+                    break;
+                }
             }
             result = surface->begin_composite_group(
                 command.uint_values[0], command.values[0], nullptr, false,
@@ -3859,6 +3945,20 @@ std::int32_t spdf_d2d_create_scene(
             for (auto index : created->noop_ends) created->replay_roles[index] |= Scene::Noop;
             for (auto index : created->simple_scopes) created->replay_roles[index] |= Scene::SimpleOpen;
             for (auto index : created->simple_ends) created->replay_roles[index] |= Scene::SimpleEnd;
+            // A Normal isolated group with one geometry clip can share one
+            // capture. Leave simple scopes on the existing native-layer route.
+            for (const auto& scope : created->scopes) {
+                const auto first = scope.first;
+                const auto& command = created->commands[first].command;
+                if (command.type != SPDF_D2D_SCENE_COMPOSITE_PUSH || command.uint_values[0] != 0 ||
+                        command.uint_values[1] != 0 || created->simple_scopes.count(first)) continue;
+                const auto child = created->scopes.find(first + 1);
+                if (child == created->scopes.end() || child->second.end + 1 != scope.second.end ||
+                        created->commands[first + 1].command.type != SPDF_D2D_SCENE_CLIP_GROUP_PUSH) continue;
+                created->replay_roles[first] |= Scene::IsolatedClipOpen;
+                created->replay_roles[first + 1] |= Scene::FusedClipBoundary;
+                created->replay_roles[child->second.end] |= Scene::FusedClipBoundary;
+            }
         }
         *scene = created.release();
         return static_cast<std::int32_t>(S_OK);

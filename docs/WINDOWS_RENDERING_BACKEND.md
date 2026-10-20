@@ -1,6 +1,6 @@
 # Windows 렌더링 백엔드 설계
 
-작성일: 2026-09-01 · 구현 현황 갱신: 2026-10-19
+작성일: 2026-09-01 · 구현 현황 갱신: 2026-10-20
 
 상태: Direct2D 타일 합성 및 제한형 PDF 벡터·글자 GPU 래스터화 적용
 
@@ -59,6 +59,12 @@
 - 클립 종료의 inside·outside·combined Composite 노드 세 개를 전용 픽셀 셰이더 하나로 대체한다. 배경·그리기 결과·마스크를 같은 좌표에서 읽어, 기존 두 중간 결과를 각각 UNORM8로 반올림한 뒤 더한다. 단순 float 보간의 누적 색 차이를 피하고, 기존 cropped origin·투명 배경·마스크 coverage를 보존한다.
 - 기존 Flush·배경 CopyFromBitmap·타일 격자·출력 밀도는 유지한다. 등록이나 생성에 실패하면 원래 세 노드를 쓰며, worker도 같은 factory 등록 상태를 이어받는다. 셰이더는 Windows SDK FXC로 빌드 시 컴파일해 DLL에 포함하고 런타임 컴파일이나 새 결과 캐시를 추가하지 않는다.
 - 배경을 직접 지우고 더하는 후보와 타일 크기 변경도 비교했지만, 출력 오류 또는 화면 맞춤/확대의 일관되지 않은 성능 때문에 제외했다. 정식 ACB 비교와 한계는 [마스크 셰이더 비교](GPU_MASK_SHADER_BENCHMARK_2026-10-19.md)에 기록한다.
+
+### 1.37.0 격리 그룹·단일 도형 클립 통합
+
+- 정밀 worker에서 Normal 격리 그룹의 유일한 자식이 도형 클립이면, 두 capture를 투명 source와 coverage mask 하나씩으로 통합한다. 클립 내부의 혼합·soft mask는 그대로 실행하고, 종료 시 bitmap brush의 그룹 불투명도와 FillOpacityMask로 부모에 source-over한다. 적용 가능한 쌍마다 클립 배경 복사 2회와 명시적 Flush 1회를 없앤다. 풀의 mask 입력을 덮어쓰기 전 시작 Flush는 유지한다.
+- 부모가 COPY인 경우, 마스크 생성 중인 조상이 있는 경우, 비격리·knockout·다른 혼합 모드 그룹은 기존 경로를 쓴다. 전체 target을 덮는 축 정렬 사각형은 이미 mask가 필요 없는 생략 경로를 유지한다. mask 자체의 coverage 래스터화는 유지하며 FillOpacityMask 호출에 필요한 aliased 상태는 호출 직후 원복한다.
+- 새 렌더 결과 캐시를 추가하지 않고 기존 비트맵 예산·512px 타일·공개 ABI 24를 유지한다. 비교 조건, 제외 후보와 검증 한계는 [격리 그룹·클립 비교](GPU_ISOLATED_CLIP_BENCHMARK_2026-10-20.md)에 기록한다.
 
 ### 1.25.0 구현 이력
 
