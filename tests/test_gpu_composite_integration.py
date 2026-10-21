@@ -461,11 +461,11 @@ class CompositeIntegrationTests(unittest.TestCase):
                                 expected = render(reference, transform)
                                 actual = render(operations, transform)
                                 error = [abs(a-b) for a, b in zip(actual, expected)]
-                                # Three overlapping captures accumulate one more
-                                # UNORM8 rounding step on the WARP rasterizer.
-                                limit = 4 if kind == "repeated" and self.surface.info.driver == "warp" else 3
-                                self.assertLessEqual(max(error), limit)
-                                self.assertLess(sum(error) / len(error), .25)
+                                # Three overlapping captures can accumulate one
+                                # extra UNORM8 step across GPU implementations.
+                                limit = 4 if kind == "repeated" else 3
+                                self.assertLessEqual(max(error), limit, self.surface.info)
+                                self.assertLess(sum(error) / len(error), .25, self.surface.info)
         finally:
             for resource in (clip, outer, paint, dot, wide, full_rect):
                 resource.close()
