@@ -16,10 +16,6 @@
 
 - Close the left thumbnail/bookmark panel directly with its header's X button.
 
-### 기타
-
-- Pin verified direct build dependencies for Windows installer and MSIX builds to avoid untested runtime upgrades during release.
-
 ## 1.36.0 - 2026-10-15
 
 ### 새 기능
