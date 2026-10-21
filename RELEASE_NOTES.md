@@ -1,8 +1,9 @@
 # Leaflet Release Notes
 
-## Unreleased (1.37.0)
+## 1.37.0 - 2026-10-21
 
-- Reduce temporary GPU bitmap allocation during complex transparency and mask rendering.
+- Improve GPU rendering of complex PDF pages by reducing intermediate transparency, clipping and mask composition work. Keep text and vectors at full display resolution; antialiased effect edges may differ slightly.
+- Reduce GPU scene preparation overhead and memory use on complex pages.
 - Place images and objects with magnetic edge/center alignment. Toggle it in the toolbar or hold Ctrl for free movement with alignment guides.
 - Search, navigate, edit comments and delete annotations in a separate management window, with document saving and undo/redo.
 - Close the left thumbnail/bookmark panel directly using its X button.

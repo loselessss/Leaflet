@@ -873,13 +873,29 @@ class EditorWorkspaceTests(unittest.TestCase):
         from pdfeditor.core import Document
         tab = self.open_editor()
         original_render = Document.render
-        with patch.object(Document, "render", autospec=True, side_effect=original_render) as render:
-            dialog, grid = self.open_organizer(tab)
-            self.render_grid(grid)
+        dialog, grid = self.open_organizer(tab)
+        # Opening the dialog pumps editor paint events as well. Observe a fresh
+        # thumbnail batch without including those unrelated full-page renders.
+        for ratio in (1.0, 2.0):
+            with self.subTest(device_pixel_ratio=ratio), \
+                    patch.object(grid, "devicePixelRatioF", return_value=ratio):
+                grid.refresh(tab.page_index)
+                grid.pages.doItemsLayout()
+                with patch.object(Document, "render", autospec=True,
+                                  side_effect=original_render) as render:
+                    self.render_grid(grid)
+                self.assertTrue(render.call_count)
+                for call in render.call_args_list:
+                    document, page, scale = call.args
+                    self.assertIs(document, tab.doc)
+                    width, height = document.page_size(page)
+                    self.assertLess(scale / ratio, 1)
+                    self.assertLessEqual(width * scale,
+                                         grid.pages.iconSize().width() * ratio + 1)
+                    self.assertLessEqual(height * scale,
+                                         grid.pages.iconSize().height() * ratio + 1)
         self.assertTrue(dialog.isVisible())
         self.assertEqual(grid.pages.count(), 45)
-        self.assertTrue(render.call_count)
-        self.assertTrue(all(call.args[2] < 1 for call in render.call_args_list))
         pages = grid.pages
         self.assertTrue(pages.dragEnabled())
         self.assertTrue(pages.acceptDrops())

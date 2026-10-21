@@ -1,9 +1,10 @@
-"""Manual Windows GPU benchmark; exact replay, no raster/group snapshot reuse.
+"""Manual Windows GPU benchmark; fresh scenes, no raster/group snapshot reuse.
 
 Run with ``python -m tests.benchmark_gpu_pipeline --help``. Input PDFs and
 generated measurements stay outside source control. Sharp timings include the
 reader's 30 ms polling cadence; direct timings include synchronized readback.
 Request mode times only the queueing call, then cancels outside the timer.
+Scene mode times retained-scene construction without rendering or worker work.
 No mode includes vsync/present or immutable geometry upload.
 """
 import argparse
@@ -97,7 +98,7 @@ def main():
                         help="Repeat to interleave builds in alternating order.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=15)
-    parser.add_argument("--mode", choices=("direct", "sharp", "request"), default="sharp")
+    parser.add_argument("--mode", choices=("direct", "sharp", "request", "scene"), default="sharp")
     parser.add_argument("--poll-ms", type=float, default=30,
                         help="Sharp completion polling interval, matching the reader by default.")
     args = parser.parse_args()
@@ -130,6 +131,7 @@ def main():
                "poll_ms": args.poll_ms if args.mode == "sharp" else None, "raster_scale": 1,
                "mode": args.mode,
                "metric": {
+                   "scene": "fresh retained-scene construction; immutable resources prepared outside timer (ms)",
                    "request": "request_sharp_scene call until return; immediate cancellation after timer (ms)",
                    "sharp": "fresh scene request to complete sharp atlas (ms)",
                    "direct": "begin + fresh exact replay + synchronized BGRA readback (ms)"}[args.mode],
@@ -171,7 +173,9 @@ def main():
                 record["runs"].append(lane["result"])
                 (args.output / name).mkdir(exist_ok=True)
             fit = min(width / page_width, height / page_height)
-            for name, scale in (("fit", fit), ("100pct", 1.0), ("200pct", 2.0)):
+            cases = (("scene", 1.0),) if args.mode == "scene" else (
+                ("fit", fit), ("100pct", 1.0), ("200pct", 2.0))
+            for name, scale in cases:
                 dx, dy = (width - page_width * scale) / 2, (height - page_height * scale) / 2
                 for lane in lanes:
                     lane["case"] = {"name": name, "scale": scale, "samples_ms": [],
@@ -189,12 +193,17 @@ def main():
                             continue
                         surface = lane["surface"]
                         # A fresh identity prevents page, group and tile reuse.
+                        started = time.perf_counter()
                         retained = surface.create_scene(page_width, page_height, lane["draws"])
+                        scene_ms = (time.perf_counter() - started) * 1000
                         transform = (scale, 0, 0, scale, dx, dy)
                         time.sleep(.025)  # Drain Present outside the timer.
                         try:
-                            elapsed, submitted, first_tile, pixels = render_sample(
-                                surface, retained, transform, width, height, args.mode, args.poll_ms / 1000)
+                            if args.mode == "scene":
+                                elapsed, submitted, first_tile, pixels = scene_ms, scene_ms, None, None
+                            else:
+                                elapsed, submitted, first_tile, pixels = render_sample(
+                                    surface, retained, transform, width, height, args.mode, args.poll_ms / 1000)
                             if index == 0 and pixels is not None:
                                 image = args.output / lane["name"] / f"{filename.stem}-{name}.bgra"
                                 image.write_bytes(pixels)

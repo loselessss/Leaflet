@@ -24,7 +24,7 @@
 - 1.28.1은 Hue/Saturation/Color/Luminosity도 Direct2D Blend effect에 연결하여 Normal 외 표준 PDF 혼합 모드 15개를 지원한다. PDF의 SetLum/SetSat·색 범위 보정과 같은 RGB 성분 혼합을 사용하며, 일반 HSL 색상 변환으로 대체하지 않는다. 구형 DLL이 확장된 모드 번호를 받지 않도록 ABI v11로 구분한다.
 - 혼합 장면은 일반 그룹까지 명시적인 GPU 중간 bitmap에 그린다. 그룹을 닫을 때 소스 불투명도를 적용하고 배경 snapshot과 Direct2D Blend effect로 합성한 결과를 이전 target에 복사한다. 배경을 두 번 source-over하지 않으며, 페이지 좌표·DPI 변환은 그대로 유지한다. [Microsoft Blend effect의 입력·알파 합성 정의](https://learn.microsoft.com/en-us/windows/win32/direct2d/blend)를 따른다.
 - 임시 bitmap은 PDF 전체 확대 크기가 아닌 viewport 크기다. 혼합 그룹은 2개, 명시적 클리핑은 3개, 마스크는 생성·변환·적용에 필요한 최대 4개를 중첩 깊이별로 예약한다. 활성 합성 예약 한도는 256 MiB와 동적 장면 캐시 예산 중 큰 값이다. 이는 명시적 bitmap 예약 한도이며 색상표·드라이버·effect 내부 메모리까지 포함한 총 VRAM 한도는 아니다.
-- 미배포 1.37.0에서는 복잡한 합성의 임시 bitmap을 표면별 풀에서 재사용한다. 크기·용도·DPI가 같은 항목만 사용하고, 같은 컨텍스트에서 입력 소비 명령 뒤에 후속 덮어쓰기를 예약한다. 새 사용자는 전체 픽셀을 지우거나 덮어쓴다. 풀은 최대 64개·64 MiB·동적 장면 예산의 1/8·활성 합성 예약 후 남은 공간 중 작은 범위로 제한하며, 화면 크기/DPI 변경과 표면 해제 시 비운다. 부분 갱신은 후속 과제로 남긴다.
+- 1.37.0에서는 복잡한 합성의 임시 bitmap을 표면별 풀에서 재사용한다. 크기·용도·DPI가 같은 항목만 사용하고, 같은 컨텍스트에서 입력 소비 명령 뒤에 후속 덮어쓰기를 예약한다. 새 사용자는 전체 픽셀을 지우거나 덮어쓴다. 풀은 최대 64개·64 MiB·동적 장면 예산의 1/8·활성 합성 예약 후 남은 공간 중 작은 범위로 제한하며, 화면 크기/DPI 변경과 표면 해제 시 비운다. 부분 갱신은 후속 과제로 남긴다.
 - 같은 컨텍스트의 target 전환 순서를 이용해 중첩 합성의 불필요한 마스크 coverage·범위 종료 Flush를 줄인다. GPU backdrop은 기존 Flush/CopyFromBitmap 경계로 복사한다. GPU 그리기로 복사를 대체한 후보는 ACB 2015에서 지연이 늘어 최종 구현에서 제외했다. 마스크 원본은 적용 범위가 닫힐 때까지 기존 4개 bitmap 예약 안에서 보유한다. 불투명도 0/1인 비격리 Normal 그룹의 보간과 불투명도 1인 blend 입력의 ColorMatrix를 생략한다. 명령별 1 byte 실행 분류로 정밀 타일마다 반복하던 scope·simple·no-op 해시 검색도 줄인다. 최종 EndDraw·진단 readback·다른 컨텍스트와의 기존 동기화는 유지한다. 원리는 [Microsoft의 같은 컨텍스트 target 전환 순서 보장](https://learn.microsoft.com/en-us/windows/win32/direct2d/devices-and-device-contexts)에 따른다.
 - 1.28.2는 혼합 장면의 geometry/text/stroked clip을 ABI v12의 명시적 clip capture로 처리한다. 기존 배경을 복사한 target에서 자식 혼합을 처리하고, 종료 시 `result * coverage + backdrop * (1 - coverage)`를 GPU 효과로 계산해 SOURCE_COPY한다. 이로써 클리핑 밖의 배경과 반투명 알파를 보존하며 경계 coverage를 해당 clip당 한 번 적용한다. coverage는 일반 Direct2D clip layer와 같은 래스터화 경로를 사용한다. [Microsoft Composite effect 입력 순서와 연산 정의](https://learn.microsoft.com/en-us/windows/win32/direct2d/composite)를 따른다.
 - 혼합 또는 마스크 장면의 모든 PDF 투명도 그룹은 여전히 격리되어야 한다. 1.28.3에서는 마스크 생성과 적용을 명시적 bitmap capture로 나눠, 두 범위 안의 격리 혼합·geometry clip 및 중첩 마스크를 GPU로 처리한다. mask-end는 색상/알파를 coverage로 바꾼 뒤 배경을 복사한 content target으로 전환하고, clip-pop에서 coverage를 적용한다. 범위가 교차하는 잘못된 스택은 사전 검증으로 거부한다.
@@ -76,6 +76,11 @@
 - 장면 생성 시 그리기나 상태 변경이 없는 native 도형·사각 클립과 불투명도 레이어 쌍을 제거한다. 안쪽이 모두 빈 경우 바깥 레이어도 제거하고 명령 저장 공간을 축소한 뒤 범위 인덱스를 만든다. 원본 장면과 worker 양쪽의 명령·인덱스 메모리를 줄인다. 캡처 기반 composite·mask 범위와 잘못된 레이어 값은 제거하지 않는다.
 - 위 격리 그룹 통합 경로를 더 줄여 투명 source 하나만 만든다. 별도 coverage 비트맵을 그리는 대신 종료 시 bitmap brush와 FillGeometry로 클립을 직접 적용한다. 클립 좌표와 부모 복원 좌표를 별도로 보관하고 역행렬로 이미지 원점을 맞춘다. 안티앨리어싱은 유지하지만 8비트 경계 반올림은 소폭 달라질 수 있다.
 - COPY·마스크 생성 보호 조건, 기존 simple 경로·전체 target 사각형 생략, 타일 해상도·결과 캐시 정책·공개 ABI 24를 유지한다. 역변환할 수 없는 좌표는 기존 합성으로 처리한다. ACB 속도·픽셀 및 메모리 구조 비교는 [직접 클립 합성 비교](GPU_DIRECT_CLIP_BENCHMARK_2026-10-21.md)에 기록한다. 미세 효과 자체를 생략한 [별도 실험](GPU_SUBPIXEL_EFFECT_BENCHMARK_2026-10-20.md)은 기본 적용하지 않았다.
+
+### 1.37.0 분류용 해시표 제거
+
+- simple/no-op 시작·종료 분류를 기존 replay role byte에 직접 기록한다. 장면 생성 후 남아 있던 해시표 4개를 필드에서 제거해 할당·보관을 없애며, 격리 클립 통합 대상 판정도 같은 byte를 읽는다. 실제 실행·합성 순서와 Flush 경계는 바꾸지 않는다.
+- ACB 2015의 16,366개 분류 항목에 요청되던 786,096byte와 장면 객체 256byte를 줄였다. allocator/드라이버를 포함한 전체 프로세스 RSS 측정과 구분한다. 생성 시간·후보별 GPU 시간 및 제외한 직접 혼합/제출 축소 실험은 [분류표 비교](GPU_CLASSIFICATION_BENCHMARK_2026-10-21.md)에 기록한다. 공개 ABI는 24다.
 
 ### 1.25.0 구현 이력
 

@@ -9,7 +9,6 @@
 #include <memory>
 #include <new>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <atomic>
@@ -2094,10 +2093,6 @@ struct Scene {
     // Dense command index plus packed scopes avoid per-request hash-node copies.
     std::vector<std::uint32_t> scope_at;
     std::vector<RasterGroup> scopes;
-    std::unordered_set<std::size_t> simple_scopes;
-    std::unordered_set<std::size_t> simple_ends;
-    std::unordered_set<std::size_t> noop_scopes;
-    std::unordered_set<std::size_t> noop_ends;
     enum ReplayRole : std::uint8_t {
         Scope = 1, Raster = 2, Noop = 4, SimpleOpen = 8, SimpleEnd = 16,
         IsolatedClipOpen = 32, FusedClipBoundary = 64
@@ -2188,6 +2183,7 @@ void prepare_raster_groups(Scene* scene) {
     };
     std::vector<Scope> stack;
     scene->scope_at.assign(scene->commands.size(), UINT32_MAX);
+    scene->replay_roles.assign(scene->commands.size(), 0);
     scene->command_bounds.resize(scene->commands.size(), D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX));
     std::vector<std::pair<std::size_t, Scene::RasterGroup>> groups;
     const auto include = [](D2D1_RECT_F& a, const D2D1_RECT_F& b) {
@@ -2256,11 +2252,11 @@ void prepare_raster_groups(Scene* scene) {
             }
             if (scope.valid && scope.simple && (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
                     start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH)) {
-                scene->simple_scopes.insert(scope.first);
-                scene->simple_ends.insert(index);
+                scene->replay_roles[scope.first] |= Scene::SimpleOpen;
+                scene->replay_roles[index] |= Scene::SimpleEnd;
                 if (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH && start.values[0] == 1.0f) {
-                    scene->noop_scopes.insert(scope.first);
-                    scene->noop_ends.insert(index);
+                    scene->replay_roles[scope.first] |= Scene::Noop;
+                    scene->replay_roles[index] |= Scene::Noop;
                 }
             }
             if (scope.valid && scope.complex && index - scope.first >= 63 &&
@@ -3984,14 +3980,9 @@ std::int32_t spdf_d2d_create_scene(
         if (!created->recordable) {
             prepare_raster_groups(created.get());
             prepare_cull_blocks(created.get());
-            created->replay_roles.resize(created->commands.size(), 0);
             for (std::size_t index = 0; index < created->scope_at.size(); ++index)
                 if (created->scope_at[index] != UINT32_MAX) created->replay_roles[index] |= Scene::Scope;
             for (const auto& group : created->raster_groups) created->replay_roles[group.first] |= Scene::Raster;
-            for (auto index : created->noop_scopes) created->replay_roles[index] |= Scene::Noop;
-            for (auto index : created->noop_ends) created->replay_roles[index] |= Scene::Noop;
-            for (auto index : created->simple_scopes) created->replay_roles[index] |= Scene::SimpleOpen;
-            for (auto index : created->simple_ends) created->replay_roles[index] |= Scene::SimpleEnd;
             // A Normal isolated group with one geometry clip can share one
             // capture. Leave simple scopes on the existing native-layer route.
             for (std::size_t first = 0; first < created->scope_at.size(); ++first) {
@@ -3999,7 +3990,7 @@ std::int32_t spdf_d2d_create_scene(
                 if (scope == UINT32_MAX) continue;
                 const auto& command = created->commands[first].command;
                 if (command.type != SPDF_D2D_SCENE_COMPOSITE_PUSH || command.uint_values[0] != 0 ||
-                        command.uint_values[1] != 0 || created->simple_scopes.count(first)) continue;
+                        command.uint_values[1] != 0 || (created->replay_roles[first] & Scene::SimpleOpen)) continue;
                 if (first + 1 >= created->scope_at.size()) continue;
                 const auto child = created->scope_at[first + 1];
                 if (child == UINT32_MAX || created->scopes[child].end + 1 != created->scopes[scope].end ||

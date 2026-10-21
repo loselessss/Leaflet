@@ -65,11 +65,13 @@ inputs remain owned until the applied scope closes, within its existing
 four-bitmap reservation. Diagnostic readback and EndDraw retain their submission
 boundaries. A compact byte per scene command classifies replay roles up front,
 avoiding repeated scope/simple/no-op hash searches for every command in each tile.
-Scope ranges use packed records and a direct command-to-record index. Worker
-preparation copies these contiguous arrays, omitting the four construction-only
-simple/no-op sets; replay uses the existing role bytes. This reduces queueing
-work on the UI thread and removes scope hash lookups without retaining pixels.
-See the [scope index comparison](../docs/GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md).
+Scope ranges use packed records and a direct command-to-record index. Scene
+construction writes simple/no-op classifications directly into these role bytes,
+without allocating or retaining four intermediate hash sets. Worker preparation
+copies only the contiguous execution arrays. This reduces scene storage and
+construction work without retaining pixels or changing submission boundaries.
+See the [scope index comparison](../docs/GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)
+and [classification storage comparison](../docs/GPU_CLASSIFICATION_BENCHMARK_2026-10-21.md).
 Clip/mask closing can replace the three Composite effect nodes with one custom
 pixel shader. It quantizes the inside and outside terms separately to preserve
 the original UNORM8 intermediate rounding, then adds them. Backdrop copying,
