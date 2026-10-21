@@ -71,6 +71,12 @@
 - 그룹의 유효 경계·종료 위치를 연속 배열에 담고 명령 위치에서 바로 접근한다. 기존 경계 계산과 제외 조건은 유지하며, 타일마다 그룹 범위를 해시 검색하지 않는다. worker 복제도 이 배열을 복사하고, 이미 실행 분류 byte에 반영된 simple/no-op 분류표 4개는 복사하지 않는다.
 - UI 스레드의 정밀 요청 준비 비용을 줄이는 변경이며 렌더 결과 캐시나 별도 병렬 worker를 늘리지 않는다. 요청 반환 시간과 화면 전체 완료 시간을 구분한 비교 및 제외 후보는 [범위 인덱스 비교](GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)에 기록한다. 공개 ABI 24와 출력 밀도를 유지한다.
 
+### 1.37.0 빈 명령 제거·직접 도형 클립 합성
+
+- 장면 생성 시 그리기나 상태 변경이 없는 native 도형·사각 클립과 불투명도 레이어 쌍을 제거한다. 안쪽이 모두 빈 경우 바깥 레이어도 제거하고 명령 저장 공간을 축소한 뒤 범위 인덱스를 만든다. 원본 장면과 worker 양쪽의 명령·인덱스 메모리를 줄인다. 캡처 기반 composite·mask 범위와 잘못된 레이어 값은 제거하지 않는다.
+- 위 격리 그룹 통합 경로를 더 줄여 투명 source 하나만 만든다. 별도 coverage 비트맵을 그리는 대신 종료 시 bitmap brush와 FillGeometry로 클립을 직접 적용한다. 클립 좌표와 부모 복원 좌표를 별도로 보관하고 역행렬로 이미지 원점을 맞춘다. 안티앨리어싱은 유지하지만 8비트 경계 반올림은 소폭 달라질 수 있다.
+- COPY·마스크 생성 보호 조건, 기존 simple 경로·전체 target 사각형 생략, 타일 해상도·결과 캐시 정책·공개 ABI 24를 유지한다. 역변환할 수 없는 좌표는 기존 합성으로 처리한다. ACB 속도·픽셀 및 메모리 구조 비교는 [직접 클립 합성 비교](GPU_DIRECT_CLIP_BENCHMARK_2026-10-21.md)에 기록한다. 미세 효과 자체를 생략한 [별도 실험](GPU_SUBPIXEL_EFFECT_BENCHMARK_2026-10-20.md)은 기본 적용하지 않았다.
+
 ### 1.25.0 구현 이력
 
 구현 현황: sPDF 1.25.0에서 ABI v6 DLL을 독립 실행 리더·편집기의 실제 Qt HWND에 연결한다. Intel Iris Xe의 하드웨어 D3D feature level 11.1에서 D3D11/DXGI 장치, Direct2D device context, DirectWrite factory와 flip-model swap chain을 검증했다. PyMuPDF의 512px BGRA 타일, 페이지 회전 행렬, 검색·선택·편집 테두리를 Direct2D로 합성한다. 지원되는 페이지는 MuPDF가 CPU에서 해석한 선·사각형·베지어와 원래 글꼴 glyph 윤곽을 immutable Direct2D geometry 및 realization으로 만들어 상세 CPU 타일 없이 GPU 래스터화한다. CPU에서 디코딩한 배치 이미지와 색상 스텐실 마스크는 원래 PDF 행렬로 Direct2D가 확대·합성하며, 중첩된 벡터·텍스트 클리핑은 표시 순서대로 Direct2D layer에 적용한다. 모든 shading 유형은 제한된 고품질 이미지로 변환해 합성하고 일반 격리 투명도 그룹은 opacity layer로 처리한다. 숨김·닫기 때 네이티브 캐시를 해제하며 실패하면 같은 문서와 좌표를 유지한 채 Qt 표시로 전환한다.

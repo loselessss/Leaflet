@@ -76,16 +76,21 @@ the original UNORM8 intermediate rounding, then adds them. Backdrop copying,
 cropped origins, transforms and submission boundaries remain the same. Failed
 effect registration or creation keeps the original graph, including on worker
 contexts. This does not add a rendered-result cache or change tile dimensions.
-Exact worker replay can also combine an isolated Normal group and its sole
-geometric clip into one transparent source and coverage mask. A bitmap brush and
-FillOpacityMask apply coverage and group opacity directly over the parent,
-removing both clip backdrop copies and one explicit Flush for each eligible pair.
-The opening Flush remains before pooled mask writes. COPY parents, mask-building
-ancestors, non-isolated/knockout/blended groups and existing full-target rectangle
-bypasses retain their general routes. The mask keeps its original antialiasing;
-the context temporarily uses aliased mode only for FillOpacityMask, then restores
-it. The same bitmap budget, final tile grid and ABI 24 remain in use. See the
-[ACB comparison](../docs/GPU_ISOLATED_CLIP_BENCHMARK_2026-10-20.md).
+Worker refinement combines an isolated Normal group and its sole geometric clip
+into one transparent source. FillGeometry draws that source through the clip with
+a bitmap brush, applying group opacity without a separate coverage bitmap. The
+brush uses the inverse clip transform, kept separately from the parent's restore
+transform for nested captures. Antialiasing remains enabled; edge rounding can
+differ slightly from the old UNORM8 mask route. The opening Flush remains before
+pooled source writes. COPY parents, mask-building ancestors, non-isolated/knockout/
+blended groups, noninvertible transforms and full-target rectangle bypasses retain
+their general routes. The same bitmap budget, final tile grid and ABI 24 remain in
+use. See the [direct clip comparison](../docs/GPU_DIRECT_CLIP_BENCHMARK_2026-10-21.md).
+Scene creation also removes balanced native path/rectangle clip and opacity layers
+that contain no commands, including recursively empty layers. Captured composite
+and mask scopes remain intact. Invalid layer parameters keep their original error
+route. Command storage is shrunk before building scope/culling indexes and worker
+cloning, reducing retained CPU memory without storing any rendered results.
 Exact worker replay also culls bounded batches of consecutive sibling draws and
 complete scopes before walking their individual commands. Mask build/apply
 transitions and unknown bounds break a batch; partial replay ranges never jump

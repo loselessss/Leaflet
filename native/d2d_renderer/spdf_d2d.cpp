@@ -915,9 +915,10 @@ public:
                 static_cast<UINT32>(pixel_bottom - pixel_top));
             capture.cropped = true;
         }
-        // Source + temporary backdrop, plus a coverage mask for explicit clips.
+        // Direct isolated clips need only a source. Other scopes reserve their
+        // temporary backdrop and explicit coverage/mask inputs as before.
         capture.bytes = static_cast<std::uint64_t>(size.width) * size.height * 4 *
-            (mask_build ? 4 : (isolated_clip || clip == nullptr ? 2 : 3));
+            (mask_build ? 4 : (isolated_clip ? 1 : (clip == nullptr ? 2 : 3)));
         const auto budget = (std::max)(256ULL * 1024 * 1024, scene_cache_budget());
         if (capture.bytes == 0 || composite_bytes_ + capture.bytes > budget) {
             return E_OUTOFMEMORY;
@@ -935,20 +936,20 @@ public:
             result = copy_composite_pixels(capture.source.Get(), capture.previous.Get());
             if (FAILED(result)) return result;
         }
-        if (clip != nullptr) {
+        if (isolated_clip) {
+            capture.clip_geometry = clip->resource;
+            capture.clip_transform = capture.previous_transform;
+            // Submit previous users before clearing a pooled source bitmap.
+            result = d2d_context_->Flush();
+            if (FAILED(result)) return result;
+        } else if (clip != nullptr) {
             result = borrow_scratch(size, D2D1_BITMAP_OPTIONS_TARGET, capture.mask);
             ComPtr<ID2D1SolidColorBrush> white;
             if (SUCCEEDED(result)) result = create_brush(0xffffffff, &white);
             if (FAILED(result)) return result;
-            if (isolated_clip) {
-                // The enclosing isolated group starts transparent. Submit any
-                // previous borrowers before overwriting pooled mask inputs.
-                result = d2d_context_->Flush();
-            } else {
-                // Ordinary clips preserve the existing backdrop for child blends.
-                result = copy_composite_pixels(capture.source.Get(), capture.previous.Get(),
-                                               capture.source_origin);
-            }
+            // Ordinary clips preserve the existing backdrop for child blends.
+            result = copy_composite_pixels(capture.source.Get(), capture.previous.Get(),
+                                           capture.source_origin);
             if (SUCCEEDED(result)) {
                 d2d_context_->SetTarget(capture.mask.Get());
                 d2d_context_->Clear(D2D1::ColorF(0, 0, 0, 0));
@@ -1133,22 +1134,20 @@ public:
         d2d_context_->SetTarget(capture.previous.Get());
         d2d_context_->SetTransform(D2D1::Matrix3x2F::Identity());
         if (capture.isolated_clip) {
-            // Isolated source + geometric coverage + group opacity can be
-            // source-overed directly, without a second backdrop snapshot.
+            // Apply clip coverage directly while drawing the isolated source.
+            // The bitmap brush maps source DIPs back through the clip transform.
+            auto inverse = *D2D1::Matrix3x2F::ReinterpretBaseType(&capture.clip_transform);
+            if (!inverse.Invert()) return E_INVALIDARG;
             ComPtr<ID2D1BitmapBrush1> brush;
             result = d2d_context_->CreateBitmapBrush(capture.source.Get(),
                 D2D1::BitmapBrushProperties1(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
                     D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
-                D2D1::BrushProperties(capture.opacity, D2D1::Matrix3x2F::Translation(
-                    capture.destination_origin.x, capture.destination_origin.y)), &brush);
+                D2D1::BrushProperties(capture.opacity,
+                    D2D1::Matrix3x2F::Translation(capture.destination_origin.x,
+                                                capture.destination_origin.y) * inverse), &brush);
             if (SUCCEEDED(result)) {
-                const auto size = capture.source->GetSize();
-                const auto destination = D2D1::RectF(capture.destination_origin.x, capture.destination_origin.y,
-                    capture.destination_origin.x + size.width, capture.destination_origin.y + size.height);
-                const auto previous_aa = d2d_context_->GetAntialiasMode();
-                d2d_context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                d2d_context_->FillOpacityMask(capture.mask.Get(), brush.Get(), &destination, nullptr);
-                d2d_context_->SetAntialiasMode(previous_aa);
+                d2d_context_->SetTransform(capture.clip_transform);
+                d2d_context_->FillGeometry(capture.clip_geometry.Get(), brush.Get());
             }
             d2d_context_->SetTransform(capture.previous_transform);
             if (SUCCEEDED(result)) recycle_capture(capture, nullptr);
@@ -1685,6 +1684,11 @@ public:
         return !composite_captures_.empty() && composite_captures_.back().isolated_clip;
     }
     bool can_fuse_isolated_clip(Path* path, D2D1_MATRIX_3X2_F matrix) const noexcept {
+        // Direct geometric composition needs a finite inverse for the brush.
+        auto inverse = *D2D1::Matrix3x2F::ReinterpretBaseType(&matrix);
+        if (!inverse.Invert() || !std::isfinite(inverse._11) || !std::isfinite(inverse._12) ||
+                !std::isfinite(inverse._21) || !std::isfinite(inverse._22) ||
+                !std::isfinite(inverse._31) || !std::isfinite(inverse._32)) return false;
         // COPY/knockout parents must preserve the original clearing extent.
         if (d2d_context_->GetPrimitiveBlend() != D2D1_PRIMITIVE_BLEND_SOURCE_OVER) return false;
         // Mask transfer functions can magnify a one-unit color/alpha rounding
@@ -1833,6 +1837,8 @@ private:
         ComPtr<ID2D1Bitmap1> source;
         ComPtr<ID2D1Bitmap1> mask;
         ComPtr<ID2D1Bitmap1> mask_input;
+        ComPtr<ID2D1Geometry> clip_geometry;
+        D2D1_MATRIX_3X2_F clip_transform{};
         bool isolated_clip = false;
         bool building_mask = false;
         bool luminosity = false;
@@ -2130,6 +2136,44 @@ D2D1_RECT_F transformed_rect(const D2D1_RECT_F& rect,
         bounds.bottom = (std::max)(bounds.bottom, y);
     }
     return bounds;
+}
+
+// Remove only balanced native layers with no drawing or state changes.
+// Captured composite/mask scopes can affect COPY/backdrops even when empty.
+void compact_empty_layers(Scene* scene) {
+    std::size_t kept = 0;
+    for (std::size_t index = 0; index < scene->commands.size(); ++index) {
+        const auto type = scene->commands[index].command.type;
+        bool empty = false;
+        if (kept) {
+            const auto& first = scene->commands[kept - 1].command;
+            if (first.type == SPDF_D2D_SCENE_CLIP_PUSH && type == SPDF_D2D_SCENE_CLIP_POP) {
+                empty = true; // Resource ownership was checked during creation.
+            } else if (first.type == SPDF_D2D_SCENE_RECT_CLIP_PUSH && type == SPDF_D2D_SCENE_RECT_CLIP_POP) {
+                empty = std::isfinite(first.values[0]) && std::isfinite(first.values[1]) &&
+                    std::isfinite(first.values[2]) && std::isfinite(first.values[3]) &&
+                    first.values[2] > first.values[0] && first.values[3] > first.values[1];
+            } else if (first.type == SPDF_D2D_SCENE_OPACITY_PUSH && type == SPDF_D2D_SCENE_LAYER_POP) {
+                empty = std::isfinite(first.values[0]) && first.values[0] >= 0 && first.values[0] <= 1;
+            }
+            // Preserve invalid transform error behavior instead of hiding it.
+            if (empty && (first.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)) {
+                const auto& t = first.transform;
+                empty = std::isfinite(t.m11) && std::isfinite(t.m12) && std::isfinite(t.m21) &&
+                    std::isfinite(t.m22) && std::isfinite(t.dx) && std::isfinite(t.dy);
+            }
+        }
+        if (empty) {
+            --kept;
+        } else {
+            if (kept != index) scene->commands[kept] = std::move(scene->commands[index]);
+            ++kept;
+        }
+    }
+    if (kept != scene->commands.size()) {
+        scene->commands.resize(kept);
+        scene->commands.shrink_to_fit();
+    }
 }
 
 // Keep ordinary text/vector commands live. Select disjoint expensive scopes;
@@ -3936,6 +3980,7 @@ std::int32_t spdf_d2d_create_scene(
             }
             created->commands.push_back(std::move(stored));
         }
+        compact_empty_layers(created.get());
         if (!created->recordable) {
             prepare_raster_groups(created.get());
             prepare_cull_blocks(created.get());

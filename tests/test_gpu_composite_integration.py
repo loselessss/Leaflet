@@ -250,6 +250,113 @@ class CompositeIntegrationTests(unittest.TestCase):
             scene.close()
             box.close()
 
+    def _render_sharp_operations(self, operations, transform, width=64, height=64):
+        scene = self.surface.create_scene(width, height, operations)
+        try:
+            self.assertTrue(self.surface.request_sharp_scene(scene, transform))
+            deadline = time.monotonic() + 15
+            while self.surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                time.sleep(.002)
+            self.assertEqual(self.surface.sharp_status(), 2)
+            self.surface.begin_frame(0)
+            self.assertTrue(self.surface.draw_sharp_scene(scene, transform))
+            pixels = self.surface.read_pixels_bgra(width, height)
+            self.surface.end_frame()
+            return pixels
+        finally:
+            self.surface.cancel_sharp()
+            scene.close()
+
+    def test_empty_native_layers_preserve_nested_state(self):
+        clip = self.surface.create_path([
+            ("move", 7.25, 5.75), ("line", 45.75, 8.25),
+            ("line", 49.25, 45.75), ("line", 5.75, 49.25), ("close",)])
+        paint = self.surface.create_path([
+            ("move", 2, 2), ("line", 58, 2), ("line", 58, 58),
+            ("line", 2, 58), ("close",)])
+
+        def path(color):
+            return ("path", paint, color, None, 1, None, None)
+
+        # These layers contain no draw. Distinct transforms and zero opacity
+        # expose a leaked transform or an accidental pop of the enclosing clip.
+        empty = [("clip_push", clip, (.8, .2, -.1, 1, 3, 4)),
+                 ("clip_pop", None),
+                 ("rect_clip_push", None, (1, 0, 0, 1, 17, 9), (0, 0, 3, 5)),
+                 ("rect_clip_pop", None),
+                 ("group_push", 0), ("clip_push", clip, None),
+                 ("clip_pop", None), ("group_pop", None)]
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(64, 64, dpi)
+                for context in ("normal", "copy", "nonisolated", "mask"):
+                    before = [("composite_push", 0, .73, context == "copy",
+                               context != "nonisolated"), path(0x804080c0),
+                              ("clip_push", clip, None), path(0x9050c080)]
+                    after = [path(0xb0c06030), ("clip_pop", None),
+                             path(0x704060c0), ("composite_pop", None)]
+                    if context == "mask":
+                        before = [("composite_mask_begin", (0, 0, 64, 64), False, 0)] + before
+                        after += [("composite_mask_end", tuple(
+                            0.0 if index < 128 else 1.0 for index in range(256))),
+                                  path(0xffff8020), ("clip_group_pop", None)]
+                    for transform in ((1, 0, 0, 1, .25, .5),
+                                      (0, 1, -1, 0, 63.25, .5),
+                                      (-1, 0, 0, 1, 63.25, .5),
+                                      (1, .2, .1, 1, -3.25, -4.5)):
+                        with self.subTest(dpi=dpi, context=context, transform=transform):
+                            expected = self._render_sharp_operations(before + after, transform)
+                            actual = self._render_sharp_operations(before + empty * 8 + after, transform)
+                            self.assertEqual(actual, expected)
+        finally:
+            clip.close()
+            paint.close()
+
+    def test_direct_clip_geometry_maps_bitmap_source_across_tiles(self):
+        clip = self.surface.create_path([
+            ("move", 42.25, 7.5), ("line", 556.75, 12.25),
+            ("line", 558.25, 87.75), ("line", 44.25, 93.5), ("close",)])
+        paint = self.surface.create_path([
+            ("move", 0, 0), ("line", 600, 0), ("line", 600, 100),
+            ("line", 0, 100), ("close",)])
+        image = self.surface.create_bitmap_bgra(bytes([
+            0x20, 0x40, 0xc0, 0xff, 0xc0, 0x80, 0x20, 0xff,
+            0x40, 0xa0, 0x60, 0xff, 0xa0, 0x20, 0x80, 0xff]), 2, 2, 8)
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(600, 100, dpi)
+                for transform in ((1, 0, 0, 1, .25, .5),
+                                  (-1, 0, 0, 1, 599.25, .5),
+                                  (1, .025, .1, 1, -3.25, -4.5)):
+                    operations = []
+                    for phase in range(4):
+                        operations += [
+                            ("composite_push", 0, .63, False, True),
+                            ("clip_group_push", clip, (1, .01, -.02, 1, phase * .25, .5)),
+                            ("composite_push", 1, .7, False, True),
+                            ("image", image, .83, (600, 0, 0, 100, 0, 0), False),
+                            ("composite_pop", None),
+                            ("path", paint, 0x404080c0, None, 1, None, None),
+                            ("clip_group_pop", None), ("composite_pop", None)]
+                    reference = []
+                    for operation in operations:
+                        reference.append(operation)
+                        if operation[0] == "composite_push" and operation[1] == 0:
+                            # Keep the independent mask-based composition route.
+                            reference.append(("path", paint, 0, None, 1, None, None))
+                    with self.subTest(dpi=dpi, transform=transform):
+                        expected = self._render_sharp_operations(reference, transform, 600, 100)
+                        actual = self._render_sharp_operations(operations, transform, 600, 100)
+                        self.assertTrue(any(value != 255 for value in expected))
+                        # Four translucent overlaps accumulate UNORM8 rounding.
+                        # The old mask-based fusion differs by up to 4 here;
+                        # direct coverage adds at most two more channel steps.
+                        self.assertLessEqual(max(abs(a-b) for a, b in zip(actual, expected)), 6)
+        finally:
+            image.close()
+            paint.close()
+            clip.close()
+
     def test_isolated_group_clip_fusion_matches_general_worker(self):
         clip = self.surface.create_path([
             ("move", 7.25, 5.75), ("line", 43.75, 7.25),
