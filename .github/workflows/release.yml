@@ -22,13 +22,13 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install PyQt5 PyMuPDF Pillow PyInstaller rapidocr onnxruntime opencv-python-headless numpy
+          python -m pip install -r requirements-build.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # RapidOCR also requests regular OpenCV. Both wheels own cv2;
           # remove regular OpenCV and restore the headless wheel last.
           python -m pip uninstall --yes opencv-python
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install --force-reinstall --no-deps opencv-python-headless
+          python -m pip install --force-reinstall --no-deps -c requirements-build.txt opencv-python-headless
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run tests
