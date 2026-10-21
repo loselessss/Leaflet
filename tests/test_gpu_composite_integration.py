@@ -460,7 +460,12 @@ class CompositeIntegrationTests(unittest.TestCase):
                             with self.subTest(dpi=dpi, opacity=opacity, kind=kind, transform=transform):
                                 expected = render(reference, transform)
                                 actual = render(operations, transform)
-                                self.assertLessEqual(max(abs(a-b) for a, b in zip(actual, expected)), 3)
+                                error = [abs(a-b) for a, b in zip(actual, expected)]
+                                # Three overlapping captures accumulate one more
+                                # UNORM8 rounding step on the WARP rasterizer.
+                                limit = 4 if kind == "repeated" and self.surface.info.driver == "warp" else 3
+                                self.assertLessEqual(max(error), limit)
+                                self.assertLess(sum(error) / len(error), .25)
         finally:
             for resource in (clip, outer, paint, dot, wide, full_rect):
                 resource.close()
