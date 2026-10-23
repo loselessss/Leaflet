@@ -2,6 +2,7 @@
 
 ## Unreleased (1.37.1)
 
+- Reduce GPU composition and image storage by combining compatible raster alpha masks with their images. Preserve masks with different sampling rules; filtered edges may differ slightly.
 - Name the main Start menu and desktop shortcuts simply Leaflet.
 - Reduce UI preparation work and duplicate scene storage during exact GPU updates.
 - Prepare worker resources only for commands selected by visible tiles, reducing unnecessary preparation on zoomed pages.

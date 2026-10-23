@@ -29,6 +29,7 @@ Press **F1** for the full usage guide.
   two-page view, and presentation mode.
   Exact GPU updates plan temporary surface lifetimes and batch allocations within each tile; temporary storage has a fixed slot limit.
   Small complex isolated illustrations are compiled into bounded transparent images at the requested zoom quality; surrounding text remains vector. Illustration colors and edges can differ, so use CPU mode for a fidelity check.
+  Compatible raster alpha masks are folded into their images to reduce composition and memory. Different sampling rules remain separate; filtered image edges may differ slightly.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
   Magnetic alignment snaps moving objects to page/object edges and centers; toggle it in

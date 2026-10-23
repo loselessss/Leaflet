@@ -5,7 +5,8 @@ generated measurements stay outside source control. Sharp timings include the
 reader's 30 ms polling cadence; direct timings include synchronized readback.
 Request mode times only the queueing call, then cancels outside the timer.
 Scene mode times retained-scene construction without rendering or worker work.
-No mode includes vsync/present or immutable geometry upload.
+Completed mode includes readback and end_frame, using the direct command list
+when a scene no longer needs a sharp worker. Immutable upload is always excluded.
 """
 import argparse
 from collections import Counter
@@ -55,9 +56,10 @@ def render_sample(surface, retained, transform, width, height, mode, poll_second
     started = time.perf_counter()
     first_tile = None
     try:
-        if mode == "sharp":
-            if not surface.request_sharp_scene(retained, transform):
-                raise RuntimeError("fresh sharp job was not queued")
+        queued = mode in ("sharp", "completed") and surface.request_sharp_scene(retained, transform)
+        if mode == "sharp" and not queued:
+            raise RuntimeError("fresh sharp job was not queued")
+        if queued:
             submitted = time.perf_counter()
             while True:
                 status = surface.sharp_status()
@@ -80,6 +82,8 @@ def render_sample(surface, retained, transform, width, height, mode, poll_second
         if mode == "direct":
             finished = time.perf_counter()
         surface.end_frame()
+        if mode == "completed":
+            finished = time.perf_counter()
         return ((finished - started) * 1000, (submitted - started) * 1000, first_tile, pixels)
     except Exception:
         try:
@@ -98,7 +102,9 @@ def main():
                         help="Repeat to interleave builds in alternating order.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=15)
-    parser.add_argument("--mode", choices=("direct", "sharp", "request", "scene"), default="sharp")
+    parser.add_argument("--mode", choices=("direct", "sharp", "request", "scene", "completed"), default="sharp")
+    parser.add_argument("--no-alpha-fusion", action="store_true",
+                        help="Keep separate raster alpha masks for a baseline comparison.")
     parser.add_argument("--poll-ms", type=float, default=30,
                         help="Sharp completion polling interval, matching the reader by default.")
     args = parser.parse_args()
@@ -128,12 +134,14 @@ def main():
     user32.DestroyWindow.argtypes = [ctypes.c_void_p]
     width, height = 1200, 900
     results = {"viewport": [width, height], "dpi": 96, "repeats": args.repeats,
-               "poll_ms": args.poll_ms if args.mode == "sharp" else None, "raster_scale": 1,
+               "poll_ms": args.poll_ms if args.mode in ("sharp", "completed") else None, "raster_scale": 1,
+               "alpha_fusion": not args.no_alpha_fusion,
                "mode": args.mode,
                "metric": {
                    "scene": "fresh retained-scene construction; immutable resources prepared outside timer (ms)",
                    "request": "request_sharp_scene call until return; immediate cancellation after timer (ms)",
                    "sharp": "fresh scene request to complete sharp atlas (ms)",
+                   "completed": "fresh scene render to synchronized readback and end_frame; worker or direct (ms)",
                    "direct": "begin + fresh exact replay + synchronized BGRA readback (ms)"}[args.mode],
                "snapshot_reuse": False, "documents": []}
     for filename in args.pdf:
@@ -141,7 +149,8 @@ def main():
         with pymupdf.open(filename) as pdf:
             page = pdf[0]
             page_width, page_height = page.rect.width, page.rect.height
-            scene = vector_page_from_pymupdf(page, raster_scale=1)
+            scene = vector_page_from_pymupdf(page, raster_scale=1,
+                                           fuse_alpha=not args.no_alpha_fusion)
         extraction_ms = (time.perf_counter() - started) * 1000
         if not scene.supported:
             raise RuntimeError(f"{filename}: {scene.reason}")

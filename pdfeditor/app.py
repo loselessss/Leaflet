@@ -126,6 +126,7 @@ def _render_diagnostic_summary(info):
             "transparency group", "투명도 그룹"),
         "soft-mask": localize("soft mask", "소프트 마스크"),
         "clip-mask": localize("clip mask", "클리핑 마스크"),
+        "alpha-image-fusion": localize("combined image alpha", "이미지 알파 결합"),
         "stroke-style": localize("stroke style", "선 스타일"),
         "blend-mode": localize("blend mode", "혼합 모드"),
         "stroked-text": localize("stroked text", "윤곽선 글자"),

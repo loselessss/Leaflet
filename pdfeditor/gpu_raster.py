@@ -2424,6 +2424,12 @@ def _valid_refresh_key(key):
         return False
     if key[0] in ("image", "mask", "stencil"):
         return isinstance(key[1], int) and key[1] >= 0
+    if key[0] == "alpha":
+        pair = key[1]
+        return (isinstance(pair, tuple) and len(pair) == 2
+                and all(isinstance(k, tuple) and len(k) == 2 for k in pair)
+                and pair[0][0] == "mask" and pair[1][0] == "image"
+                and all(isinstance(k[1], int) and k[1] >= 0 for k in pair))
     return (key[0] == "island" and isinstance(key[1], tuple) and len(key[1]) == 4
             and all(isinstance(v, (float, int)) and math.isfinite(v) for v in key[1]))
 
@@ -2446,6 +2452,8 @@ structure are reused. Callers must reject stale document generations.
     recorder = _DisplayListDevice(tuple(page.rect), scale, cookie, deadline)
     required = {item.refresh_key for item in scene.items
                 if isinstance(item, (VectorImage, ClipPush)) and item.refresh_key}
+    required = {source for key in required
+                for source in (key[1] if key[0] == "alpha" else (key,))}
     class ImagesOnly(_mupdf.FzDevice2):
         def __init__(self):
             super().__init__()
@@ -2492,6 +2500,14 @@ structure are reused. Callers must reject stale document generations.
                 if key[0] == "island":
                     fresh, _cost = _cpu_island_from_page(page, key[1], scale, byte_count)
                     item = replace(fresh, opacity=item.opacity)
+                elif key[0] == "alpha":
+                    from .gpu_alpha import refine_alpha_image
+                    fresh = refine_alpha_image(item, replacements)
+                    if fresh is None:
+                        return None
+                    item = fresh
+                    if recorder._abort_if_expired():
+                        return None
                 else:
                     fresh = replacements.get(key)
                     if not isinstance(fresh, VectorImage) or fresh.transform != item.transform:
@@ -2520,21 +2536,21 @@ structure are reused. Callers must reject stale document generations.
 
 def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False, simplify_regions=True):
+        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
     token = _extraction_work.set(({}, {}, {}))
     try:
         return _vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,
             aggressive_band_merge=aggressive_band_merge,
-            simplify_regions=simplify_regions)
+            simplify_regions=simplify_regions, fuse_alpha=fuse_alpha)
     finally:
         _extraction_work.reset(token)
 
 
 def _vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False, simplify_regions=True):
+        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True):
     """Return a complete GPU scene only when every operation is supported."""
     rect = page.rect
     scale = max(1.0, float(raster_scale))
@@ -2589,6 +2605,14 @@ def _vector_page_from_pymupdf(
                     device._features.add("text-outline-merge")
                 if aggressive_merged:
                     device._features.add("aggressive-band-merge")
+                if fuse_alpha:
+                    from .gpu_alpha import fuse_alpha_images
+                    fused, count, image_bytes = fuse_alpha_images(
+                        tuple(device.items), abort=device._abort_if_expired)
+                    if count:
+                        device.items = list(fused)
+                        device._image_bytes = image_bytes
+                        device._features.add("alpha-image-fusion")
             except Exception as error:
                 device._set_failure(str(error))
         if not device.failure and ("blend-mode" in device._features or

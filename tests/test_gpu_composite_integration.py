@@ -110,6 +110,40 @@ class CompositeIntegrationTests(unittest.TestCase):
     def test_retained_nonisolated_group_with_nested_blend(self):
         self.check_retained(nonisolated_nested_blend_pdf_bytes(0.7, True))
 
+    def test_fused_alpha_direct_scene_at_two_dpis_and_rotations(self):
+        from tests.test_gpu_alpha import alpha_pdf
+        for dpi in (96, 192):
+            self.surface.resize(64, 64, dpi)
+            for rotation in (0, 90):
+                with self.subTest(dpi=dpi, rotation=rotation), pymupdf.open(
+                        stream=alpha_pdf(rotation), filetype="pdf") as pdf:
+                    scene = vector_page_from_pymupdf(pdf[0])
+                    self.assertIn("alpha-image-fusion", scene.features)
+                    self.view._page_sizes = {0: (64, 64)}
+                    self.view._native_vector_draws(0, scene)
+                    draws = self.view._d2d_vector_paths[0][1]
+                    retained = self.surface.create_scene(64, 64, draws)
+                    try:
+                        scale = 96 / dpi
+                        tr = (scale, 0, 0, scale, 0, 0)
+                        self.assertFalse(self.surface.request_sharp_scene(retained, tr))
+                        self.surface.begin_frame(0xffffffff)
+                        self.surface.draw_scene(retained, tr, reuse_groups=False)
+                        actual = self.surface.read_pixels_bgra(64, 64)
+                        self.surface.end_frame()
+                    finally:
+                        retained.close()
+                    reference = pdf[0].get_pixmap()
+                    # Sample centers away from differently filtered alpha edges.
+                    for px, py in ((4, 4), (20, 20), (44, 20), (20, 44), (44, 44)):
+                        p = pymupdf.Point(px, py) * pdf[0].rotation_matrix
+                        x, y = int(p.x), int(p.y)
+                        offset = (y * 64 + x) * 4
+                        rgb = tuple(reversed(actual[offset:offset+3]))
+                        expected = reference.pixel(x, y)
+                        self.assertTrue(all(abs(a-b) <= 4 for a, b in zip(rgb, expected)),
+                                        (x, y, rgb, expected))
+
     def test_nonisolated_group_interpolates_premultiplied_alpha_once(self):
         for backdrop_alpha in (0, 128, 255):
             for opacity in (0, .3, .7, 1):
