@@ -33,6 +33,13 @@ using Microsoft::WRL::ComPtr;
 
 namespace {
 
+constexpr UINT SCRATCH_STORAGE_MAX_ARRAY_SLICES = 128;
+constexpr std::size_t SCRATCH_STORAGE_MAX_SLOTS = 256;
+// Targets are writable inputs; plain slices are copy destinations sampled at close.
+struct ScratchStorageNeed {
+    UINT32 width = 0, height = 0;
+    UINT targets = 0, plain = 0, uses = 0;
+};
 struct Scene;
 struct SharpJob;
 struct SharpQueue;
@@ -116,6 +123,73 @@ void set_adapter_name(ID3D11Device* device, SpdfD2DInfo* info) noexcept {
 class Surface {
 public:
     ~Surface();
+    D2D1_SIZE_U storage_target_size() const noexcept { return target_->GetPixelSize(); }
+    float storage_dpi() const noexcept { return dpi_; }
+    bool prepare_storage(const std::vector<ScratchStorageNeed> &needs) noexcept {
+        storage_.clear();
+        storage_bytes_ = 0;
+        const auto limit = scratch_limit();
+        try {
+            for (const auto &need : needs) {
+                if (cancelled()) {
+                    storage_.clear();
+                    storage_bytes_ = 0;
+                    return false;
+                }
+                const UINT count = need.targets + need.plain;
+                const auto bytes = static_cast<std::uint64_t>(need.width) * need.height * 4 * count;
+                if (!count || count > SCRATCH_STORAGE_MAX_ARRAY_SLICES || !bytes ||
+                    storage_bytes_ + bytes > limit ||
+                    storage_.size() + count > SCRATCH_STORAGE_MAX_SLOTS)
+                    continue;
+                // Reserve room before allocating so the old scratch pool and
+                // planned storage share the existing byte budget.
+                trim_scratch(limit - storage_bytes_ - bytes);
+                D3D11_TEXTURE2D_DESC desc{};
+                desc.Width = need.width;
+                desc.Height = need.height;
+                desc.ArraySize = count;
+                desc.MipLevels = 1;
+                desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+                desc.SampleDesc.Count = 1;
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                ComPtr<ID3D11Texture2D> texture;
+                auto result = d3d_device_->CreateTexture2D(&desc, nullptr, &texture);
+                ComPtr<IDXGIResource1> resource;
+                if (SUCCEEDED(result))
+                    result = texture.As(&resource);
+                const auto begin = storage_.size();
+                for (UINT i = 0; i < count && SUCCEEDED(result); ++i) {
+                    ComPtr<IDXGISurface2> slice;
+                    ComPtr<ID2D1Bitmap1> bitmap;
+                    result = resource->CreateSubresourceSurface(i, &slice);
+                    const auto options =
+                        i < need.targets ? D2D1_BITMAP_OPTIONS_TARGET : D2D1_BITMAP_OPTIONS_NONE;
+                    const auto props = D2D1::BitmapProperties1(
+                        options, D2D1::PixelFormat(desc.Format, D2D1_ALPHA_MODE_PREMULTIPLIED),
+                        dpi_, dpi_);
+                    if (SUCCEEDED(result))
+                        result =
+                            d2d_context_->CreateBitmapFromDxgiSurface(slice.Get(), &props, &bitmap);
+                    if (SUCCEEDED(result))
+                        storage_.push_back(
+                            {bitmap, need.width, need.height, options, false, bitmap.Get()});
+                }
+                if (FAILED(result)) {
+                    storage_.resize(begin);
+                    continue;
+                }
+                storage_bytes_ += bytes;
+            }
+            trim_scratch(scratch_limit());
+            return !storage_.empty();
+        } catch (...) {
+            storage_.clear();
+            storage_bytes_ = 0;
+            return false;
+        }
+    }
     struct Bitmap {
         Surface* owner;
         ComPtr<ID2D1Bitmap1> resource;
@@ -919,6 +993,13 @@ public:
         capture.bytes = static_cast<std::uint64_t>(size.width) * size.height * 4 *
             (mask_build ? 4 : (isolated_clip ? 1 : (clip == nullptr ? 2 : 3)));
         const auto budget = (std::max)(256ULL * 1024 * 1024, scene_cache_budget());
+        if (composite_bytes_ + capture.bytes + storage_bytes_ > budget) {
+            // Optional resident storage must not turn a frame that fits the
+            // original capture budget into an allocation failure. Live captures
+            // keep their own references; unneeded slots can be dropped here.
+            for(auto& slot:storage_) { slot.bitmap.Reset(); slot.in_use=true; }
+            storage_bytes_=0;
+        }
         if (capture.bytes == 0 || composite_bytes_ + capture.bytes > budget) {
             return E_OUTOFMEMORY;
         }
@@ -928,7 +1009,7 @@ public:
             D2D1_BITMAP_OPTIONS_TARGET,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                              D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
-        result = capture.pooled ? borrow_scratch(size, D2D1_BITMAP_OPTIONS_TARGET, capture.source)
+        result = capture.pooled ? borrow_scratch(size, D2D1_BITMAP_OPTIONS_TARGET, capture.source, !isolated_clip)
             : d2d_context_->CreateBitmap(size, nullptr, 0, properties, &capture.source);
         if (FAILED(result)) return result;
         if (nonisolated) {
@@ -1856,6 +1937,17 @@ private:
         D2D1_PRIMITIVE_BLEND previous_blend = D2D1_PRIMITIVE_BLEND_SOURCE_OVER;
         std::uint64_t bytes = 0;
     };
+    struct StorageSlot {
+        ComPtr<ID2D1Bitmap1> bitmap;
+        UINT32 width, height;
+        D2D1_BITMAP_OPTIONS options;
+        bool in_use;
+        // Keep the identity after dropping optional storage: a live array
+        // slice must never migrate into the ordinary bitmap pool on return.
+        ID2D1Bitmap1 *identity;
+    };
+    std::vector<StorageSlot> storage_;
+    std::uint64_t storage_bytes_ = 0;
     struct ScratchEntry {
         ComPtr<ID2D1Bitmap1> bitmap;
         UINT32 width = 0, height = 0;
@@ -1887,7 +1979,8 @@ private:
         const auto budget = scene_cache_budget();
         const auto active_limit = (std::max)(256ULL * 1024 * 1024, budget);
         const auto room = active_limit > composite_bytes_ ? active_limit - composite_bytes_ : 0;
-        return (std::min)({64ULL * 1024 * 1024, budget / 8, room});
+        const auto cap=(std::min)({64ULL * 1024 * 1024, budget / 8, room});
+        return cap>storage_bytes_ ? cap-storage_bytes_ : 0;
     }
     void trim_scratch(std::uint64_t limit) noexcept {
         while (!scratch_pool_.empty() && (scratch_bytes_ > limit || scratch_pool_.size() > 64)) {
@@ -1896,19 +1989,27 @@ private:
         }
     }
     HRESULT borrow_scratch(D2D1_SIZE_U size, D2D1_BITMAP_OPTIONS options,
-            ComPtr<ID2D1Bitmap1>& bitmap) noexcept {
+                           ComPtr<ID2D1Bitmap1> &bitmap, bool use_plan = true) noexcept {
+        for (auto &slot : storage_)
+            if (use_plan && slot.bitmap && !slot.in_use && slot.width == size.width &&
+                slot.height == size.height && slot.options == options) {
+                slot.in_use = true;
+                bitmap = slot.bitmap;
+                return S_OK;
+            }
         for (auto i = scratch_pool_.size(); i > 0; --i) {
-            const auto& entry = scratch_pool_[i - 1];
+            const auto &entry = scratch_pool_[i - 1];
             if (entry.width == size.width && entry.height == size.height &&
-                    entry.options == options && entry.dpi == dpi_) {
+                entry.options == options && entry.dpi == dpi_) {
                 bitmap = entry.bitmap;
                 scratch_bytes_ -= entry.bytes;
                 scratch_pool_.erase(scratch_pool_.begin() + i - 1);
                 return S_OK;
             }
         }
-        const auto properties = D2D1::BitmapProperties1(options,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+        const auto properties = D2D1::BitmapProperties1(
+            options, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            dpi_, dpi_);
         auto result = d2d_context_->CreateBitmap(size, nullptr, 0, properties, &bitmap);
         if (FAILED(result) && !scratch_pool_.empty()) {
             // Cached scratch must not prevent a different-sized allocation.
@@ -1917,18 +2018,28 @@ private:
         }
         return result;
     }
-    void recycle_scratch(const ComPtr<ID2D1Bitmap1>& bitmap) noexcept {
-        if (!bitmap) return;
+    void recycle_scratch(const ComPtr<ID2D1Bitmap1> &bitmap) noexcept {
+        if (!bitmap)
+            return;
+        for (auto &slot : storage_)
+            if (slot.identity == bitmap.Get()) {
+                if (slot.bitmap)
+                    slot.in_use = false;
+                return;
+            }
         const auto size = bitmap->GetPixelSize();
         const auto bytes = static_cast<std::uint64_t>(size.width) * size.height * 4;
         const auto limit = scratch_limit();
-        if (!bytes || bytes > limit) return;
+        if (!bytes || bytes > limit)
+            return;
         trim_scratch(limit - bytes);
         try {
-            scratch_pool_.push_back({bitmap, size.width, size.height, bitmap->GetOptions(), dpi_, bytes});
+            scratch_pool_.push_back(
+                {bitmap, size.width, size.height, bitmap->GetOptions(), dpi_, bytes});
             scratch_bytes_ += bytes;
             trim_scratch(limit);
-        } catch (const std::bad_alloc&) { /* Reuse is optional. */ }
+        } catch (const std::bad_alloc &) { /* Reuse is optional. */
+        }
     }
     void recycle_capture(const CompositeCapture& capture, const ComPtr<ID2D1Bitmap1>& backdrop) noexcept {
         // All borrowers use this same context. Target-switch ordering places
@@ -2069,20 +2180,38 @@ private:
 
 struct SceneCommand {
     SpdfD2DSceneCommand command{};
+    // Immutable device resources, with no Surface owner or mutable brush.
+    // Worker contexts belong to this same D2D device.
+    ComPtr<ID2D1Bitmap1> bitmap;
+    ComPtr<ID2D1Geometry> geometry;
+    ComPtr<ID2D1GeometryRealization> fill_realization;
+    ComPtr<ID2D1StrokeStyle1> stroke_style;
+    std::vector<SpdfD2DGradientStop> stops;
+    std::vector<float> transfer;
+    std::uint32_t binding_index = UINT32_MAX;
+    bool rectangle = false;
+};
+
+struct SceneData {
+    std::vector<SceneCommand> commands;
+    // Only commands requiring a context binding participate in worker setup.
+    std::vector<std::uint32_t> binding_commands;
+};
+
+struct SceneBinding {
     std::unique_ptr<Surface::Bitmap> bitmap;
     std::unique_ptr<Surface::Path> path;
     std::unique_ptr<Surface::StrokeStyle> stroke_style;
-    std::vector<SpdfD2DGradientStop> stops;
-    std::vector<float> transfer;
     ComPtr<ID2D1LinearGradientBrush> linear_brush;
     ComPtr<ID2D1RadialGradientBrush> radial_brush;
+    bool ready() const noexcept { return bitmap || path || stroke_style; }
 };
 
 struct Scene {
     Surface* owner = nullptr;
     std::shared_ptr<char> identity = std::make_shared<char>();
-    std::vector<SceneCommand> commands;
-    std::vector<D2D1_RECT_F> command_bounds;
+    std::shared_ptr<const SceneData> data;
+    std::vector<SceneBinding> bindings;
     ComPtr<ID2D1CommandList> display_list;
     bool recordable = true;
     struct RasterGroup {
@@ -2090,19 +2219,57 @@ struct Scene {
         D2D1_RECT_F bounds{};
     };
     std::unordered_map<std::size_t, RasterGroup> raster_groups;
-    // Dense command index plus packed scopes avoid per-request hash-node copies.
-    std::vector<std::uint32_t> scope_at;
-    std::vector<RasterGroup> scopes;
     enum ReplayRole : std::uint8_t {
         Scope = 1, Raster = 2, Noop = 4, SimpleOpen = 8, SimpleEnd = 16,
         IsolatedClipOpen = 32, FusedClipBoundary = 64
     };
-    std::vector<std::uint8_t> replay_roles;
-    // Structural batches contain only complete sibling scopes/draw commands.
-    // No rendered pixels are retained by this viewport-culling index.
-    std::vector<std::uint32_t> cull_block_at;
-    std::vector<RasterGroup> cull_blocks;
+    // Context-independent analysis is built once and published read-only.
+    // Worker jobs share its lifetime; GPU resources/brushes stay context-owned.
+    struct ReplayIndex {
+        std::vector<D2D1_RECT_F> command_bounds;
+        std::vector<std::uint32_t> scope_at;
+        std::vector<RasterGroup> scopes;
+        std::vector<std::uint8_t> replay_roles;
+        // Complete sibling scopes/draws only, with mask transitions as barriers.
+        std::vector<std::uint32_t> cull_block_at;
+        std::vector<RasterGroup> cull_blocks;
+    };
+    std::shared_ptr<const ReplayIndex> replay;
 };
+
+// The arena carries immutable resources for one shared D2D device. Bindings
+// retain per-context ownership checks and mutable gradient-brush state.
+HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nullptr) {
+    if (scene->bindings.empty()) scene->bindings.resize(scene->data->binding_commands.size());
+    const auto& indices = selected ? *selected : scene->data->binding_commands;
+    std::size_t visited = 0;
+    for (const auto index : indices) {
+        if ((visited++ & 63) == 0 && scene->owner->cancelled())
+            return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+        const auto& stored = scene->data->commands[index];
+        if (stored.binding_index == UINT32_MAX || scene->bindings[stored.binding_index].ready()) continue;
+        SceneBinding binding;
+        if (stored.bitmap) binding.bitmap = std::make_unique<Surface::Bitmap>(
+            Surface::Bitmap{scene->owner, stored.bitmap});
+        if (stored.geometry) binding.path = std::make_unique<Surface::Path>(Surface::Path{
+            scene->owner, stored.geometry, stored.fill_realization, stored.rectangle});
+        if (stored.stroke_style) binding.stroke_style = std::make_unique<Surface::StrokeStyle>(
+            Surface::StrokeStyle{scene->owner, stored.stroke_style});
+        const auto& c = stored.command;
+        HRESULT result = S_OK;
+        if (c.type == SPDF_D2D_SCENE_LINEAR_GRADIENT)
+            result = scene->owner->create_linear_gradient_brush(
+                c.values[0], c.values[1], c.values[2], c.values[3], stored.stops.data(),
+                static_cast<UINT32>(stored.stops.size()), &binding.linear_brush);
+        else if (c.type == SPDF_D2D_SCENE_RADIAL_GRADIENT)
+            result = scene->owner->create_radial_gradient_brush(
+                c.values[0], c.values[1], c.values[2], c.values[3], c.values[4], c.values[5],
+                stored.stops.data(), static_cast<UINT32>(stored.stops.size()), &binding.radial_brush);
+        if (FAILED(result)) return result;
+        scene->bindings[stored.binding_index] = std::move(binding);
+    }
+    return S_OK;
+}
 
 D2D1_MATRIX_3X2_F compose_transform(
     const SpdfD2DTransform& page,
@@ -2135,13 +2302,13 @@ D2D1_RECT_F transformed_rect(const D2D1_RECT_F& rect,
 
 // Remove only balanced native layers with no drawing or state changes.
 // Captured composite/mask scopes can affect COPY/backdrops even when empty.
-void compact_empty_layers(Scene* scene) {
+void compact_empty_layers(SceneData& data) {
     std::size_t kept = 0;
-    for (std::size_t index = 0; index < scene->commands.size(); ++index) {
-        const auto type = scene->commands[index].command.type;
+    for (std::size_t index = 0; index < data.commands.size(); ++index) {
+        const auto type = data.commands[index].command.type;
         bool empty = false;
         if (kept) {
-            const auto& first = scene->commands[kept - 1].command;
+            const auto& first = data.commands[kept - 1].command;
             if (first.type == SPDF_D2D_SCENE_CLIP_PUSH && type == SPDF_D2D_SCENE_CLIP_POP) {
                 empty = true; // Resource ownership was checked during creation.
             } else if (first.type == SPDF_D2D_SCENE_RECT_CLIP_PUSH && type == SPDF_D2D_SCENE_RECT_CLIP_POP) {
@@ -2161,19 +2328,19 @@ void compact_empty_layers(Scene* scene) {
         if (empty) {
             --kept;
         } else {
-            if (kept != index) scene->commands[kept] = std::move(scene->commands[index]);
+            if (kept != index) data.commands[kept] = std::move(data.commands[index]);
             ++kept;
         }
     }
-    if (kept != scene->commands.size()) {
-        scene->commands.resize(kept);
-        scene->commands.shrink_to_fit();
+    if (kept != data.commands.size()) {
+        data.commands.resize(kept);
+        data.commands.shrink_to_fit();
     }
 }
 
 // Keep ordinary text/vector commands live. Select disjoint expensive scopes;
 // their immutable backdrop is included in each snapshot, preserving blend order.
-void prepare_raster_groups(Scene* scene) {
+void prepare_raster_groups(Scene* scene, Scene::ReplayIndex& replay) {
     struct Scope {
         std::size_t first;
         bool complex = false;
@@ -2182,9 +2349,9 @@ void prepare_raster_groups(Scene* scene) {
         D2D1_RECT_F bounds = D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
     };
     std::vector<Scope> stack;
-    scene->scope_at.assign(scene->commands.size(), UINT32_MAX);
-    scene->replay_roles.assign(scene->commands.size(), 0);
-    scene->command_bounds.resize(scene->commands.size(), D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX));
+    replay.scope_at.assign(scene->data->commands.size(), UINT32_MAX);
+    replay.replay_roles.assign(scene->data->commands.size(), 0);
+    replay.command_bounds.resize(scene->data->commands.size(), D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX));
     std::vector<std::pair<std::size_t, Scene::RasterGroup>> groups;
     const auto include = [](D2D1_RECT_F& a, const D2D1_RECT_F& b) {
         a.left = (std::min)(a.left, b.left);
@@ -2192,8 +2359,9 @@ void prepare_raster_groups(Scene* scene) {
         a.right = (std::max)(a.right, b.right);
         a.bottom = (std::max)(a.bottom, b.bottom);
     };
-    for (std::size_t index = 0; index < scene->commands.size(); ++index) {
-        const auto& command = scene->commands[index].command;
+    for (std::size_t index = 0; index < scene->data->commands.size(); ++index) {
+        const auto& stored = scene->data->commands[index];
+        const auto& command = stored.command;
         const auto type = command.type;
         const bool complex = type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
             type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
@@ -2214,14 +2382,15 @@ void prepare_raster_groups(Scene* scene) {
             if (stack.empty()) { scene->raster_groups.clear(); return; }
             auto scope = stack.back();
             stack.pop_back();
-            const auto& start = scene->commands[scope.first].command;
+            const auto& start_stored = scene->data->commands[scope.first];
+            const auto& start = start_stored.command;
             const auto matrix = (start.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)
                 ? compose_transform({1, 0, 0, 1, 0, 0}, start.transform)
                 : D2D1::Matrix3x2F::Identity();
             D2D1_RECT_F clip{};
             bool clipped = false;
             if (start.type == SPDF_D2D_SCENE_CLIP_PUSH || start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH) {
-                clipped = SUCCEEDED(static_cast<Surface::Path*>(start.resource)->resource->GetBounds(&matrix, &clip));
+                clipped = SUCCEEDED(start_stored.geometry->GetBounds(&matrix, &clip));
                 if (!clipped) scope.valid = false;
             } else if (start.type == SPDF_D2D_SCENE_RECT_CLIP_PUSH ||
                     start.type == SPDF_D2D_SCENE_MASK_BEGIN || start.type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN) {
@@ -2247,20 +2416,20 @@ void prepare_raster_groups(Scene* scene) {
                     scope.bounds.bottom > scope.bounds.top && std::isfinite(scope.bounds.left) &&
                     std::isfinite(scope.bounds.top) && std::isfinite(scope.bounds.right) &&
                     std::isfinite(scope.bounds.bottom)) {
-                scene->scope_at[scope.first] = static_cast<std::uint32_t>(scene->scopes.size());
-                scene->scopes.push_back(Scene::RasterGroup{index, scope.bounds});
+                replay.scope_at[scope.first] = static_cast<std::uint32_t>(replay.scopes.size());
+                replay.scopes.push_back(Scene::RasterGroup{index, scope.bounds});
             }
             if (scope.valid && scope.simple && (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
                     start.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH)) {
-                scene->replay_roles[scope.first] |= Scene::SimpleOpen;
-                scene->replay_roles[index] |= Scene::SimpleEnd;
+                replay.replay_roles[scope.first] |= Scene::SimpleOpen;
+                replay.replay_roles[index] |= Scene::SimpleEnd;
                 if (start.type == SPDF_D2D_SCENE_COMPOSITE_PUSH && start.values[0] == 1.0f) {
-                    scene->replay_roles[scope.first] |= Scene::Noop;
-                    scene->replay_roles[index] |= Scene::Noop;
+                    replay.replay_roles[scope.first] |= Scene::Noop;
+                    replay.replay_roles[index] |= Scene::Noop;
                 }
             }
             if (scope.valid && scope.complex && index - scope.first >= 63 &&
-                    (index - scope.first + 1) * 4 < scene->commands.size() * 3 &&
+                    (index - scope.first + 1) * 4 < scene->data->commands.size() * 3 &&
                     scope.bounds.right > scope.bounds.left && scope.bounds.bottom > scope.bounds.top &&
                     std::isfinite(scope.bounds.left) && std::isfinite(scope.bounds.top) &&
                     std::isfinite(scope.bounds.right) && std::isfinite(scope.bounds.bottom))
@@ -2276,12 +2445,10 @@ void prepare_raster_groups(Scene* scene) {
         HRESULT result = S_OK;
         if (type == SPDF_D2D_SCENE_PATH_FILL || type == SPDF_D2D_SCENE_LINEAR_GRADIENT ||
                 type == SPDF_D2D_SCENE_RADIAL_GRADIENT || type == SPDF_D2D_SCENE_PATH_STROKE) {
-            const auto path = static_cast<Surface::Path*>(command.resource);
             result = type == SPDF_D2D_SCENE_PATH_STROKE
-                ? path->resource->GetWidenedBounds(command.values[0], command.stroke_style
-                    ? static_cast<Surface::StrokeStyle*>(command.stroke_style)->resource.Get() : nullptr,
+                ? stored.geometry->GetWidenedBounds(command.values[0], stored.stroke_style.Get(),
                     &matrix, .25f, &bounds)
-                : path->resource->GetBounds(&matrix, &bounds);
+                : stored.geometry->GetBounds(&matrix, &bounds);
         } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_FILL_RECT) {
             bounds = transformed_rect(D2D1::RectF(command.values[0], command.values[1],
                 command.values[2], command.values[3]), matrix);
@@ -2290,7 +2457,7 @@ void prepare_raster_groups(Scene* scene) {
                 !std::isfinite(bounds.right) || !std::isfinite(bounds.bottom)) {
             if (!stack.empty()) stack.back().valid = false;
         } else {
-            scene->command_bounds[index] = bounds;
+            replay.command_bounds[index] = bounds;
             if (!stack.empty()) include(stack.back().bounds, bounds);
         }
     }
@@ -2304,18 +2471,18 @@ void prepare_raster_groups(Scene* scene) {
     }
 }
 
-void prepare_cull_blocks(Scene* scene) {
+void prepare_cull_blocks(const Scene* scene, Scene::ReplayIndex& replay) {
     struct Batch {
         std::size_t first = 0, last = 0, count = 0;
         D2D1_RECT_F bounds{};
     };
     struct Frame { std::size_t first; Batch batch; };
     std::vector<Frame> stack{{SIZE_MAX, {}}};
-    scene->cull_block_at.assign(scene->commands.size(), UINT32_MAX);
+    replay.cull_block_at.assign(scene->data->commands.size(), UINT32_MAX);
     const auto flush = [&](Batch& batch) {
         if (batch.count >= 2 && batch.last - batch.first >= 31) {
-            scene->cull_block_at[batch.first] = static_cast<std::uint32_t>(scene->cull_blocks.size());
-            scene->cull_blocks.push_back({batch.last, batch.bounds});
+            replay.cull_block_at[batch.first] = static_cast<std::uint32_t>(replay.cull_blocks.size());
+            replay.cull_blocks.push_back({batch.last, batch.bounds});
         }
         batch.count = 0;
     };
@@ -2334,8 +2501,8 @@ void prepare_cull_blocks(Scene* scene) {
         ++batch.count;
         if (last - batch.first >= 127) flush(batch);
     };
-    for (std::size_t index = 0; index < scene->commands.size(); ++index) {
-        const auto type = scene->commands[index].command.type;
+    for (std::size_t index = 0; index < scene->data->commands.size(); ++index) {
+        const auto type = scene->data->commands[index].command.type;
         if (type == SPDF_D2D_SCENE_COMPOSITE_PUSH || type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
                 type == SPDF_D2D_SCENE_MASK_BEGIN || type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN ||
                 type == SPDF_D2D_SCENE_CLIP_PUSH || type == SPDF_D2D_SCENE_RECT_CLIP_PUSH ||
@@ -2350,16 +2517,16 @@ void prepare_cull_blocks(Scene* scene) {
             auto frame = stack.back();
             stack.pop_back();
             flush(frame.batch);
-            const auto scope = scene->scope_at[frame.first];
-            if (scope != UINT32_MAX && scene->scopes[scope].end == index) {
-                append(stack.back().batch, frame.first, index, scene->scopes[scope].bounds);
+            const auto scope = replay.scope_at[frame.first];
+            if (scope != UINT32_MAX && replay.scopes[scope].end == index) {
+                append(stack.back().batch, frame.first, index, replay.scopes[scope].bounds);
             } else {
                 // Invalid/unknown bounds must never hide a state transition.
                 flush(stack.back().batch);
             }
             continue;
         }
-        const auto& bounds = scene->command_bounds[index];
+        const auto& bounds = replay.command_bounds[index];
         if (bounds.left <= bounds.right && bounds.top <= bounds.bottom) {
             append(stack.back().batch, index, index, bounds);
         } else {
@@ -2370,10 +2537,113 @@ void prepare_cull_blocks(Scene* scene) {
     }
     if (stack.size() == 1) flush(stack.back().batch);
     else {
-        scene->cull_block_at.clear();
-        scene->cull_blocks.clear();
+        replay.cull_block_at.clear();
+        replay.cull_blocks.clear();
     }
 }
+
+struct TilePlan {
+    std::vector<std::uint32_t> commands;
+};
+
+// Compile one tile at a time. Unknown bounds and state transitions stay live;
+// all retained openers/closers remain balanced and in PDF paint order.
+bool compile_tile_plan(Surface* surface, const Scene& scene,
+        const SpdfD2DTransform& page, TilePlan& plan) noexcept {
+    plan.commands.clear();
+    constexpr std::size_t max_commands = 1024 * 1024;
+    constexpr std::size_t max_depth = 4096;
+    const auto* replay = scene.replay.get();
+    const auto& commands = scene.data->commands;
+    if (!replay || commands.size() > max_commands) return false;
+    try {
+        // Zoomed tiles often select a small fraction of a large scene. Grow
+        // with the selected stream instead of reserving the whole page.
+        plan.commands.reserve((std::min)(commands.size(), std::size_t{4096}));
+        for (std::size_t index = 0; index < commands.size(); ++index) {
+            if ((index & 63) == 0 && surface->cancelled()) return false;
+            const auto block = replay->cull_block_at[index];
+            if (block != UINT32_MAX && !surface->command_visible(replay->cull_blocks[block].bounds, page)) {
+                index = replay->cull_blocks[block].end;
+                continue;
+            }
+            const auto& bounds = replay->command_bounds[index];
+            if (bounds.left <= bounds.right && bounds.top <= bounds.bottom &&
+                    !surface->command_visible(bounds, page)) continue;
+            if (replay->replay_roles[index] & Scene::Scope) {
+                const auto& scope = replay->scopes[replay->scope_at[index]];
+                if (!surface->command_visible(scope.bounds, page)) {
+                    index = scope.end;
+                    continue;
+                }
+            }
+            plan.commands.push_back(static_cast<std::uint32_t>(index));
+        }
+        struct Frame {
+            std::uint32_t close;
+            std::size_t output;
+            bool effect, prunable, protected_scope;
+        };
+        std::vector<Frame> stack;
+        std::size_t output = 0;
+        for (const auto index : plan.commands) {
+            if ((output & 63) == 0 && surface->cancelled()) return false;
+            const auto& c = commands[index].command;
+            std::uint32_t close = 0;
+            switch (c.type) {
+            case SPDF_D2D_SCENE_COMPOSITE_PUSH: close = SPDF_D2D_SCENE_COMPOSITE_POP; break;
+            case SPDF_D2D_SCENE_CLIP_GROUP_PUSH:
+            case SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN: close = SPDF_D2D_SCENE_CLIP_GROUP_POP; break;
+            case SPDF_D2D_SCENE_CLIP_PUSH:
+            case SPDF_D2D_SCENE_MASK_BEGIN: close = SPDF_D2D_SCENE_CLIP_POP; break;
+            case SPDF_D2D_SCENE_RECT_CLIP_PUSH: close = SPDF_D2D_SCENE_RECT_CLIP_POP; break;
+            case SPDF_D2D_SCENE_OPACITY_PUSH: close = SPDF_D2D_SCENE_LAYER_POP; break;
+            }
+            if (close) {
+                if (stack.size() == max_depth) return false;
+                const auto role = replay->replay_roles[index];
+                const bool protected_parent = !stack.empty() && stack.back().protected_scope;
+                const bool dangerous = c.type == SPDF_D2D_SCENE_MASK_BEGIN ||
+                    c.type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN ||
+                    (c.type == SPDF_D2D_SCENE_COMPOSITE_PUSH && c.uint_values[1] != 0);
+                const bool prunable = c.type == SPDF_D2D_SCENE_COMPOSITE_PUSH &&
+                    c.uint_values[0] == 0 && c.uint_values[1] == 0 &&
+                    std::isfinite(c.values[0]) && c.values[0] >= 0 && c.values[0] <= 1 &&
+                    (role & Scene::Scope) && !(role & Scene::SimpleOpen) && !protected_parent;
+                stack.push_back({close, output, !prunable, prunable, protected_parent || dangerous});
+                plan.commands[output++] = index;
+                continue;
+            }
+            const bool closing = c.type == SPDF_D2D_SCENE_COMPOSITE_POP ||
+                c.type == SPDF_D2D_SCENE_CLIP_GROUP_POP || c.type == SPDF_D2D_SCENE_CLIP_POP ||
+                c.type == SPDF_D2D_SCENE_RECT_CLIP_POP || c.type == SPDF_D2D_SCENE_LAYER_POP;
+            if (closing) {
+                if (stack.empty() || stack.back().close != c.type) return false;
+                const auto frame = stack.back();
+                stack.pop_back();
+                if (frame.prunable && !frame.effect) {
+                    output = frame.output; // Transparent isolated Normal source.
+                    continue;
+                }
+                plan.commands[output++] = index;
+                if (!stack.empty()) {
+                    stack.back().effect |= frame.effect;
+                }
+            } else {
+                plan.commands[output++] = index;
+                if (!stack.empty()) stack.back().effect = true;
+            }
+        }
+        if (!stack.empty()) return false;
+        plan.commands.resize(output);
+        return true;
+    } catch (...) {
+        plan.commands.clear();
+        return false; // Allocation/structure limits keep the existing replay.
+    }
+}
+
+#include "scratch_storage_plan.h"
 
 HRESULT replay_scene(
     Surface* surface,
@@ -2381,7 +2651,8 @@ HRESULT replay_scene(
     const SpdfD2DTransform& page,
     bool reuse_groups = false,
     std::size_t first = 0,
-    std::size_t last = SIZE_MAX) noexcept {
+    std::size_t last = SIZE_MAX,
+    const TilePlan* plan = nullptr) noexcept {
     if (surface == nullptr || scene == nullptr || scene->owner != surface) {
         return E_INVALIDARG;
     }
@@ -2393,34 +2664,37 @@ HRESULT replay_scene(
         return surface->set_transform(
             matrix._11, matrix._12, matrix._21, matrix._22, matrix._31, matrix._32);
     };
-    last = (std::min)(last, scene->commands.size());
+    last = (std::min)(last, scene->data->commands.size());
+    const auto* replay = scene->replay.get();
     const bool refining = surface->refining();
     const bool vector_scopes = reuse_groups || refining;
-    for (auto index = first; index < last; ++index) {
+    const auto command_count = plan ? plan->commands.size() : last;
+    for (auto position = plan ? std::size_t{0} : first; position < command_count; ++position) {
+        auto index = plan ? static_cast<std::size_t>(plan->commands[position]) : position;
         if ((index & 63) == 0 && surface->cancelled()) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
-        if (refining && index < scene->cull_block_at.size()) {
-            const auto block_index = scene->cull_block_at[index];
+        if (!plan && refining && replay && index < replay->cull_block_at.size()) {
+            const auto block_index = replay->cull_block_at[index];
             if (block_index != UINT32_MAX) {
-                const auto& block = scene->cull_blocks[block_index];
+                const auto& block = replay->cull_blocks[block_index];
                 if (block.end < last && !surface->command_visible(block.bounds, page)) {
-                    index = block.end;
+                    position = block.end;
                     continue;
                 }
             }
         }
         // One sequential byte replaces several hash probes per command/tile.
-        const auto role = index < scene->replay_roles.size() ? scene->replay_roles[index] : 0;
+        const auto role = replay && index < replay->replay_roles.size() ? replay->replay_roles[index] : 0;
         if (refining && (role & Scene::FusedClipBoundary) && surface->isolated_clip_active()) continue;
-        if (refining && index < scene->command_bounds.size()) {
-            const auto& bounds = scene->command_bounds[index];
+        if (!plan && refining && replay && index < replay->command_bounds.size()) {
+            const auto& bounds = replay->command_bounds[index];
             if (bounds.left <= bounds.right && bounds.top <= bounds.bottom &&
                     !surface->command_visible(bounds, page)) continue;
         }
-        if (vector_scopes && (role & Scene::Scope)) {
-            const auto& scope = scene->scopes[scene->scope_at[index]];
+        if (!plan && vector_scopes && (role & Scene::Scope)) {
+            const auto& scope = replay->scopes[replay->scope_at[index]];
             if (!(refining ? surface->command_visible(scope.bounds, page)
                         : surface->group_visible(scope.bounds, page))) {
-                index = scope.end;
+                position = scope.end;
                 continue;
             }
         }
@@ -2443,11 +2717,13 @@ HRESULT replay_scene(
                 if (FAILED(result)) return result;
                 surface->cache_group_raster(scene, index, page, group->second.bounds);
             }
-            index = group->second.end;
+            position = group->second.end;
             continue;
         }
-        const auto& stored = scene->commands[index];
+        const auto& stored = scene->data->commands[index];
         const auto& command = stored.command;
+        const auto* binding = stored.binding_index == UINT32_MAX
+            ? nullptr : &scene->bindings[stored.binding_index];
         HRESULT result = S_OK;
         if (vector_scopes && (role & Scene::Noop)) continue;
         // Source-over-only scopes need no backdrop capture or Flush. Use the
@@ -2455,7 +2731,7 @@ HRESULT replay_scene(
         if (vector_scopes && (role & Scene::SimpleOpen)) {
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = command.type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH
-                ? surface->push_clip_path(static_cast<Surface::Path*>(command.resource))
+                ? surface->push_clip_path(binding->path.get())
                 : surface->push_opacity_layer(command.values[0]);
             if (FAILED(result)) return result;
             continue;
@@ -2475,7 +2751,7 @@ HRESULT replay_scene(
         case SPDF_D2D_SCENE_CLIP_PUSH:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->push_clip_path(
-                static_cast<Surface::Path*>(command.resource));
+                binding->path.get());
             break;
         case SPDF_D2D_SCENE_CLIP_POP:
             result = surface->pop_clip();
@@ -2502,12 +2778,13 @@ HRESULT replay_scene(
                 break;
             }
             if (refining && (role & Scene::IsolatedClipOpen)) {
-                const auto& child = scene->commands[index + 1].command;
+                const auto& child = scene->data->commands[index + 1].command;
                 const auto matrix = (child.flags & SPDF_D2D_SCENE_HAS_TRANSFORM)
                     ? compose_transform(page, child.transform)
                     : D2D1::Matrix3x2F(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
-                auto* path = static_cast<Surface::Path*>(child.resource);
-                if (surface->can_fuse_isolated_clip(path, matrix)) {
+                const auto& child_stored = scene->data->commands[index + 1];
+                auto* path = scene->bindings[child_stored.binding_index].path.get();
+                if (path && surface->can_fuse_isolated_clip(path, matrix)) {
                     result = surface->begin_isolated_clipped_group(command.values[0], path, matrix);
                     break;
                 }
@@ -2523,7 +2800,7 @@ HRESULT replay_scene(
         case SPDF_D2D_SCENE_CLIP_GROUP_PUSH:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->begin_composite_group(
-                0, 1.0f, static_cast<Surface::Path*>(command.resource));
+                0, 1.0f, binding->path.get());
             break;
         case SPDF_D2D_SCENE_CLIP_GROUP_POP:
             result = surface->end_composite_group(true);
@@ -2557,30 +2834,30 @@ HRESULT replay_scene(
         case SPDF_D2D_SCENE_BITMAP:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->draw_bitmap(
-                static_cast<Surface::Bitmap*>(command.resource),
+                binding->bitmap.get(),
                 command.values[0], command.values[1], command.values[2], command.values[3],
                 command.values[4], command.uint_values[0] != 0);
             break;
         case SPDF_D2D_SCENE_PATH_FILL:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->fill_path(
-                static_cast<Surface::Path*>(command.resource), command.uint_values[0]);
+                binding->path.get(), command.uint_values[0]);
             break;
         case SPDF_D2D_SCENE_PATH_STROKE:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->stroke_path(
-                static_cast<Surface::Path*>(command.resource), command.uint_values[0],
-                command.values[0], static_cast<Surface::StrokeStyle*>(command.stroke_style));
+                binding->path.get(), command.uint_values[0],
+                command.values[0], binding->stroke_style.get());
             break;
         case SPDF_D2D_SCENE_LINEAR_GRADIENT:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->fill_gradient_path(
-                static_cast<Surface::Path*>(command.resource), stored.linear_brush.Get());
+                binding->path.get(), binding->linear_brush.Get());
             break;
         case SPDF_D2D_SCENE_RADIAL_GRADIENT:
             result = set_item_transform(command);
             if (SUCCEEDED(result)) result = surface->fill_gradient_path(
-                static_cast<Surface::Path*>(command.resource), stored.radial_brush.Get());
+                binding->path.get(), binding->radial_brush.Get());
             break;
         default:
             return E_INVALIDARG;
@@ -2808,7 +3085,7 @@ HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noe
             layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
             !mask_captures_.empty()) return S_FALSE;
     SceneRaster* best = nullptr;
-    const auto& background = scene->commands.front().command;
+    const auto& background = scene->data->commands.front().command;
     if (background.type != SPDF_D2D_SCENE_FILL_RECT) return S_FALSE;
     const auto bounds = D2D1::RectF(background.values[0], background.values[1],
         background.values[2], background.values[3]);
@@ -2846,12 +3123,12 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t,
         used -= oldest->bytes;
         scene_rasters_.erase(oldest);
     }
-    if (scene->commands.size() < 256 || t.m12 != 0 || t.m21 != 0 ||
+    if (scene->data->commands.size() < 256 || t.m12 != 0 || t.m21 != 0 ||
             t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.dx) || !std::isfinite(t.dy) ||
             !std::isfinite(t.m11) || !std::isfinite(t.m22) ||
             layer_depth_ || axis_clip_depth_ || !composite_captures_.empty() ||
             !mask_captures_.empty()) return replay_scene(this, scene, t, reuse_groups);
-    const auto& first = scene->commands.front().command;
+    const auto& first = scene->data->commands.front().command;
     if (first.type != SPDF_D2D_SCENE_FILL_RECT || first.flags != 0 ||
             first.uint_values[0] != 0xffffffff || first.values[0] != 0 ||
             first.values[1] != 0) return replay_scene(this, scene, t, reuse_groups);
@@ -3014,46 +3291,11 @@ bool Surface::sharp_pending() const noexcept {
         !sharp_job_->ready.load(std::memory_order_acquire);
 }
 
-std::unique_ptr<Scene> clone_scene(Surface* owner, const Scene& source) {
+std::unique_ptr<Scene> make_worker_scene(Surface* owner, const Scene& source) {
     auto result = std::make_unique<Scene>();
     result->owner = owner;
-    result->scope_at = source.scope_at;
-    result->scopes = source.scopes;
-    result->command_bounds = source.command_bounds;
-    result->replay_roles = source.replay_roles;
-    result->cull_block_at = source.cull_block_at;
-    result->cull_blocks = source.cull_blocks;
-    result->commands.reserve(source.commands.size());
-    for (const auto& original : source.commands) {
-        SceneCommand copy;
-        copy.command = original.command;
-        copy.transfer = original.transfer;
-        copy.stops = original.stops;
-        if (original.path) {
-            copy.path = std::make_unique<Surface::Path>(Surface::Path{
-                owner, original.path->resource, original.path->fill_realization,
-                original.path->rectangle});
-            copy.command.resource = copy.path.get();
-        }
-        if (original.bitmap) {
-            copy.bitmap = std::make_unique<Surface::Bitmap>(Surface::Bitmap{owner, original.bitmap->resource});
-            copy.command.resource = copy.bitmap.get();
-        }
-        if (original.stroke_style) {
-            copy.stroke_style = std::make_unique<Surface::StrokeStyle>(Surface::StrokeStyle{owner, original.stroke_style->resource});
-            copy.command.stroke_style = copy.stroke_style.get();
-        }
-        const auto& c = copy.command;
-        HRESULT hr = S_OK;
-        if (original.linear_brush) hr = owner->create_linear_gradient_brush(
-            c.values[0], c.values[1], c.values[2], c.values[3], copy.stops.data(),
-            static_cast<UINT32>(copy.stops.size()), &copy.linear_brush);
-        if (original.radial_brush) hr = owner->create_radial_gradient_brush(
-            c.values[0], c.values[1], c.values[2], c.values[3], c.values[4], c.values[5],
-            copy.stops.data(), static_cast<UINT32>(copy.stops.size()), &copy.radial_brush);
-        if (FAILED(hr)) return nullptr;
-        result->commands.push_back(std::move(copy));
-    }
+    result->data = source.data;
+    result->replay = source.replay;
     return result;
 }
 
@@ -3070,6 +3312,7 @@ void run_sharp_queue(const std::shared_ptr<SharpQueue>& queue) noexcept {
         }
         if (!job->cancelled->load() && !job->identity.expired()) {
             job->renderer->set_cancel_token(job->cancelled);
+            TilePlan plan;
             for (const auto& region : job->regions) {
                 if (FAILED(job->result) || job->cancelled->load() || job->identity.expired()) break;
                 const auto width = region.right - region.left;
@@ -3077,12 +3320,28 @@ void run_sharp_queue(const std::shared_ptr<SharpQueue>& queue) noexcept {
                 job->result = job->renderer->prepare_worker_target(
                     width + 2 * SHARP_TILE_BORDER, height + 2 * SHARP_TILE_BORDER);
                 if (FAILED(job->result)) break;
-                job->result = job->renderer->begin_frame(0x00000000);
-                if (FAILED(job->result)) break;
                 auto local = job->transform;
                 local.dx += (64.0f + SHARP_TILE_BORDER - region.left) * 96 / job->dpi;
                 local.dy += (64.0f + SHARP_TILE_BORDER - region.top) * 96 / job->dpi;
-                job->result = replay_scene(job->renderer.get(), job->scene.get(), local);
+                const bool planned = compile_tile_plan(job->renderer.get(), *job->scene, local, plan);
+                if (job->cancelled->load() || job->identity.expired()) break;
+                // Prepare only resources selected by this tile. Bindings live
+                // until this job ends; another tile initializes its own missing
+                // entries, while a failed plan uses the complete binding path.
+                try {
+                    job->result = bind_scene(job->scene.get(), planned ? &plan.commands : nullptr);
+                } catch (const std::bad_alloc&) {
+                    job->result = E_OUTOFMEMORY;
+                } catch (...) {
+                    job->result = E_FAIL;
+                }
+                if (FAILED(job->result) || job->cancelled->load() || job->identity.expired()) break;
+                job->renderer->prepare_storage({});
+                if (planned) prepare_storage_plan(job->renderer.get(),job->scene.get(),local,plan);
+                job->result = job->renderer->begin_frame(0x00000000);
+                if (FAILED(job->result)) break;
+                job->result = replay_scene(job->renderer.get(), job->scene.get(), local,
+                    false, 0, SIZE_MAX, planned ? &plan : nullptr);
                 SharpTile tile;
                 tile.bounds = region;
                 const auto ended = job->renderer->finish_worker(&tile.bitmap);
@@ -3206,8 +3465,8 @@ HRESULT Surface::draw_sharp_partial(Scene* scene, const SpdfD2DTransform& t) noe
     // Overlay only the opaque page interior. Repainting a translucent page
     // edge over the fast frame would apply its coverage twice; other pages
     // behind transparent parts of this viewport atlas must also stay intact.
-    if (t.m12 != 0 || t.m21 != 0 || scene->commands.empty()) return S_FALSE;
-    const auto& background = scene->commands.front().command;
+    if (t.m12 != 0 || t.m21 != 0 || scene->data->commands.empty()) return S_FALSE;
+    const auto& background = scene->data->commands.front().command;
     if (background.type != SPDF_D2D_SCENE_FILL_RECT || background.flags != 0 ||
             background.uint_values[0] != 0xffffffff) return S_FALSE;
     const auto ratio = dpi_ / 96;
@@ -3370,7 +3629,7 @@ HRESULT Surface::request_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept
         job->renderer = std::make_unique<Surface>();
         auto result = job->renderer->initialize_worker(*this, 1, 1);
         if (FAILED(result)) return result;
-        job->scene = clone_scene(job->renderer.get(), *scene);
+        job->scene = make_worker_scene(job->renderer.get(), *scene);
         if (!job->scene) return E_FAIL;
         cancel_sharp();
         if (!sharp_queue_) {
@@ -3879,11 +4138,14 @@ std::int32_t spdf_d2d_create_scene(
     try {
         auto created = std::make_unique<Scene>();
         created->owner = static_cast<Surface*>(surface);
-        created->commands.reserve(command_count);
+        auto data = std::make_shared<SceneData>();
+        data->commands.reserve(command_count);
         for (std::uint32_t index = 0; index < command_count; ++index) {
             SceneCommand stored{};
             stored.command = commands[index];
             stored.command.data = nullptr;
+            stored.command.resource = nullptr;
+            stored.command.stroke_style = nullptr;
             const auto type = commands[index].type;
             if (type < SPDF_D2D_SCENE_FILL_RECT ||
                     type > SPDF_D2D_SCENE_RECT_CLIP_POP) {
@@ -3904,9 +4166,7 @@ std::int32_t spdf_d2d_create_scene(
                 if (source == nullptr || source->owner != created->owner || !source->resource) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
                 }
-                stored.bitmap = std::make_unique<Surface::Bitmap>(
-                    Surface::Bitmap{created->owner, source->resource});
-                stored.command.resource = stored.bitmap.get();
+                stored.bitmap = source->resource;
             } else if (type == SPDF_D2D_SCENE_CLIP_PUSH ||
                     type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
                     type == SPDF_D2D_SCENE_PATH_FILL ||
@@ -3917,19 +4177,16 @@ std::int32_t spdf_d2d_create_scene(
                 if (source == nullptr || source->owner != created->owner || !source->resource) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
                 }
-                stored.path = std::make_unique<Surface::Path>(Surface::Path{
-                    created->owner, source->resource, source->fill_realization,
-                    source->rectangle});
-                stored.command.resource = stored.path.get();
+                stored.geometry = source->resource;
+                stored.fill_realization = source->fill_realization;
+                stored.rectangle = source->rectangle;
             }
             if (type == SPDF_D2D_SCENE_PATH_STROKE && commands[index].stroke_style != nullptr) {
                 const auto* source = static_cast<Surface::StrokeStyle*>(commands[index].stroke_style);
                 if (source->owner != created->owner || !source->resource) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
                 }
-                stored.stroke_style = std::make_unique<Surface::StrokeStyle>(
-                    Surface::StrokeStyle{created->owner, source->resource});
-                stored.command.stroke_style = stored.stroke_style.get();
+                stored.stroke_style = source->resource;
             }
             if (commands[index].data_count != 0 && commands[index].data == nullptr) {
                 return static_cast<std::int32_t>(E_INVALIDARG);
@@ -3944,24 +4201,6 @@ std::int32_t spdf_d2d_create_scene(
                 if (commands[index].data_count != 0) {
                     stored.stops.assign(first, first + commands[index].data_count);
                 }
-                HRESULT result = S_OK;
-                if (commands[index].type == SPDF_D2D_SCENE_LINEAR_GRADIENT) {
-                    result = created->owner->create_linear_gradient_brush(
-                        commands[index].values[0], commands[index].values[1],
-                        commands[index].values[2], commands[index].values[3],
-                        stored.stops.data(),
-                        static_cast<std::uint32_t>(stored.stops.size()),
-                        &stored.linear_brush);
-                } else {
-                    result = created->owner->create_radial_gradient_brush(
-                        commands[index].values[0], commands[index].values[1],
-                        commands[index].values[2], commands[index].values[3],
-                        commands[index].values[4], commands[index].values[5],
-                        stored.stops.data(),
-                        static_cast<std::uint32_t>(stored.stops.size()),
-                        &stored.radial_brush);
-                }
-                if (FAILED(result)) return static_cast<std::int32_t>(result);
             } else if (commands[index].type == SPDF_D2D_SCENE_MASK_END ||
                     commands[index].type == SPDF_D2D_SCENE_COMPOSITE_MASK_END) {
                 if (commands[index].data_count == 1) {
@@ -3974,31 +4213,43 @@ std::int32_t spdf_d2d_create_scene(
             } else if (commands[index].data_count != 0) {
                 return static_cast<std::int32_t>(E_INVALIDARG);
             }
-            created->commands.push_back(std::move(stored));
+            data->commands.push_back(std::move(stored));
         }
-        compact_empty_layers(created.get());
+        compact_empty_layers(*data);
+        for (std::size_t index = 0; index < data->commands.size(); ++index) {
+            auto& stored = data->commands[index];
+            if (!stored.bitmap && !stored.geometry && !stored.stroke_style) continue;
+            stored.binding_index = static_cast<std::uint32_t>(data->binding_commands.size());
+            data->binding_commands.push_back(static_cast<std::uint32_t>(index));
+        }
+        // No mutable aliases survive publication to UI/worker scenes.
+        created->data = std::move(data);
+        const auto bound = bind_scene(created.get());
+        if (FAILED(bound)) return static_cast<std::int32_t>(bound);
         if (!created->recordable) {
-            prepare_raster_groups(created.get());
-            prepare_cull_blocks(created.get());
-            for (std::size_t index = 0; index < created->scope_at.size(); ++index)
-                if (created->scope_at[index] != UINT32_MAX) created->replay_roles[index] |= Scene::Scope;
-            for (const auto& group : created->raster_groups) created->replay_roles[group.first] |= Scene::Raster;
+            auto replay = std::make_shared<Scene::ReplayIndex>();
+            prepare_raster_groups(created.get(), *replay);
+            prepare_cull_blocks(created.get(), *replay);
+            for (std::size_t index = 0; index < replay->scope_at.size(); ++index)
+                if (replay->scope_at[index] != UINT32_MAX) replay->replay_roles[index] |= Scene::Scope;
+            for (const auto& group : created->raster_groups) replay->replay_roles[group.first] |= Scene::Raster;
             // A Normal isolated group with one geometry clip can share one
             // capture. Leave simple scopes on the existing native-layer route.
-            for (std::size_t first = 0; first < created->scope_at.size(); ++first) {
-                const auto scope = created->scope_at[first];
+            for (std::size_t first = 0; first < replay->scope_at.size(); ++first) {
+                const auto scope = replay->scope_at[first];
                 if (scope == UINT32_MAX) continue;
-                const auto& command = created->commands[first].command;
+                const auto& command = created->data->commands[first].command;
                 if (command.type != SPDF_D2D_SCENE_COMPOSITE_PUSH || command.uint_values[0] != 0 ||
-                        command.uint_values[1] != 0 || (created->replay_roles[first] & Scene::SimpleOpen)) continue;
-                if (first + 1 >= created->scope_at.size()) continue;
-                const auto child = created->scope_at[first + 1];
-                if (child == UINT32_MAX || created->scopes[child].end + 1 != created->scopes[scope].end ||
-                        created->commands[first + 1].command.type != SPDF_D2D_SCENE_CLIP_GROUP_PUSH) continue;
-                created->replay_roles[first] |= Scene::IsolatedClipOpen;
-                created->replay_roles[first + 1] |= Scene::FusedClipBoundary;
-                created->replay_roles[created->scopes[child].end] |= Scene::FusedClipBoundary;
+                        command.uint_values[1] != 0 || (replay->replay_roles[first] & Scene::SimpleOpen)) continue;
+                if (first + 1 >= replay->scope_at.size()) continue;
+                const auto child = replay->scope_at[first + 1];
+                if (child == UINT32_MAX || replay->scopes[child].end + 1 != replay->scopes[scope].end ||
+                        created->data->commands[first + 1].command.type != SPDF_D2D_SCENE_CLIP_GROUP_PUSH) continue;
+                replay->replay_roles[first] |= Scene::IsolatedClipOpen;
+                replay->replay_roles[first + 1] |= Scene::FusedClipBoundary;
+                replay->replay_roles[replay->scopes[child].end] |= Scene::FusedClipBoundary;
             }
+            created->replay = std::move(replay);
         }
         *scene = created.release();
         return static_cast<std::int32_t>(S_OK);

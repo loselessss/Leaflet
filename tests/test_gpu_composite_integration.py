@@ -71,6 +71,42 @@ class CompositeIntegrationTests(unittest.TestCase):
         self.check_retained(blended_mask_pdf_bytes(image=True))
         self.assertTrue(hasattr(self.surface, "_luminosity_profile"))
 
+    def test_compiled_illustration_preserves_alpha_clip_and_foreground(self):
+        from itertools import product
+        from tests.test_gpu_regions import illustration_pdf
+
+        for dpi, angle, clipped in product((96, 192), (0, 90), (False, True)):
+            self.surface.resize(400, 400, dpi)
+            with self.subTest(dpi=dpi, rotation=angle, clipped=clipped), pymupdf.open(
+                    stream=illustration_pdf(clip=clipped, rotation=angle), filetype="pdf") as pdf:
+                page = pdf[0]
+                scene = vector_page_from_pymupdf(page)
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertIn("complex-illustration", scene.features)
+                reference = page.get_pixmap(alpha=False)
+                self.view._page_sizes = {0: (400, 400)}
+                self.view._native_vector_draws(0, scene)
+                draws = self.view._d2d_vector_paths[0][1]
+                retained = self.surface.create_scene(400, 400, draws)
+                try:
+                    # This source-over-only scene can use the direct command
+                    # list path; request_sharp_scene correctly declines it.
+                    self.surface.begin_frame(0xffffffff)
+                    scale = 96 / dpi  # Keep the same physical pixels.
+                    self.surface.draw_scene(retained, (scale, 0, 0, scale, 0, 0), reuse_groups=False)
+                    actual = self.surface.read_pixels_bgra(400, 400)
+                    self.surface.end_frame()
+                finally:
+                    retained.close()
+                for px, py in ((10, 10), (25, 365), (25, 375), (35, 365), (35, 375)):
+                    point = pymupdf.Point(px, py) * page.rotation_matrix
+                    x, y = int(point.x), int(point.y)
+                    offset = (y * 400 + x) * 4
+                    rgb = tuple(reversed(actual[offset:offset + 3]))
+                    expected = reference.pixel(x, y)
+                    self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(rgb, expected)),
+                                    (clipped, x, y, rgb, expected))
+
     def test_retained_nonisolated_group_with_nested_blend(self):
         self.check_retained(nonisolated_nested_blend_pdf_bytes(0.7, True))
 
@@ -135,6 +171,111 @@ class CompositeIntegrationTests(unittest.TestCase):
             for phase in (0, 1, 2, 0, 2, 1):
                 with self.subTest(dpi=dpi, phase=phase):
                     self.assertEqual(draw(self.surface, phase), expected[phase])
+
+    def test_replacing_sharp_jobs_keeps_each_scene_analysis_and_resources_alive(self):
+        def make_scene(phase):
+            path = self.surface.create_path([
+                ("move", 4 + phase, 4), ("line", 58, 8 + phase),
+                ("line", 54 - phase, 58), ("line", 6, 54), ("close",)])
+            try:
+                operations = [
+                    ("composite_mask_begin", (0, 0, 64, 64), False, 0),
+                    ("path", path, 0xc0ffffff, None, 1, None, None),
+                    ("composite_mask_end", ()),
+                    ("linear_gradient", path, (0, 0), (64, 64),
+                     ((0, (0xc0ff4020, 0x8040ff20, 0xa04020ff)[phase]),
+                      (1, 0xff204080)), None),
+                    ("clip_group_pop", None),
+                ]
+                # Different index sizes and culling batches for each identity.
+                operations += [("path", path, 0, None, 1, None, None)] * (128 + phase * 65)
+                return self.surface.create_scene(64, 64, operations)
+            finally:
+                path.close()  # Retained resources must own their native data.
+
+        for dpi in (96, 144):
+            self.surface.resize(64, 64, dpi)
+            for phase in (0, 1, 2, 0):
+                with self.subTest(dpi=dpi, phase=phase):
+                    retired, current = make_scene((phase + 1) % 3), make_scene(phase)
+                    try:
+                        transform = (.8, 0, 0, .8, .25, .5)
+                        self.surface.begin_frame(0xff123456)
+                        self.surface.draw_scene(current, transform)
+                        expected = self.surface.read_pixels_bgra(64, 64)
+                        self.surface.end_frame()
+                        self.assertTrue(self.surface.request_sharp_scene(retired, transform))
+                        self.assertTrue(self.surface.request_sharp_scene(current, transform))
+                        retired.close()  # Cancelled worker may still own its analysis.
+                        deadline = time.monotonic() + 10
+                        while self.surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertEqual(self.surface.sharp_status(), 2)
+                        self.surface.begin_frame(0xff123456)
+                        self.assertTrue(self.surface.draw_sharp_scene(current, transform))
+                        actual = self.surface.read_pixels_bgra(64, 64)
+                        self.surface.end_frame()
+                        self.assertLess(sum(abs(a - b) for a, b in zip(actual, expected)) /
+                                        len(actual), .25)
+                    finally:
+                        retired.close()
+                        current.close()
+                    self.assertEqual(self.surface.sharp_status(), 0)
+
+    def test_worker_binds_closed_resources_and_keeps_gradient_state_separate(self):
+        path = self.surface.create_path([
+            ("move", 4, 4), ("line", 60, 4), ("line", 60, 60),
+            ("line", 4, 60), ("close",)])
+        bitmap = self.surface.create_bitmap_bgra(bytes((20, 80, 160, 192)) * 4, 2, 2)
+        style = self.surface.create_stroke_style((1, 1, 1, 2, 10, .5, (1.5, .75)))
+        stops = [(0, 0x804020ff), (.4, 0xc0ff4020), (1, 0xff20c080)]
+        transfer = [0, .2, .8, 1]
+        try:
+            scene = self.surface.create_scene(64, 64, (
+                ("composite_mask_begin", (0, 0, 64, 64), False, 0),
+                ("linear_gradient", path, (0, 0), (64, 64), stops, None),
+                ("composite_mask_end", transfer),
+                ("radial_gradient", path, (32, 32), (3, -2), (30, 26), stops, None),
+                ("image", bitmap, .7, (20, 0, 0, 20, 20, 20), True),
+                ("path", path, None, 0xff204080, 2, None, style),
+                ("clip_group_pop", None)))
+        finally:
+            path.close()
+            bitmap.close()
+            style.close()
+        # Worker binding happens after submission, when original handles and
+        # Python tables may already be gone. The retained scene must own both.
+        stops[:] = [(0, 0), (1, 0)]
+        transfer[:] = [0, 0]
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(600, 450, dpi)
+                for transform in ((5, 0, 0, 5, 30.25, 20.5),
+                                  (0, 5, -5, 0, 370.25, 20.5)):
+                    with self.subTest(dpi=dpi, transform=transform):
+                        self.surface.begin_frame(0xff123456)
+                        self.surface.draw_scene(scene, transform)
+                        expected = self.surface.read_pixels_bgra(600, 450)
+                        self.surface.end_frame()
+                        self.assertTrue(self.surface.request_sharp_scene(scene, transform))
+                        # UI and worker must never mutate the same brushes.
+                        for scale in (2, 3, 1):
+                            self.surface.begin_frame(0xff123456)
+                            self.surface.draw_scene(scene, (scale, 0, 0, scale, .5, .25))
+                            self.surface.end_frame()
+                        deadline = time.monotonic() + 10
+                        while self.surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                            time.sleep(.005)
+                        self.assertEqual(self.surface.sharp_status(), 2)
+                        self.surface.begin_frame(0xff123456)
+                        self.assertTrue(self.surface.draw_sharp_scene(scene, transform))
+                        actual = self.surface.read_pixels_bgra(600, 450)
+                        self.surface.end_frame()
+                        self.assertLess(sum(abs(a - b) for a, b in zip(actual, expected)) /
+                                        len(actual), .25)
+                        self.surface.cancel_sharp()
+        finally:
+            scene.close()
 
     def test_nested_captures_preserve_nonuniform_translucent_backdrop(self):
         # A uniform backdrop hides shifted/cropped snapshot copies. Exercise
@@ -250,7 +391,94 @@ class CompositeIntegrationTests(unittest.TestCase):
             scene.close()
             box.close()
 
-    def _render_sharp_operations(self, operations, transform, width=64, height=64):
+    def test_tile_plan_keeps_empty_copy_groups_and_nonzero_mask_transfer(self):
+        box = self.surface.create_path([
+            ("move", 4, 4), ("line", 60, 4), ("line", 60, 60),
+            ("line", 4, 60), ("close",)])
+        paint = ("path", box, 0xffd04020, None, 1, None, None)
+        try:
+            for knockout in (False, True):
+                operations = [("composite_push", 0, 1, knockout, True), paint,
+                              ("composite_push", 0, .7, False, True)]
+                for dx in (-200, 200):
+                    operations += [("composite_push", 1, .8, False, True),
+                        ("path", box, 0xff2040c0, None, 1, (1, 0, 0, 1, dx, 0), None),
+                        ("composite_pop", None)]
+                operations += [("composite_pop", None), ("composite_pop", None)]
+                scene = self.surface.create_scene(64, 64, operations)
+                try:
+                    expected = self._draw_retained_pixels(scene, (1, 0, 0, 1, 0, 0))
+                    actual = self._render_sharp_operations(operations, (1, 0, 0, 1, 0, 0))
+                    self.assertEqual(actual, expected, knockout)
+                    center = (32 * 64 + 32) * 4
+                    self.assertEqual(actual[center:center + 4],
+                                     bytes((255, 255, 255, 255)) if knockout else bytes((32, 64, 208, 255)))
+                finally:
+                    scene.close()
+            # No visible mask-building draw. TR(0)=1 still makes content visible.
+            operations = [("composite_mask_begin", (0, 0, 320, 64), False, 0),
+                ("path", box, 0xffffffff, None, 1, (1, 0, 0, 1, 200, 0), None),
+                ("composite_mask_end", (1, 1)), paint, ("clip_group_pop", None)]
+            scene = self.surface.create_scene(320, 64, operations)
+            try:
+                expected = self._draw_retained_pixels(scene, (1, 0, 0, 1, 0, 0))
+                actual = self._render_sharp_operations(operations, (1, 0, 0, 1, 0, 0),
+                                                       320, 64, read_size=(64, 64))
+                self.assertEqual(actual, expected)
+                center = (32 * 64 + 32) * 4
+                self.assertEqual(actual[center:center + 4], bytes((32, 64, 208, 255)))
+            finally:
+                scene.close()
+        finally:
+            box.close()
+
+    def _draw_retained_pixels(self, scene, transform, width=64, height=64):
+        self.surface.begin_frame(0)
+        self.surface.draw_scene(scene, transform)
+        pixels = self.surface.read_pixels_bgra(width, height)
+        self.surface.end_frame()
+        return pixels
+
+    def test_tile_plan_preserves_nested_origins_and_antialiasing(self):
+        triangle = self.surface.create_path([
+            ("move", .25, .5), ("line", 55.75, 4.25), ("line", 12.5, 42.75), ("close",)])
+        wide = self.surface.create_path([
+            ("move", -500, -500), ("line", 2000, -500),
+            ("line", 2000, 2000), ("line", -500, 2000), ("close",)])
+        operations = [("composite_push", 0, .63, False, True),
+            ("path", triangle, 0xc02060a0, None, 1, (1, 0, 0, 1, 80.25, 70.5), None),
+            ("composite_push", 0, .57, False, True), ("clip_group_push", wide, None),
+            ("composite_push", 5, .75, False, True)]
+        for dx, dy in ((95.25, 80.5), (525.25, 290.5), (1400.25, 700.5)):
+            operations.append(("path", triangle, 0x90d04080, 0xc040a020, 3,
+                               (1, 0, 0, 1, dx, dy), None))
+        operations += [("composite_pop", None), ("clip_group_pop", None),
+                       ("composite_pop", None), ("composite_pop", None)]
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(1200, 900, dpi)
+                for transform in ((1, 0, 0, 1, .25, .5), (0, 1, -1, 0, 800.25, .5),
+                                  (1, .15, .1, 1, -50.25, -30.5)):
+                    with self.subTest(dpi=dpi, transform=transform):
+                        self.surface.cancel_sharp()
+                        # An identity mask protects the independent general
+                        # capture route. Both sides use the same tile rasterizer.
+                        reference = [("composite_mask_begin", (-1000, -1000, 4000, 4000), False, 0),
+                            ("path", wide, 0xffffffff, None, 1, None, None),
+                            ("composite_mask_end", ())] + operations + [("clip_group_pop", None)]
+                        expected = self._render_sharp_operations(reference, transform, 1600, 900,
+                                                                 read_size=(1200, 900))
+                        actual = self._render_sharp_operations(operations, transform, 1600, 900,
+                                                               read_size=(1200, 900))
+                        self.assertEqual(len(actual), len(expected))
+                        error = [abs(a-b) for a, b in zip(actual, expected)]
+                        self.assertLessEqual(max(error), 3)
+                        self.assertLess(sum(error) / len(error), .02)
+        finally:
+            triangle.close()
+            wide.close()
+
+    def _render_sharp_operations(self, operations, transform, width=64, height=64, *, read_size=None):
         scene = self.surface.create_scene(width, height, operations)
         try:
             self.assertTrue(self.surface.request_sharp_scene(scene, transform))
@@ -260,7 +488,7 @@ class CompositeIntegrationTests(unittest.TestCase):
             self.assertEqual(self.surface.sharp_status(), 2)
             self.surface.begin_frame(0)
             self.assertTrue(self.surface.draw_sharp_scene(scene, transform))
-            pixels = self.surface.read_pixels_bgra(width, height)
+            pixels = self.surface.read_pixels_bgra(*(read_size or (width, height)))
             self.surface.end_frame()
             return pixels
         finally:
@@ -469,6 +697,46 @@ class CompositeIntegrationTests(unittest.TestCase):
         finally:
             for resource in (clip, outer, paint, dot, wide, full_rect):
                 resource.close()
+
+    def test_worker_keeps_live_mask_inputs_with_many_surface_sizes(self):
+        cover = self.surface.create_path([
+            ("move", -2000, -2000), ("line", 4000, -2000),
+            ("line", 4000, 4000), ("line", -2000, 4000), ("close",)])
+        def paint(argb):
+            return ("path", cover, argb, None, 1, None, None)
+        operations = [paint(0x80607080)]
+        for phase in range(3):
+            for index in range(72):
+                left = (index * 17 + phase * 23) % 470 + 4
+                top = (index * 11 + phase * 13) % 75 + 4
+                width, height = 8 + index, 7 + index % 29
+                area = (left, top, left + width, top + height)
+                inner = (left + 1, top + 1, left + width - 1, top + height - 1)
+                # Keep the raw outer mask live while the inner mask is generated.
+                operations += [("composite_mask_begin", area, False, 0),
+                    paint((0x40 + index % 160) << 24 | 0xffffff),
+                    ("composite_mask_end", ()),
+                    ("composite_mask_begin", inner, False, 0), paint(0xa0ffffff),
+                    ("composite_mask_end", (0, .15, .9, 1)),
+                    ("composite_push", 1 + index % 15, .6, False, True),
+                    paint((0x80 + phase * 16) << 24 | ((index + phase * 7) * 0x173965) % 0x1000000),
+                    ("composite_pop", None), ("clip_group_pop", None),
+                    ("clip_group_pop", None)]
+        try:
+            for dpi in (96, 192, 96):
+                self.surface.resize(600, 140, dpi)
+                with self.subTest(dpi=dpi):
+                    scene = self.surface.create_scene(600, 140, operations)
+                    try:
+                        scale = 96 / dpi  # Keep coverage on whole physical pixels.
+                        transform = (scale, 0, 0, scale, 0, 0)
+                        expected = self._draw_retained_pixels(scene, transform, 600, 140)
+                        actual = self._render_sharp_operations(operations, transform, 600, 140)
+                        self.assertEqual(actual, expected)
+                    finally:
+                        scene.close()
+        finally:
+            cover.close()
 
     def test_mask_interpolation_preserves_unorm_intermediate_rounding(self):
         # The legacy graph rounds inside/outside premultiplied RGBA to UNORM8

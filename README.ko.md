@@ -7,7 +7,7 @@
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을
 사용할 수 있는 Windows PDF 리더·편집기입니다.
 
-**버전: 1.37.0 (2026-10-21)** · Windows · 한국어·영어
+**버전: 1.37.1 (개발 중, 미배포)** · Windows · 한국어·영어
 
 EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html)가 설치되어 있어야 합니다. 임시 PDF로 변환해 열고 편집 결과는 PDF로 저장합니다. Ghostscript는 설치 파일에 포함되지 않습니다.
 
@@ -19,7 +19,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 
 최신 일반 설치파일은 [GitHub 릴리스](https://github.com/loselessss/Leaflet/releases/latest)에서도 받을 수 있습니다.
 
-시작 메뉴의 **Leaflet 리더** 또는 **Leaflet 편집기**로 실행합니다.
+시작 메뉴의 **Leaflet** 또는 **Leaflet 편집기**로 실행합니다.
 리더의 **편집 모드**, 편집기의 **리더로 돌아가기** 버튼으로 모드를 전환합니다.
 자세한 사용법은 프로그램에서 **F1**을 누르면 볼 수 있습니다.
 
@@ -27,6 +27,8 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 
 - **읽기:** GPU 렌더링, 최대 800% 확대, 검색, 책갈피, 드래그로 분리·병합하는 탭,
   두 장 보기와 프레젠테이션.
+  정밀 GPU 갱신은 타일별 임시 표면의 수명을 계획해 묶음 할당하며 저장소 슬롯 수를 제한합니다.
+  작은 복합 삽화는 확대 배율에 맞는 제한된 투명 배경 이미지로 구성하며 주변 글자는 벡터로 유지합니다. 삽화의 색·경계 표현은 달라질 수 있으므로 정밀 확인에는 CPU 모드를 이용할 수 있습니다.
 - **편집:** 텍스트·글꼴·크기·색상 수정, 사각형·이미지 추가와 이동·크기 조절.
   PDF에 직접 배치된 기존 이미지의 선택·이동·크기 조절·삭제.
 - **페이지:** 순서 변경·회전·자르기·병합·분리·추출,

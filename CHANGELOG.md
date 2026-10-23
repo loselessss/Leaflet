@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (1.37.1)
+
+### 개선
+
+- Name the main Start menu and desktop shortcuts simply Leaflet.
+
+### 성능 개선
+
+- Reduce UI preparation work and duplicate scene storage during exact GPU updates.
+- Prepare worker resources only for commands selected by visible tiles, reducing unnecessary preparation on zoomed pages.
+- Plan temporary GPU surface lifetimes per tile and allocate bounded texture-array storage in batches, reducing repeated allocation during exact composition.
+- Compile small, complex isolated illustrations into bounded transparent images before expanding their geometry, reducing GPU scene preparation and drawing work. Keep surrounding text and clipping as vectors; illustration colors and edges may differ from CPU mode.
+
 ## 1.37.0 - 2026-10-21
 
 ### 새 기능

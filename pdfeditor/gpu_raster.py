@@ -3,7 +3,9 @@
 MuPDF remains the PDF parser and supplies exact glyph outlines and decoded
 images. Direct2D rasterizes supported drawing commands. Unsupported effects
 fall back to the existing PyMuPDF tile path unless a self-contained effect can
-be rasterized as a bounded image island.
+be rasterized as a bounded image island. Small expensive isolated knockout
+illustrations can also be compiled into transparent sources before expanding
+their paths; live text and enclosing composition remain vector operations.
 """
 
 from dataclasses import dataclass, replace
@@ -2518,20 +2520,21 @@ structure are reused. Callers must reject stale document generations.
 
 def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False):
+        *, aggressive_band_merge=False, simplify_regions=True):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
     token = _extraction_work.set(({}, {}, {}))
     try:
         return _vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,
-            aggressive_band_merge=aggressive_band_merge)
+            aggressive_band_merge=aggressive_band_merge,
+            simplify_regions=simplify_regions)
     finally:
         _extraction_work.reset(token)
 
 
 def _vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False):
+        *, aggressive_band_merge=False, simplify_regions=True):
     """Return a complete GPU scene only when every operation is supported."""
     rect = page.rect
     scale = max(1.0, float(raster_scale))
@@ -2541,9 +2544,13 @@ def _vector_page_from_pymupdf(
     cookie = _mupdf.FzCookie()
     device = _DisplayListDevice(
         (rect.x0, rect.y0, rect.x1, rect.y1), scale, cookie, deadline)
+    region_device = None
+    if simplify_regions:
+        from .gpu_regions import RegionDevice
+        region_device = RegionDevice(device)
     try:
         _mupdf.fz_run_page(
-            page.this, device, _mupdf.FzMatrix(), cookie)
+            page.this, region_device or device, _mupdf.FzMatrix(), cookie)
         if not device.failure and device._clip_depth:
             device.failure = "unbalanced clip stack"
         if not device.failure and device._group_depth:
@@ -2590,6 +2597,9 @@ def _vector_page_from_pymupdf(
     except Exception as error:
         device._set_failure(str(error))
     finally:
+        if region_device is not None:
+            region_device.dispose()
+            _mupdf.fz_close_device(region_device)
         _mupdf.fz_close_device(device)
     if device.failure:
         return VectorPage(

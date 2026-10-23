@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Version: 1.37.0 (2026-10-21)** · Windows · English and Korean
+**Version: 1.37.1 (development, unreleased)** · Windows · English and Korean
 
 EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html) installed on the PC. Leaflet converts EPS to a private PDF for viewing and editing; save the result as PDF. Ghostscript is not bundled.
 
@@ -19,7 +19,7 @@ Modified AI files are saved as PDF. The Illustrator-compatible save checkbox is 
 
 The latest standalone installer is also available from [GitHub Releases](https://github.com/loselessss/Leaflet/releases/latest).
 
-Launch **Leaflet Reader** or **Leaflet Editor** from the Start menu.
+Launch **Leaflet** or **Leaflet Editor** from the Start menu.
 Use **Edit mode** in the reader or **Back to reader** in the editor to switch.
 Press **F1** for the full usage guide.
 
@@ -27,6 +27,8 @@ Press **F1** for the full usage guide.
 
 - **Reading:** GPU rendering, zoom up to 800%, search, bookmarks, draggable tabs that detach and merge,
   two-page view, and presentation mode.
+  Exact GPU updates plan temporary surface lifetimes and batch allocations within each tile; temporary storage has a fixed slot limit.
+  Small complex isolated illustrations are compiled into bounded transparent images at the requested zoom quality; surrounding text remains vector. Illustration colors and edges can differ, so use CPU mode for a fidelity check.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
   Magnetic alignment snaps moving objects to page/object edges and centers; toggle it in

@@ -108,7 +108,7 @@ class ReleasePackagingTests(unittest.TestCase):
         worker = (ROOT / "ocr_worker_main.py").read_text(encoding="utf-8")
         self.assertIn("set_current_process_app_id()", worker)
 
-    def test_installer_creates_explicit_reader_and_editor_shortcuts(self):
+    def test_installer_creates_leaflet_and_editor_shortcuts(self):
         installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
         for target in ("{group}", "{autodesktop}"):
             self.assertIn(
@@ -120,14 +120,16 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("Tasks: desktopreader", installer)
         self.assertIn("Tasks: desktopeditor", installer)
         self.assertIn("Flags: unchecked", installer)
-        self.assertIn("korean.ReaderShortcut=Leaflet 리더", installer)
+        self.assertIn("english.ReaderShortcut=Leaflet\n", installer)
+        self.assertIn("korean.ReaderShortcut=Leaflet\n", installer)
         self.assertIn("korean.EditorShortcut=Leaflet 편집기", installer)
         self.assertNotIn("Tasks: desktopicon", installer)
         for target in ("{group}", "{autodesktop}"):
             self.assertIn(
                 'Type: files; Name: "%s\\{#MyAppName}.lnk"' % target,
                 installer)
-            for name in ("sPDF Reader.lnk", "sPDF Editor.lnk",
+            for name in ("Leaflet Reader.lnk", "Leaflet 리더.lnk",
+                         "sPDF Reader.lnk", "sPDF Editor.lnk",
                          "sPDF 리더.lnk", "sPDF 편집기.lnk"):
                 self.assertIn(
                     'Type: files; Name: "%s\\%s"' % (target, name), installer)

@@ -1,5 +1,13 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.1)
+
+- Name the main Start menu and desktop shortcuts simply Leaflet.
+- Reduce UI preparation work and duplicate scene storage during exact GPU updates.
+- Prepare worker resources only for commands selected by visible tiles, reducing unnecessary preparation on zoomed pages.
+- Plan temporary GPU surface lifetimes per tile and allocate bounded texture-array storage in batches, reducing repeated allocation during exact composition.
+- Reduce preparation and drawing work for small complex illustrations by compiling bounded transparent sources. Surrounding text stays vector; use CPU mode when illustration color and edge fidelity matters.
+
 ## 1.37.0 - 2026-10-21
 
 - Improve GPU rendering of complex PDF pages by reducing intermediate transparency, clipping and mask composition work. Keep text and vectors at full display resolution; antialiased effect edges may differ slightly.

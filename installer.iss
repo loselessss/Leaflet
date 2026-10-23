@@ -5,7 +5,7 @@
 ; 아래 MyAppVersion을 함께 맞출 것(자동 동기화 안 됨).
 
 #define MyAppName "Leaflet"
-#define MyAppVersion "1.37.0"
+#define MyAppVersion "1.37.1"
 #define MyAppPublisher "Leaflet"
 #define MyAppExeName "Leaflet.exe"
 #define MyProgId "sPDF.Document"
@@ -38,12 +38,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
 [CustomMessages]
-english.ReaderShortcut=Leaflet Reader
-korean.ReaderShortcut=Leaflet 리더
+english.ReaderShortcut=Leaflet
+korean.ReaderShortcut=Leaflet
 english.EditorShortcut=Leaflet Editor
 korean.EditorShortcut=Leaflet 편집기
-english.ReaderDesktopShortcut=Create a Leaflet Reader desktop shortcut
-korean.ReaderDesktopShortcut=Leaflet 리더 바탕 화면 바로 가기 만들기
+english.ReaderDesktopShortcut=Create a Leaflet desktop shortcut
+korean.ReaderDesktopShortcut=Leaflet 바탕 화면 바로 가기 만들기
 english.EditorDesktopShortcut=Create a Leaflet Editor desktop shortcut
 korean.EditorDesktopShortcut=Leaflet 편집기 바탕 화면 바로 가기 만들기
 english.AdditionalShortcuts=Additional shortcuts:

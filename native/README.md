@@ -68,8 +68,58 @@ avoiding repeated scope/simple/no-op hash searches for every command in each til
 Scope ranges use packed records and a direct command-to-record index. Scene
 construction writes simple/no-op classifications directly into these role bytes,
 without allocating or retaining four intermediate hash sets. Worker preparation
-copies only the contiguous execution arrays. This reduces scene storage and
-construction work without retaining pixels or changing submission boundaries.
+shares a published read-only replay index for bounds, scope ranges, roles
+and culling batches. Commands, gradient stops, mask transfer tables and immutable
+resource references live in a shared, read-only `SceneData` arena. This arena is
+tied to one D2D device; it is not a portable or serialized scene format.
+Only commands using resources have a `SceneBinding` record. Each worker owns its
+context wrappers and mutable gradient brushes. Job submission shares the arena
+and analysis without walking/copying the command stream; the worker creates
+only bindings selected by each tile, checks cancellation and reports allocation
+and device failures through the existing asynchronous status path. Worker context initialization remains on
+the UI thread. Render order, tile density and submission boundaries stay the same.
+Each tile compiles an ordered command plan using the existing conservative culling
+rules. Clip/mask transitions, COPY, knockout and nonisolated dependencies stay
+live. Only harmless empty isolated Normal captures may disappear. Plans are
+temporary, limited to 1,048,576 input commands and depth 4096. Limit or allocation
+failures use the complete replay/binding path. No rendered-page cache is added.
+These are the first stages of the [scene compiler project](../docs/GPU_SCENE_COMPILER_PLAN.md);
+compact command encoding and a dedicated compositor remain future work.
+See the [tile plan comparison](../docs/GPU_TILE_PLAN_BENCHMARK_2026-10-21.md)
+for completion timings, resource preparation counts and pixel differences.
+The [mask precision experiment](../docs/GPU_MASK_PRECISION_BENCHMARK_2026-10-22.md)
+compares integer fixed point, minimum-precision float and compiler settings.
+The existing strict float shader remains the default after mixed timing results;
+integer conversion did not reduce intermediate bitmap storage.
+The [nested mask experiment](../docs/GPU_NESTED_MASK_BENCHMARK_2026-10-23.md)
+combined compatible closing operations while preserving both rounding stages.
+It reduced copied pixels on ACB 2015, but completion-time gains did not repeat;
+the experiment was kept outside the default native renderer.
+The [stage profile](../docs/GPU_STAGE_PROFILE_2026-10-23.md) separates CPU
+submission, copy calls, scratch preparation and drawing API recording. On ACB
+2015, explicit Flush and scratch preparation account for roughly 78–80% of the
+instrumented worker elapsed time; copy calls themselves account for roughly
+2–3%. Separate GPU timestamp diagnostics include possible CPU supply gaps and
+are not shader-active time. Lifetime-planned temporary storage and compositor
+submission were identified as the next candidates; that diagnostic did not
+change the production renderer.
+Following that profile, exact workers now plan conservative capture lifetimes
+and allocate same-size D3D11 texture-array slices before replay. The selected
+plan has at most 256 slots per tile and 128 slices per array, sharing the
+existing scratch byte budget. Exact-size/option/free-state checks and the
+original allocator handle missing or unsupported requests. Direct isolated-clip
+sources retain their original allocation path. No image-result cache, size
+approximation or Flush removal is added. See the
+[surface lifetime comparison](../docs/GPU_SURFACE_LIFETIME_BENCHMARK_2026-10-23.md)
+for the selected memory/speed tradeoff, unchanged pixels and fallback checks.
+The [direct D3D11 composition experiment](../docs/GPU_DIRECT_D3D11_BENCHMARK_2026-10-23.md)
+replaced final clip/mask effects with explicit draws, including shared device
+objects, protected context-state restoration and two copy strategies. It kept
+the sampled output exact and reduced observed process memory, but completion
+gains did not repeat and some cases slowed substantially. Those prototypes
+remain outside the default renderer; the bounded lifetime plan stays enabled.
+See the [arena/worker preparation comparison](../docs/GPU_SCENE_ARENA_BENCHMARK_2026-10-21.md)
+for request latency, initial construction cost, storage tradeoffs and exact pixel checks.
 See the [scope index comparison](../docs/GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)
 and [classification storage comparison](../docs/GPU_CLASSIFICATION_BENCHMARK_2026-10-21.md).
 Clip/mask closing can replace the three Composite effect nodes with one custom
