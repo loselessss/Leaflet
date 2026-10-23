@@ -73,7 +73,75 @@ def refine_alpha_image(item, replacements):
     return _combine(mask, replace(source, opacity=item.opacity))
 
 
-def fuse_alpha_images(items, *, abort=None, byte_limit=MAX_GPU_IMAGE_BYTES):
+class AlphaSourceTracker:
+    """Job-local ownership counts; never retain pixel bytes in this index."""
+
+    def __init__(self, recorder):
+        self.references = Counter(id(x.pixels) for x in recorder.items
+                                  if isinstance(x, VectorImage))
+        self.cache_keys = {}
+        for key, entry in recorder._images.items():
+            self.cached(key, entry)
+
+    def added(self, item):
+        if isinstance(item, VectorImage):
+            self.references[id(item.pixels)] += 1
+
+    def removed(self, item):
+        if isinstance(item, VectorImage):
+            identity = id(item.pixels)
+            self.references[identity] -= 1
+            if not self.references[identity]:
+                del self.references[identity]
+
+    def cached(self, key, entry):
+        self.cache_keys.setdefault(id(entry[0]), set()).add(key)
+
+
+def fold_completed_alpha_scope(recorder):
+    """Release source pairs as each eligible scope closes, during extraction.
+
+    Other scopes can still reference either original buffer. Keep those inputs
+    alive and charged to the shared image budget; evict only unreferenced data.
+    """
+    if len(recorder.items) < 5:
+        return
+    window = tuple(recorder.items[-5:])
+    if not _eligible(*window):
+        return
+    cost = len(window[3].pixels)
+    if recorder._alpha_generated + cost > MAX_GPU_IMAGE_BYTES:
+        return
+    tracker = getattr(recorder, "_alpha_sources", None)
+    if tracker is None:
+        recorder._alpha_sources = tracker = AlphaSourceTracker(recorder)
+    removed = Counter((id(window[1].pixels), id(window[3].pixels)))
+    sizes = {id(x.pixels): len(x.pixels) for x in (window[1], window[3])}
+    freed = {identity for identity, n in removed.items()
+             if tracker.references[identity] == n}
+    image_bytes = recorder._image_bytes + cost - sum(sizes[x] for x in freed)
+    if image_bytes > MAX_GPU_IMAGE_BYTES:
+        return
+    fused, count, _ = fuse_alpha_images(window, abort=recorder._abort_if_expired)
+    if not count:
+        return
+    recorder._alpha_generated += cost
+    # The replacement and accounting are ready; update only this scope and its
+    # two input buffers, rather than rescanning all previous page commands.
+    recorder.items[-5:] = fused
+    for item in window:
+        tracker.removed(item)
+    for item in fused:
+        tracker.added(item)
+    for identity in freed:
+        for key in tracker.cache_keys.pop(identity, ()):
+            recorder._images.pop(key, None)
+    recorder._image_bytes = image_bytes
+    recorder._features.add("alpha-image-fusion")
+
+
+def fuse_alpha_images(items, *, abort=None, byte_limit=MAX_GPU_IMAGE_BYTES,
+                      generated_bytes=0):
     """Return (items, fused count, unique image bytes), bounded by scene budget.
 
     Derived bytes belong to this extraction only. A refresh recipe records both
@@ -83,7 +151,7 @@ def fuse_alpha_images(items, *, abort=None, byte_limit=MAX_GPU_IMAGE_BYTES):
     references = Counter(id(x.pixels) for x in items if isinstance(x, VectorImage))
     sizes = {id(x.pixels): len(x.pixels) for x in items if isinstance(x, VectorImage)}
     image_bytes = sum(sizes.values())
-    generated = 0
+    generated = generated_bytes
     out, count, index = [], 0, 0
     while index < len(items):
         if (index % 256 == 0 or isinstance(items[index], MaskBegin)) and abort and abort():

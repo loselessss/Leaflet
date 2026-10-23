@@ -1,11 +1,16 @@
 """Alpha folding arithmetic, eligibility, bounded storage and real extraction."""
 from dataclasses import replace
+from pathlib import Path
+import pickle
+import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import pymupdf
 
-from pdfeditor.gpu_alpha import fuse_alpha_images, refine_alpha_image
+from pdfeditor.gpu_alpha import (fold_completed_alpha_scope, fuse_alpha_images,
+                                 refine_alpha_image)
 from pdfeditor.gpu_raster import (ClipPop, ClipPush, MaskBegin, MaskEnd,
                                  VectorImage, VectorPage, can_refine_images,
                                  refine_page_images, vector_page_from_pymupdf)
@@ -23,6 +28,20 @@ def alpha_pdf(rotation=0):
             doc.xref_set_key(obj, "Interpolate", "true")
         page.insert_text((3, 62), "Vector", fontsize=5)
         page.set_rotation(rotation)
+        return doc.tobytes()
+
+
+def multiple_alpha_pdf():
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=64, height=64)
+        for index in range(3):
+            pix = pymupdf.Pixmap(pymupdf.csRGB, 2, 2,
+                                 bytes((20+index, 40, 80, 255)) * 4, True)
+            pix.set_alpha(bytes((0, 64+index, 128+index, 255)))
+            xref = page.insert_image((2+20*index, 8, 20+20*index, 56), pixmap=pix)
+            mask = int(doc.xref_get_key(xref, "SMask")[1].split()[0])
+            for obj in (xref, mask):
+                doc.xref_set_key(obj, "Interpolate", "true")
         return doc.tobytes()
 
 
@@ -84,6 +103,7 @@ class AlphaImageTests(unittest.TestCase):
         self.assertEqual(cost, 12)
         self.assertEqual(len(out), 13)
         self.assertEqual(fuse_alpha_images(items, byte_limit=7)[1], 0)
+        self.assertEqual(fuse_alpha_images(items, byte_limit=12, generated_bytes=12)[1], 0)
 
     def test_conversion_failure_and_timeout(self):
         items = self.scope()
@@ -132,6 +152,78 @@ class AlphaImageTests(unittest.TestCase):
                 refined = refine_page_images(doc[0], scene, 2)
                 self.assertIsNotNone(refined)
                 self.assertEqual(refined.items, zoom.items)
+
+    def test_streaming_releases_completed_sources_under_same_budget(self):
+        data = multiple_alpha_pdf()
+        with patch("pdfeditor.gpu_raster.MAX_GPU_IMAGE_BYTES", 64), \
+                patch("pdfeditor.gpu_alpha.MAX_GPU_IMAGE_BYTES", 64), \
+                pymupdf.open(stream=data, filetype="pdf") as doc:
+            old = vector_page_from_pymupdf(doc[0], stream_alpha=False)
+            self.assertFalse(old.supported)
+            self.assertIn("image data exceeds", old.reason)
+            scene = vector_page_from_pymupdf(doc[0])
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertEqual(sum(len(x.pixels) for x in scene.items
+                                 if isinstance(x, VectorImage)), 48)
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            reference = vector_page_from_pymupdf(doc[0], stream_alpha=False)
+        self.assertEqual(scene.items, reference.items)
+
+    def test_streaming_keeps_shared_buffers_and_checks_full_scene_budget(self):
+        scope = self.scope()
+        source, mask = scope[3], scope[1]
+        def recorder():
+            return SimpleNamespace(
+                items=[mask, source, *scope], _images={"mask": (mask.pixels,),
+                "source": (source.pixels,)}, _image_bytes=8, _alpha_generated=0,
+                _abort_if_expired=lambda: False, _features=set())
+        rec = recorder()
+        with patch("pdfeditor.gpu_alpha.MAX_GPU_IMAGE_BYTES", 12):
+            fold_completed_alpha_scope(rec)
+        self.assertEqual(rec._image_bytes, 12)
+        self.assertEqual(len(rec._images), 2)  # Both referenced outside the mask.
+        self.assertEqual(len(rec.items), 5)
+        limited = recorder()
+        with patch("pdfeditor.gpu_alpha.MAX_GPU_IMAGE_BYTES", 8):
+            fold_completed_alpha_scope(limited)
+        self.assertEqual(limited.items, [mask, source, *scope])
+        self.assertEqual(limited._image_bytes, 8)
+
+    def test_streaming_preserves_ineligible_scope_and_source_indices(self):
+        with pymupdf.open(stream=multiple_alpha_pdf(), filetype="pdf") as doc:
+            baseline = vector_page_from_pymupdf(doc[0], stream_alpha=False)
+            streamed = vector_page_from_pymupdf(doc[0])
+            self.assertEqual(streamed.items, baseline.items)
+            self.assertEqual([x.refresh_key for x in streamed.items
+                              if isinstance(x, VectorImage)],
+                             [("alpha", (("mask", n), ("image", n))) for n in range(3)])
+        scope = self.scope()
+        scope = (scope[0], replace(scope[1], interpolate=False), *scope[2:])
+        rec = SimpleNamespace(items=list(scope), _alpha_generated=0)
+        fold_completed_alpha_scope(rec)
+        self.assertEqual(rec.items, list(scope))
+
+    def test_worker_full_extraction_recovers_when_image_only_refinement_hits_budget(self):
+        from pdfeditor.gpu_scene_worker import main
+        data = multiple_alpha_pdf()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source, base_path, result = (root / n for n in ("input.pdf", "base", "result"))
+            source.write_bytes(data)
+            with patch("pdfeditor.gpu_raster.MAX_GPU_IMAGE_BYTES", 64), \
+                    patch("pdfeditor.gpu_alpha.MAX_GPU_IMAGE_BYTES", 64), \
+                    pymupdf.open(stream=data, filetype="pdf") as doc:
+                base = vector_page_from_pymupdf(doc[0])
+                self.assertTrue(base.supported, base.reason)
+                self.assertIsNone(refine_page_images(doc[0], base, 2))
+                base_path.write_bytes(pickle.dumps(base))
+                main([str(source), str(result), "--scale", "2",
+                      "--base-scene", str(base_path)])
+                refreshed = pickle.loads(result.read_bytes())
+                expected = vector_page_from_pymupdf(doc[0], raster_scale=2)
+                self.assertTrue(refreshed.supported, refreshed.reason)
+                self.assertEqual(refreshed.items, expected.items)
+                self.assertEqual(refreshed.raster_scale, 2)
 
 
 if __name__ == "__main__":

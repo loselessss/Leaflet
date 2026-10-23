@@ -2,6 +2,7 @@
 
 ## Unreleased (1.37.1)
 
+- Lower GPU preparation memory by releasing intermediate alpha sources during extraction, allowing more source densities within the same image budget.
 - Reduce GPU composition and image storage by combining compatible raster alpha masks with their images. Preserve masks with different sampling rules; filtered edges may differ slightly.
 - Name the main Start menu and desktop shortcuts simply Leaflet.
 - Reduce UI preparation work and duplicate scene storage during exact GPU updates.

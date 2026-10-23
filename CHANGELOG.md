@@ -8,6 +8,7 @@
 
 ### 성능 개선
 
+- Release intermediate color/mask images as each alpha scope is combined during extraction, lowering preparation memory and keeping more source densities within the existing GPU image budget.
 - Fold compatible raster alpha masks into their color images, reducing GPU composition and image storage. Keep sharp masks with different sampling rules separate; filtered edges may differ slightly.
 - Reduce UI preparation work and duplicate scene storage during exact GPU updates.
 - Prepare worker resources only for commands selected by visible tiles, reducing unnecessary preparation on zoomed pages.

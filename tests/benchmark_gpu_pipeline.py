@@ -105,6 +105,10 @@ def main():
     parser.add_argument("--mode", choices=("direct", "sharp", "request", "scene", "completed"), default="sharp")
     parser.add_argument("--no-alpha-fusion", action="store_true",
                         help="Keep separate raster alpha masks for a baseline comparison.")
+    parser.add_argument("--no-alpha-stream", action="store_true",
+                        help="Fold alpha after extracting all images, for a baseline comparison.")
+    parser.add_argument("--raster-scale", type=float, default=1,
+                        help="Source image density bucket, independent of viewport zoom.")
     parser.add_argument("--poll-ms", type=float, default=30,
                         help="Sharp completion polling interval, matching the reader by default.")
     args = parser.parse_args()
@@ -120,6 +124,8 @@ def main():
         parser.error("library names must be unique")
     if args.repeats < 2:
         parser.error("--repeats must be at least 2")
+    if not math.isfinite(args.raster_scale) or args.raster_scale < 1:
+        parser.error("--raster-scale must be finite and at least 1")
     if not 0 < args.poll_ms <= 1000:
         parser.error("--poll-ms must be greater than 0 and at most 1000")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -134,8 +140,10 @@ def main():
     user32.DestroyWindow.argtypes = [ctypes.c_void_p]
     width, height = 1200, 900
     results = {"viewport": [width, height], "dpi": 96, "repeats": args.repeats,
-               "poll_ms": args.poll_ms if args.mode in ("sharp", "completed") else None, "raster_scale": 1,
+               "poll_ms": args.poll_ms if args.mode in ("sharp", "completed") else None,
+               "raster_scale": args.raster_scale,
                "alpha_fusion": not args.no_alpha_fusion,
+               "alpha_stream": not args.no_alpha_stream and not args.no_alpha_fusion,
                "mode": args.mode,
                "metric": {
                    "scene": "fresh retained-scene construction; immutable resources prepared outside timer (ms)",
@@ -149,8 +157,9 @@ def main():
         with pymupdf.open(filename) as pdf:
             page = pdf[0]
             page_width, page_height = page.rect.width, page.rect.height
-            scene = vector_page_from_pymupdf(page, raster_scale=1,
-                                           fuse_alpha=not args.no_alpha_fusion)
+            scene = vector_page_from_pymupdf(page, raster_scale=args.raster_scale,
+                                           fuse_alpha=not args.no_alpha_fusion,
+                                           stream_alpha=not args.no_alpha_stream)
         extraction_ms = (time.perf_counter() - started) * 1000
         if not scene.supported:
             raise RuntimeError(f"{filename}: {scene.reason}")

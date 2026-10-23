@@ -1533,6 +1533,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         self._mask_source_index = 0
         self._stencil_source_index = 0
         self._image_bytes = 0
+        self._stream_alpha = False
+        self._alpha_generated = 0
+        self._alpha_sources = None
         self._clip_depth = 0
         self._group_depth = 0
         self._group_passthrough = []
@@ -1568,6 +1571,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 self._cookie.set_abort()
             return False
         self.items.append(item)
+        if self._alpha_sources is not None:
+            self._alpha_sources.added(item)
         return True
 
     def _extend_items(self, items):
@@ -1580,6 +1585,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 self._cookie.set_abort()
             return False
         self.items.extend(items)
+        if self._alpha_sources is not None:
+            for item in items:
+                self._alpha_sources.added(item)
         return True
 
     def _image_cache_key(self, source, kind, extra=()):
@@ -1611,6 +1619,8 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         entry = (pixels, width, height, stride)
         if key is not None:
             self._images[key] = entry
+            if self._alpha_sources is not None:
+                self._alpha_sources.cached(key, entry)
         self._image_bytes += cost
         return entry
 
@@ -1891,6 +1901,12 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             return
         self._append_item(ClipPop())
         self._clip_depth -= 1
+        if self._stream_alpha and not self.failure:
+            try:
+                from .gpu_alpha import fold_completed_alpha_scope
+                fold_completed_alpha_scope(self)
+            except Exception as error:
+                self._set_failure(str(error))
 
     def _text_outlines(self, text, ctm):
         outlines = []
@@ -2366,6 +2382,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         state = self._tile_stack.pop()
         children = tuple(self.items[state.start:])
         del self.items[state.start:]
+        if self._alpha_sources is not None:
+            for child in children:
+                self._alpha_sources.removed(child)
         try:
             if not children:
                 return
@@ -2536,21 +2555,24 @@ structure are reused. Callers must reject stale document generations.
 
 def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True):
+        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True,
+        stream_alpha=True):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
     token = _extraction_work.set(({}, {}, {}))
     try:
         return _vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,
             aggressive_band_merge=aggressive_band_merge,
-            simplify_regions=simplify_regions, fuse_alpha=fuse_alpha)
+            simplify_regions=simplify_regions, fuse_alpha=fuse_alpha,
+            stream_alpha=stream_alpha)
     finally:
         _extraction_work.reset(token)
 
 
 def _vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
-        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True):
+        *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True,
+        stream_alpha=True):
     """Return a complete GPU scene only when every operation is supported."""
     rect = page.rect
     scale = max(1.0, float(raster_scale))
@@ -2560,6 +2582,7 @@ def _vector_page_from_pymupdf(
     cookie = _mupdf.FzCookie()
     device = _DisplayListDevice(
         (rect.x0, rect.y0, rect.x1, rect.y1), scale, cookie, deadline)
+    device._stream_alpha = bool(fuse_alpha and stream_alpha)
     region_device = None
     if simplify_regions:
         from .gpu_regions import RegionDevice
@@ -2608,7 +2631,8 @@ def _vector_page_from_pymupdf(
                 if fuse_alpha:
                     from .gpu_alpha import fuse_alpha_images
                     fused, count, image_bytes = fuse_alpha_images(
-                        tuple(device.items), abort=device._abort_if_expired)
+                        tuple(device.items), abort=device._abort_if_expired,
+                        generated_bytes=device._alpha_generated)
                     if count:
                         device.items = list(fused)
                         device._image_bytes = image_bytes
