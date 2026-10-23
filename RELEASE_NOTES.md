@@ -2,6 +2,8 @@
 
 ## Unreleased (1.37.1)
 
+- Hold the middle mouse button and drag to pan document views horizontally and vertically without switching tools.
+- Keep temporary files, including Outlook attachment copies, out of Recent Files on the home page and menu.
 - Lower GPU preparation memory by releasing intermediate alpha sources during extraction, allowing more source densities within the same image budget.
 - Reduce GPU composition and image storage by combining compatible raster alpha masks with their images. Preserve masks with different sampling rules; filtered edges may differ slightly.
 - Name the main Start menu and desktop shortcuts simply Leaflet.

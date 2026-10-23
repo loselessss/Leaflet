@@ -56,6 +56,7 @@ HELP_HTML = """
 <tr><td><b>마우스 휠</b></td><td>스크롤 — 페이지 끝에 닿으면 다음/이전 장으로</td></tr>
 <tr><td><b>썸네일 오른쪽 경계 드래그</b></td><td>왼쪽 미리보기 패널 너비 조절</td></tr>
 <tr><td><b>손 도구</b></td><td>PDF를 클릭한 채 드래그해 상하좌우 이동</td></tr>
+<tr><td><b>마우스 가운데 버튼 드래그</b></td><td>선택한 도구를 유지한 채 화면을 상하좌우 이동</td></tr>
 <tr><td><b>텍스트 선택 도구</b></td><td>글자를 드래그해 선택·복사</td></tr>
 <tr><td><b>★ 즐겨찾기 추가</b></td><td>현재 PDF를 즐겨찾기에 추가하거나 해제</td></tr>
 </table>
@@ -221,6 +222,7 @@ PDF or PDF-compatible Illustrator files onto the window.</p>
 <tr><td><b>Click / drag the blue thumbnail marker</b></td><td>Jump to or continuously pan around a zoomed page</td></tr>
 <tr><td><b>Ctrl+click</b></td><td>Follow an internal link or open a web or email link in the default app</td></tr>
 <tr><td><b>Hand tool</b></td><td>Click and drag to pan</td></tr>
+<tr><td><b>Middle mouse button + drag</b></td><td>Pan horizontally and vertically while keeping the current tool</td></tr>
 <tr><td><b>Text selection tool</b></td><td>Drag across text to select it</td></tr>
 <tr><td><b>Ctrl+Shift+2</b></td><td>Toggle two-page view</td></tr>
 <tr><td><b>F11</b></td><td>Toggle full screen in the reader</td></tr>

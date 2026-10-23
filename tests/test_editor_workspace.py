@@ -582,6 +582,39 @@ class EditorWorkspaceTests(unittest.TestCase):
         QTest.keyClick(view, Qt.Key_Escape)
         self.assertIsNone(controller.current())
 
+    def test_middle_pan_preserves_selected_object_and_undo_history(self):
+        from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt5.QtGui import QMouseEvent
+        tab = self.open_editor()
+        controller = tab._object_controller
+        controller.add("rectangle")
+        self.settle()
+        view = tab.view
+        view.preview_zoom(4)
+        rect = tuple(controller.current()["rect"])
+        center = QPointF((rect[0]+rect[2])/2, (rect[1]+rect[3])/2)
+        scene_center = view._page_transforms[0].map(center)
+        view.centerOn(scene_center)
+        start = view.mapFromScene(scene_center)
+        selected, count = controller.selected, len(tab._undo_stack)
+        before = view.horizontalScrollBar().value(), view.verticalScrollBar().value()
+        self.assertGreater(before[0], 25)
+        self.assertGreater(before[1], 15)
+        for kind, pos, button, buttons in (
+                (QEvent.MouseButtonPress, start, Qt.MiddleButton, Qt.MiddleButton),
+                (QEvent.MouseMove, start + QPoint(25, 15), Qt.NoButton, Qt.MiddleButton),
+                (QEvent.MouseButtonRelease, start + QPoint(25, 15), Qt.MiddleButton, Qt.NoButton)):
+            event = QMouseEvent(kind, QPointF(pos), QPointF(view.viewport().mapToGlobal(pos)),
+                                button, buttons, Qt.NoModifier)
+            self.application.sendEvent(view.viewport(), event)
+        self.assertEqual((view.horizontalScrollBar().value(), view.verticalScrollBar().value()),
+                         (before[0]-25, before[1]-15))
+        self.assertEqual(controller.selected, selected)
+        self.assertEqual(tuple(controller.current()["rect"]), rect)
+        self.assertIsNone(controller.drag)
+        self.assertEqual(len(tab._undo_stack), count)
+        self.assertEqual(view.canvas.interaction_mode, "select")
+
     def test_image_eight_handles_ratio_resize_and_undo(self):
         import fitz
         from PyQt5.QtCore import QPointF, QEvent, Qt

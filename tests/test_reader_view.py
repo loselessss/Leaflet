@@ -519,6 +519,86 @@ class ReaderViewTests(unittest.TestCase):
         self.view.ensure_rect_visible(rect)
         self.assertTrue(self.view._visible_scene_rect().contains(QRectF(2800, 5120, 160, 120)))
 
+    def test_middle_drag_moves_both_axes_and_preserves_tool_and_selection(self):
+        from PyQt5.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
+        from PyQt5.QtGui import QMouseEvent
+        from PyQt5.QtTest import QSignalSpy
+        self.view.preview_zoom(2)
+        selected = [QRectF(50, 60, 80, 20)]
+        self.view.canvas.set_selection(selected)
+        cleared = QSignalSpy(self.view.canvas.selection_cleared)
+        clicked = QSignalSpy(self.view.canvas.clicked)
+        linked = QSignalSpy(self.view.canvas.ctrl_clicked)
+        for mode, cursor, press in (("select", Qt.IBeamCursor, QEvent.MouseButtonPress),
+                                    ("hand", Qt.OpenHandCursor, QEvent.MouseButtonPress),
+                                    ("select", Qt.IBeamCursor, QEvent.MouseButtonDblClick)):
+            with self.subTest(mode=mode):
+                self.view.set_interaction_mode(mode)
+                self.view.centerOn(600, 700)
+                h, v = self.view.horizontalScrollBar(), self.view.verticalScrollBar()
+                before = h.value(), v.value()
+                start = self.view.viewport().rect().center()
+                for kind, pos, button, buttons in (
+                        (press, start, Qt.MiddleButton, Qt.MiddleButton),
+                        (QEvent.MouseMove, start + QPoint(30, 20), Qt.NoButton, Qt.MiddleButton),
+                        (QEvent.MouseButtonRelease, start + QPoint(30, 20), Qt.MiddleButton, Qt.NoButton)):
+                    event = QMouseEvent(kind, QPointF(pos),
+                                        QPointF(self.view.viewport().mapToGlobal(pos)),
+                                        button, buttons, Qt.ControlModifier)
+                    self.app.sendEvent(self.view.viewport(), event)
+                    if kind == press:
+                        self.assertEqual(self.view.viewport().cursor().shape(), Qt.ClosedHandCursor)
+                self.assertEqual((h.value(), v.value()), (before[0]-30, before[1]-20))
+                self.assertEqual(self.view.canvas.interaction_mode, mode)
+                self.assertEqual(self.view.viewport().cursor().shape(), cursor)
+                self.assertEqual(self.view.canvas._sel_rects, selected)
+        self.assertEqual((len(cleared), len(clicked), len(linked)), (0, 0, 0))
+
+    def test_middle_drag_bypasses_editor_object_controller(self):
+        from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt
+        from PyQt5.QtGui import QMouseEvent
+        self.view.preview_zoom(2)
+        self.view.centerOn(600, 700)
+        controller = Mock(drag=None)
+        controller.mouse.return_value = True  # An active editor tool consumes input.
+        self.view.object_controller = controller
+        before = self.view.horizontalScrollBar().value(), self.view.verticalScrollBar().value()
+        start = self.view.viewport().rect().center()
+        try:
+            for name, kind, pos, button, buttons in (
+                    ("mousePressEvent", QEvent.MouseButtonPress, start, Qt.MiddleButton, Qt.MiddleButton),
+                    ("mouseMoveEvent", QEvent.MouseMove, start + QPoint(25, 15), Qt.NoButton, Qt.MiddleButton),
+                    ("mouseReleaseEvent", QEvent.MouseButtonRelease, start + QPoint(25, 15), Qt.MiddleButton, Qt.NoButton)):
+                event = QMouseEvent(kind, QPointF(pos),
+                                    QPointF(self.view.viewport().mapToGlobal(pos)),
+                                    button, buttons, Qt.NoModifier)
+                getattr(self.view, name)(event)
+            controller.mouse.assert_not_called()
+            self.assertEqual((self.view.horizontalScrollBar().value(),
+                              self.view.verticalScrollBar().value()),
+                             (before[0]-25, before[1]-15))
+        finally:
+            del self.view.object_controller
+
+    def test_middle_pan_ends_on_focus_loss_and_only_its_button_releases_it(self):
+        from PyQt5.QtCore import QEvent, QPointF, Qt
+        from PyQt5.QtGui import QFocusEvent, QMouseEvent
+        start = self.view.viewport().rect().center()
+        def send(kind, button, buttons):
+            event = QMouseEvent(kind, QPointF(start),
+                                QPointF(self.view.viewport().mapToGlobal(start)),
+                                button, buttons, Qt.NoModifier)
+            self.app.sendEvent(self.view.viewport(), event)
+        send(QEvent.MouseButtonPress, Qt.MiddleButton, Qt.MiddleButton)
+        send(QEvent.MouseButtonRelease, Qt.LeftButton, Qt.MiddleButton)
+        self.assertTrue(self.view.canvas.is_panning)
+        self.view.focusOutEvent(QFocusEvent(QEvent.FocusOut))
+        self.assertFalse(self.view.canvas.is_panning)
+        self.assertEqual(self.view.viewport().cursor().shape(), Qt.IBeamCursor)
+        send(QEvent.MouseButtonPress, Qt.MiddleButton, Qt.MiddleButton)
+        send(QEvent.MouseMove, Qt.NoButton, Qt.NoButton)  # A release was lost outside the window.
+        self.assertFalse(self.view.canvas.is_panning)
+
     def test_hide_clear_and_document_change_cancel_pending_tiles(self):
         self.view._plan_tiles()
         self.assertTrue(self.view._pending)

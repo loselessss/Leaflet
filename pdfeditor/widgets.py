@@ -267,6 +267,7 @@ class PageCanvas(QWidget):
         self._dragged = False
         self._interaction_mode = "select"
         self._pan_last_global = None
+        self._pan_button = Qt.NoButton
         self.setCursor(Qt.IBeamCursor)
         self.setMouseTracking(True)  # 버튼 안 눌러도 hovered가 오도록
 
@@ -306,6 +307,7 @@ class PageCanvas(QWidget):
         self._edit_boxes = []
         self._drag_start = None
         self._pan_last_global = None
+        self._pan_button = Qt.NoButton
         self.resize(QSize(0, 0))
         self.refresh_cursor()
         self.update()
@@ -333,10 +335,22 @@ class PageCanvas(QWidget):
         self._interaction_mode = mode
         self._drag_start = None
         self._pan_last_global = None
+        self._pan_button = Qt.NoButton
         self.refresh_cursor()
+
+    @property
+    def is_panning(self):
+        return self._pan_last_global is not None
+
+    def cancel_pan(self):
+        if self.is_panning:
+            self._pan_last_global = None
+            self._pan_button = Qt.NoButton
+            self.refresh_cursor()
 
     def refresh_cursor(self):
         self.setCursor(
+            Qt.ClosedHandCursor if self.is_panning else
             Qt.OpenHandCursor if self._interaction_mode == "hand"
             else Qt.IBeamCursor)
 
@@ -409,6 +423,17 @@ class PageCanvas(QWidget):
         return point
 
     def mousePressEvent(self, ev):
+        if self.is_panning:
+            ev.accept()
+            return
+        if ev.button() == Qt.MiddleButton and self._pix is not None:
+            self._drag_start = None
+            self._dragged = False
+            self._pan_button = Qt.MiddleButton
+            self._pan_last_global = ev.globalPos()
+            self.refresh_cursor()
+            ev.accept()
+            return
         if ev.button() == Qt.LeftButton and self._pix is not None:
             point = self._activate_at(ev.pos())
             if point is None:
@@ -416,6 +441,7 @@ class PageCanvas(QWidget):
             if (self._interaction_mode == "hand" and
                     not (ev.modifiers() & Qt.ControlModifier)):
                 self._pan_last_global = ev.globalPos()
+                self._pan_button = Qt.LeftButton
                 self.setCursor(Qt.ClosedHandCursor)
                 ev.accept()
                 return
@@ -425,6 +451,10 @@ class PageCanvas(QWidget):
 
     def mouseMoveEvent(self, ev):
         if self._pan_last_global is not None:
+            if not (ev.buttons() & self._pan_button):
+                self.cancel_pan()
+                ev.accept()
+                return
             current = ev.globalPos()
             self.pan_requested.emit(current - self._pan_last_global)
             self._pan_last_global = current
@@ -439,12 +469,12 @@ class PageCanvas(QWidget):
                 self.hovered.emit(target[1], ev.globalPos())
 
     def mouseReleaseEvent(self, ev):
+        if self.is_panning:
+            if ev.button() == self._pan_button:
+                self.cancel_pan()
+            ev.accept()
+            return
         if ev.button() == Qt.LeftButton:
-            if self._pan_last_global is not None:
-                self._pan_last_global = None
-                self.refresh_cursor()
-                ev.accept()
-                return
             # 드래그 없이 눌렀다 뗀 것만 '클릭' — 선택 드래그와 구분한다.
             if self._drag_start is not None and self._dragged:
                 target = self._page_point(ev.pos())
@@ -461,7 +491,14 @@ class PageCanvas(QWidget):
                         self.clicked.emit(target[1])
             self._drag_start = None
 
+    def focusOutEvent(self, event):
+        self.cancel_pan()
+        super().focusOutEvent(event)
+
     def mouseDoubleClickEvent(self, ev):
+        if ev.button() == Qt.MiddleButton:
+            self.mousePressEvent(ev)
+            return
         if ev.button() == Qt.LeftButton and self._pix is not None and \
                 self._interaction_mode == "select":
             point = self._activate_at(ev.pos())

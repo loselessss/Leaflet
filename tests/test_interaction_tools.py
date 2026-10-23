@@ -66,6 +66,42 @@ class InteractionToolTests(unittest.TestCase):
         self.assertEqual(canvas.height(), 2)
         canvas.close()
 
+    def test_middle_drag_pans_scrolling_canvas_without_clearing_selection(self):
+        from PyQt5.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
+        from PyQt5.QtGui import QImage, QMouseEvent
+        from PyQt5.QtTest import QSignalSpy
+        from pdfeditor.widgets import PageView
+        view = PageView()
+        image = QImage(1000, 1000, QImage.Format_RGB888)
+        image.fill(Qt.white)
+        view.set_image(image)
+        view.resize(240, 240)
+        view.show()
+        self.app.processEvents()
+        h, v = view.horizontalScrollBar(), view.verticalScrollBar()
+        h.setValue(200)
+        v.setValue(200)
+        selection = [QRectF(100, 100, 20, 20)]
+        view.canvas.set_selection(selection)
+        cleared = QSignalSpy(view.canvas.selection_cleared)
+        start = view.canvas.mapToGlobal(QPoint(300, 300))
+        try:
+            for kind, delta, button, buttons in (
+                    (QEvent.MouseButtonPress, QPoint(), Qt.MiddleButton, Qt.MiddleButton),
+                    (QEvent.MouseMove, QPoint(30, 20), Qt.NoButton, Qt.MiddleButton),
+                    (QEvent.MouseMove, QPoint(45, 35), Qt.NoButton, Qt.MiddleButton),
+                    (QEvent.MouseButtonRelease, QPoint(45, 35), Qt.MiddleButton, Qt.NoButton)):
+                global_pos = start + delta
+                event = QMouseEvent(kind, QPointF(view.canvas.mapFromGlobal(global_pos)),
+                                    QPointF(global_pos), button, buttons, Qt.NoModifier)
+                self.app.sendEvent(view.canvas, event)
+            self.assertEqual((h.value(), v.value()), (155, 165))
+            self.assertEqual(len(cleared), 0)
+            self.assertEqual(view.canvas._sel_rects, selection)
+            self.assertEqual(view.canvas.cursor().shape(), Qt.IBeamCursor)
+        finally:
+            view.close()
+
     def test_two_page_canvas_keeps_page_coordinates_independent(self):
         from PyQt5.QtCore import QPoint
         from PyQt5.QtGui import QImage

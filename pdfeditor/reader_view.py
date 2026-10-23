@@ -1525,7 +1525,13 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def _forward_mouse(self, name, event):
         controller = getattr(self, "object_controller", None)
-        if controller is not None and controller.mouse(name, event):
+        pan_event = (self.canvas.is_panning or event.button() == Qt.MiddleButton
+                     or bool(event.buttons() & Qt.MiddleButton))
+        if (controller is not None and name in ("mousePressEvent", "mouseDoubleClickEvent")
+                and event.button() == Qt.MiddleButton and controller.drag):
+            controller.cancel()
+            controller.refresh()
+        if controller is not None and not pan_event and controller.mouse(name, event):
             event.accept()
             return
         point = self.mapToScene(event.pos())
@@ -1561,6 +1567,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         super().keyReleaseEvent(event)
 
     def focusOutEvent(self, event):
+        self.canvas.cancel_pan()
         controller = getattr(self, "object_controller", None)
         if controller is not None:
             controller.restore_hand()
@@ -1573,7 +1580,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         controller = getattr(self, "object_controller", None)
         if controller is not None:
             controller.hovered = None
-            self.viewport().unsetCursor()
+            if not self.canvas.is_panning:
+                self.viewport().unsetCursor()
             self.viewport().update()
         super().leaveEvent(event)
 
@@ -1623,6 +1631,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._schedule_page_prefetch()
 
     def hideEvent(self, event):
+        self.canvas.cancel_pan()
         self.stop_rendering()
         self._release_d2d_surface()
         super().hideEvent(event)

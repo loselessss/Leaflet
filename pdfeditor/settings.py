@@ -51,14 +51,48 @@ def _save(data):
             os.remove(temporary)
 
 
+def _temporary_file_roots():
+    roots = [tempfile.gettempdir(), os.environ.get("TEMP"), os.environ.get("TMP")]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.extend(os.path.join(local, *parts) for parts in (
+            ("Temp",), ("Microsoft", "Windows", "INetCache"),
+            ("Microsoft", "Windows", "Temporary Internet Files")))
+    windows = os.environ.get("WINDIR")
+    if windows:
+        roots.append(os.path.join(windows, "Temp"))
+    return tuple(os.path.normcase(os.path.abspath(root)) for root in roots if root)
+
+
+def _is_temporary_file(path, roots):
+    normalized = os.path.normcase(os.path.abspath(path))
+    return any(normalized == root or normalized.startswith(root.rstrip(os.sep) + os.sep)
+               for root in roots)
+
+
+def _recent_non_temporary(paths, roots=None):
+    if roots is None:
+        roots = _temporary_file_roots()
+    return [path for path in paths
+            if isinstance(path, str) and not _is_temporary_file(path, roots)]
+
+
 def recent_files():
-    return list(_load().get("recent", []))
+    # Filter older settings too, without making opening a menu write settings.
+    return _recent_non_temporary(_load().get("recent", []))
 
 
 def push_recent(path):
     path = os.path.abspath(path)
     d = _load()
-    rest = [p for p in d.get("recent", [])
+    roots = _temporary_file_roots()
+    recent = _recent_non_temporary(d.get("recent", []), roots)
+    if _is_temporary_file(path, roots):
+        if recent != d.get("recent", []):
+            d["recent"] = recent
+            _save(d)
+        return
+    rest = [p for p in recent
             if os.path.normcase(p) != os.path.normcase(path)]
     d["recent"] = [path] + rest[:MAX_RECENT - 1]
     _save(d)

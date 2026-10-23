@@ -4,6 +4,8 @@
 
 ### 개선
 
+- Pan the reader and editor document views horizontally and vertically by holding the middle mouse button and dragging, while keeping the selected tool and existing selection.
+- Exclude files in temporary folders, including Outlook attachment caches, from Recent Files and filter existing temporary entries from the home page and menu.
 - Name the main Start menu and desktop shortcuts simply Leaflet.
 
 ### 성능 개선

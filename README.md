@@ -69,6 +69,7 @@ panel directly with the X button in its header.
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Delete / Arrow keys / Shift+Arrow keys | Delete / move / move farther with an object selected on the editor canvas |
 | Esc / Hold Space | Cancel a gesture or clear object selection / temporarily pan in the editor |
+| Middle mouse button + drag | Pan the document horizontally and vertically without changing tools |
 | F1 | Help |
 
 ## Development

@@ -28,6 +28,9 @@ class FileHistoryTests(unittest.TestCase):
         self.old_patch = patch.object(settings, "_OLD_PATH", str(self.root / "absent.json"))
         self.settings_patch.start()
         self.old_patch.start()
+        # These disposable fixtures represent ordinary document locations.
+        self.enterContext(patch.object(settings, "_temporary_file_roots", return_value=(
+            os.path.normcase(str(self.root / "system-temp")),)))
         settings.push_recent(self.other)
         settings.push_recent(self.path)
         settings.add_favorite(self.path)
@@ -147,3 +150,22 @@ class FileHistoryTests(unittest.TestCase):
         warning.assert_called_once()
         self.assert_retained()
         self.assertEqual(Path(self.path).read_bytes(), b"not a PDF")
+
+    def test_existing_temporary_entries_are_hidden_on_home_and_recent_menu(self):
+        temporary = str(self.root / "system-temp" / "outlook" / "attachment.pdf")
+        data = settings._load()
+        data["recent"].insert(0, temporary)
+        settings._save(data)
+        self.window.refresh_start_page()
+        self.assertEqual(self.window._start_page.recent_list.count(), 2)
+        import pymupdf
+        with pymupdf.open() as pdf:
+            pdf.new_page()
+            pdf.save(self.other)
+        tab = self.window.open_recent(self.other)
+        for _ in range(4):
+            self.app.processEvents()
+        tab._rebuild_recent_menu()
+        paths = [a.toolTip() for a in tab._recent_menu.actions()]
+        self.assertIn(self.other, paths)
+        self.assertNotIn(temporary, paths)

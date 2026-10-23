@@ -1,9 +1,86 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from pdfeditor import settings
+
+
+class RecentFileSettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.temp = self.root / "Temp"
+        self.cache = self.root / "Local" / "Microsoft" / "Windows" / "INetCache"
+        self.real_roots = settings._temporary_file_roots
+        for name, value in (("PATH", str(self.root / "settings.json")),
+                            ("_OLD_PATH", str(self.root / "absent.json"))):
+            self.enterContext(patch.object(settings, name, value))
+        self.enterContext(patch.object(settings, "_temporary_file_roots", return_value=(
+            os.path.normcase(str(self.temp)), os.path.normcase(str(self.cache)))))
+
+    def test_temporary_open_does_not_enter_history_or_displace_documents(self):
+        for index in range(settings.MAX_RECENT):
+            settings.push_recent(str(self.root / f"document{index}.pdf"))
+        before = settings._load()
+        for temporary in (self.temp / "attachment.pdf",
+                          self.cache / "Content.Outlook" / "ABC123" / "mail.pdf"):
+            settings.push_recent(str(temporary))
+        self.assertEqual(settings._load(), before)
+        self.assertEqual(len(settings.recent_files()), settings.MAX_RECENT)
+
+    def test_old_temporary_entries_are_hidden_and_cleaned_on_next_open(self):
+        keep = str(self.root / "Documents" / "report.pdf")
+        temporary = str(self.temp / "old.pdf")
+        outlook = str(self.cache / "Content.Outlook" / "ABC123" / "mail.pdf")
+        settings._save({"recent": [temporary, keep, outlook],
+                        "favorites": [temporary], "custom": {"value": 42}})
+        with patch.object(settings, "_save") as save:
+            self.assertEqual(settings.recent_files(), [keep])
+            save.assert_not_called()
+        settings.push_recent(outlook)
+        self.assertEqual(settings._load(), {"recent": [keep],
+                         "favorites": [temporary], "custom": {"value": 42}})
+        new = str(self.root / "Documents" / "new.pdf")
+        settings.push_recent(new)
+        self.assertEqual(settings.recent_files(), [new, keep])
+        settings.push_recent(keep)
+        self.assertEqual(settings.recent_files(), [keep, new])
+
+    def test_similar_names_and_ordinary_temp_named_folders_are_kept(self):
+        paths = [self.root / "Temp-archive" / "saved.pdf",
+                 self.root / "Documents" / "temp" / "report.pdf",
+                 self.root / "Documents" / "template.pdf",
+                 self.cache.parent / "INetCache-backup" / "saved.pdf"]
+        for path in paths:
+            settings.push_recent(str(path))
+        self.assertEqual(settings.recent_files(), [str(p) for p in reversed(paths)])
+
+    def test_detects_runtime_windows_and_outlook_cache_roots(self):
+        runtime = str(self.root / "runtime-temp")
+        local = self.root / "Local"
+        with patch.dict(os.environ, {"TEMP": str(self.temp),
+                                    "TMP": str(self.root / "other-temp"),
+                                    "LOCALAPPDATA": str(local),
+                                    "WINDIR": str(self.root / "Windows")}), \
+                patch.object(settings.tempfile, "gettempdir", return_value=runtime):
+            roots = self.real_roots()
+        for folder in (Path(runtime), self.temp, self.root / "other-temp",
+                       local / "Temp", self.cache,
+                       local / "Microsoft" / "Windows" / "Temporary Internet Files",
+                       self.root / "Windows" / "Temp"):
+            with self.subTest(folder=folder):
+                self.assertTrue(settings._is_temporary_file(str(folder / "file.pdf"), roots))
+        self.assertFalse(settings._is_temporary_file(str(local / "Documents" / "file.pdf"), roots))
+
+    @unittest.skipUnless(os.name == "nt", "Windows path normalization")
+    def test_windows_case_slashes_and_parent_segments(self):
+        path = str(self.temp / "folder" / ".." / "mail.pdf").upper().replace("\\", "/")
+        settings.push_recent(path)
+        self.assertEqual(settings.recent_files(), [])
+        self.assertFalse(Path(settings.PATH).exists())
 
 
 class AutomaticUpdateScheduleTests(unittest.TestCase):
