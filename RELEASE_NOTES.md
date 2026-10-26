@@ -1,17 +1,12 @@
 # Leaflet Release Notes
 
-## Unreleased (1.37.1)
+## 1.37.1 - 2026-10-26
 
-- Reduce high-zoom GPU image memory by preparing visible image regions with up to one screen of margin on each side, preserving vector text and paths.
-- Hold the middle mouse button and drag to pan document views horizontally and vertically without switching tools.
-- Keep temporary files, including Outlook attachment copies, out of Recent Files on the home page and menu.
-- Lower GPU preparation memory by releasing intermediate alpha sources during extraction, allowing more source densities within the same image budget.
-- Reduce GPU composition and image storage by combining compatible raster alpha masks with their images. Preserve masks with different sampling rules; filtered edges may differ slightly.
+- Improve high-zoom GPU rendering by preparing visible image regions and nearby areas in advance, reducing image memory while keeping text and paths sharp.
+- Reduce preparation time, memory use and transparency composition work for complex PDFs. Some illustration colors and filtered edges may differ slightly; use CPU mode when exact appearance matters.
+- Pan reader and editor views horizontally and vertically by holding the middle mouse button and dragging, without switching tools.
+- Exclude temporary files, including Outlook attachment copies, from Recent Files on the home page and menu.
 - Name the main Start menu and desktop shortcuts simply Leaflet.
-- Reduce UI preparation work and duplicate scene storage during exact GPU updates.
-- Prepare worker resources only for commands selected by visible tiles, reducing unnecessary preparation on zoomed pages.
-- Plan temporary GPU surface lifetimes per tile and allocate bounded texture-array storage in batches, reducing repeated allocation during exact composition.
-- Reduce preparation and drawing work for small complex illustrations by compiling bounded transparent sources. Surrounding text stays vector; use CPU mode when illustration color and edge fidelity matters.
 
 ## 1.37.0 - 2026-10-21
 
