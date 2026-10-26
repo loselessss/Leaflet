@@ -154,6 +154,7 @@ class VectorPage:
     items: tuple = ()
     features: tuple = ()
     raster_scale: float = 1.0
+    viewport: tuple = None
 
     @property
     def drawables(self):
@@ -1543,6 +1544,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         self._tile_stack = []
         self._page_rect = tuple(float(value) for value in page_rect)
         self._features = set()
+        self._viewport = None
+        self._cropped_images = {}
+        self._pending_image_crop = None
         self._raster_scale = max(1.0, float(raster_scale))
         self._cookie = cookie
         self._deadline = deadline
@@ -1570,6 +1574,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             if self._cookie is not None:
                 self._cookie.set_abort()
             return False
+        if self._viewport is not None and isinstance(item, VectorImage):
+            from .gpu_viewport import cropped_image
+            item = cropped_image(item, self._cropped_images)
         self.items.append(item)
         if self._alpha_sources is not None:
             self._alpha_sources.added(item)
@@ -1584,6 +1591,9 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             if self._cookie is not None:
                 self._cookie.set_abort()
             return False
+        if self._viewport is not None:
+            from .gpu_viewport import cropped_image
+            items = tuple(cropped_image(item, self._cropped_images) for item in items)
         self.items.extend(items)
         if self._alpha_sources is not None:
             for item in items:
@@ -1604,6 +1614,10 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         factor = _image_downsample_factor(
             width, height, ctm, self._raster_scale)
         width, height = _downsampled_size(width, height, factor)
+        if self._viewport is not None and not self._tile_stack:
+            from .gpu_viewport import image_crop
+            x0, y0, x1, y1 = image_crop(width, height, _matrix(ctm), self._viewport)
+            width, height = x1 - x0, y1 - y0
         estimated = width * height * 4
         if estimated > MAX_GPU_IMAGE_BYTES or \
                 self._image_bytes + estimated > MAX_GPU_IMAGE_BYTES:
@@ -1616,6 +1630,10 @@ class _DisplayListDevice(_mupdf.FzDevice2):
         if cost > MAX_GPU_IMAGE_BYTES or \
                 self._image_bytes + cost > MAX_GPU_IMAGE_BYTES:
             raise ValueError("page image data exceeds GPU scene limit")
+        self._cropped_images.pop(id(pixels), None)
+        if self._pending_image_crop is not None:
+            self._cropped_images[id(pixels)] = self._pending_image_crop
+            self._pending_image_crop = None
         entry = (pixels, width, height, stride)
         if key is not None:
             self._images[key] = entry
@@ -1623,6 +1641,19 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 self._alpha_sources.cached(key, entry)
         self._image_bytes += cost
         return entry
+
+    def _crop_image_pixmap(self, pixmap, ctm):
+        self._pending_image_crop = None
+        if self._viewport is None or self._tile_stack:
+            return pixmap
+        from .gpu_viewport import crop_pixmap
+        pixmap, self._pending_image_crop = crop_pixmap(
+            pixmap, _matrix(ctm), self._viewport)
+        return pixmap
+
+    def _viewport_image_key(self, ctm):
+        return ((bool(self._tile_stack), *_matrix(ctm))
+                if self._viewport is not None else ())
 
     def _downsample_pixmap(self, pixmap, ctm):
         factor = _image_downsample_factor(
@@ -2025,7 +2056,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             source.thisown = False
             factor = _image_downsample_factor(
                 int(source.w()), int(source.h()), ctm, self._raster_scale)
-            key = self._image_cache_key(source, "image", (factor,))
+            key = self._image_cache_key(source, "image", (factor, *self._viewport_image_key(ctm)))
             self._reserve_image_bytes(source, key, ctm)
             cached = self._images.get(key) if key is not None else None
             if cached is None:
@@ -2045,6 +2076,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                     # PDF images may be Gray/CMYK/ICC-based; Direct2D receives BGRA.
                     pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
                 pixmap = self._downsample_pixmap(pixmap, ctm)
+                pixmap = self._crop_image_pixmap(pixmap, ctm)
                 if pixmap.n == 3 and not pixmap.alpha:
                     bgra = _rgb_to_bgra(pixmap.samples, pixmap.width, pixmap.height)
                 elif pixmap.n == 4 and pixmap.alpha:
@@ -2136,7 +2168,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 colorspace, color, 1.0, color_params)
             factor = _image_downsample_factor(
                 int(source.w()), int(source.h()), ctm, self._raster_scale)
-            key = self._image_cache_key(source, "stencil", (argb, factor))
+            key = self._image_cache_key(source, "stencil", (argb, factor, *self._viewport_image_key(ctm)))
             self._reserve_image_bytes(source, key, ctm)
             cached = self._images.get(key) if key is not None else None
             if cached is None:
@@ -2145,6 +2177,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 if pixmap.n != 1 or not pixmap.alpha:
                     raise ValueError("decoded stencil is not an alpha mask")
                 pixmap = self._downsample_pixmap(pixmap, ctm)
+                pixmap = self._crop_image_pixmap(pixmap, ctm)
                 bgra = _alpha_to_premul_bgra(pixmap.samples, argb)
                 cached = self._store_image_bytes(
                     key, bytes(bgra), pixmap.width, pixmap.height,
@@ -2166,7 +2199,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             transform = _matrix(ctm)
             factor = _image_downsample_factor(
                 int(source.w()), int(source.h()), ctm, self._raster_scale)
-            key = self._image_cache_key(source, "clip-mask", (factor,))
+            key = self._image_cache_key(source, "clip-mask", (factor, *self._viewport_image_key(ctm)))
             self._reserve_image_bytes(source, key, ctm)
             cached = self._images.get(key) if key is not None else None
             if cached is None:
@@ -2175,6 +2208,7 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 if pixmap.n != 1 or not pixmap.alpha:
                     raise ValueError("decoded clip mask is not an alpha mask")
                 pixmap = self._downsample_pixmap(pixmap, ctm)
+                pixmap = self._crop_image_pixmap(pixmap, ctm)
                 samples = pixmap.samples
                 if samples and samples.count(255) == len(samples):
                     self._features.add("opaque-image-mask")
@@ -2459,7 +2493,7 @@ def refine_page_images(page, scene, raster_scale, timeout_seconds=None):
 Only image callbacks are subscribed. Paths, glyphs, gradients and composite
 structure are reused. Callers must reject stale document generations.
 """
-    if not can_refine_images(scene):
+    if getattr(scene, "viewport", None) is not None or not can_refine_images(scene):
         return None
     scale = max(1.0, float(raster_scale))
     if scale <= scene.raster_scale:
@@ -2556,7 +2590,7 @@ structure are reused. Callers must reject stale document generations.
 def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
         *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True,
-        stream_alpha=True):
+        stream_alpha=True, viewport=None):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
     token = _extraction_work.set(({}, {}, {}))
     try:
@@ -2564,7 +2598,7 @@ def vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,
             aggressive_band_merge=aggressive_band_merge,
             simplify_regions=simplify_regions, fuse_alpha=fuse_alpha,
-            stream_alpha=stream_alpha)
+            stream_alpha=stream_alpha, viewport=viewport)
     finally:
         _extraction_work.reset(token)
 
@@ -2572,16 +2606,22 @@ def vector_page_from_pymupdf(
 def _vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
         *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True,
-        stream_alpha=True):
+        stream_alpha=True, viewport=None):
     """Return a complete GPU scene only when every operation is supported."""
     rect = page.rect
     scale = max(1.0, float(raster_scale))
     deadline = None
     if timeout_seconds is not None:
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    if viewport is not None:
+        from .gpu_viewport import validate_viewport
+        viewport = validate_viewport(viewport, rect)
     cookie = _mupdf.FzCookie()
     device = _DisplayListDevice(
         (rect.x0, rect.y0, rect.x1, rect.y1), scale, cookie, deadline)
+    if viewport is not None:
+        device._viewport = viewport
+        device._features.add("viewport-images")
     device._stream_alpha = bool(fuse_alpha and stream_alpha)
     region_device = None
     if simplify_regions:
@@ -2659,4 +2699,4 @@ def _vector_page_from_pymupdf(
     return VectorPage(
         True, paths, items=items,
         features=tuple(sorted(device._features)),
-        raster_scale=scale)
+        raster_scale=scale, viewport=viewport)

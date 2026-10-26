@@ -53,6 +53,101 @@ class ReaderViewTests(unittest.TestCase):
         self.app.processEvents()
         self.directory.cleanup()
 
+    def test_pan_guard_prepares_before_detail_becomes_blurry(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._apply_preview_zoom(8.0)
+        self.view.stop_rendering()
+        self.view.horizontalScrollBar().setValue(1600)
+        self.view.verticalScrollBar().setValue(1600)
+        base = VectorPage(True, features=("image-downsample",))
+        self.view._vector_pages[0] = base
+        self.view._render_mode = "gpu"
+        visible = self.view._gpu_visible_region(0)
+        region = self.view._gpu_visible_region(0, padded=True)
+        self.assertAlmostEqual(region[2]-region[0], 3*(visible[2]-visible[0]))
+        detail = VectorPage(True, raster_scale=8, viewport=region)
+        self.view._vector_viewport_pages[0] = detail
+        self.view._schedule_vector_refine()
+        self.assertEqual(self.view._vector_refine_pages, [])
+        self.view.horizontalScrollBar().setValue(
+            self.view.horizontalScrollBar().value() + round(self.view.viewport().width()*.75))
+        self.assertIs(self.view._display_vector_scene(0), detail)
+        self.assertFalse(self.view._viewport_scene_covers(0, detail, guard=True))
+        self.view._schedule_vector_refine()
+        self.assertEqual(self.view._vector_refine_pages, [0])
+        self.view._vector_refine_timer.start(15)
+        self.view._schedule_vector_refine(120)
+        self.assertLessEqual(self.view._vector_refine_timer.remainingTime(), 15)
+
+    def test_high_zoom_worker_receives_region_without_whole_page_cache_key(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._apply_preview_zoom(8.0)
+        self.view.stop_rendering()
+        self.view._vector_refine_scale = 8
+        self.view._vector_pages[0] = VectorPage(True, features=("image-downsample",))
+        process = Mock(returncode=1)
+        process.poll.return_value = 1
+        with patch("pdfeditor.reader_view.subprocess.Popen", return_value=process) as launch:
+            self.view._start_vector_refine_worker(0)
+        args = launch.call_args.args[0]
+        self.assertIn("--viewport", args)
+        self.assertNotIn("--disk-cache-key", args)
+        self.assertNotIn("--base-scene", args)
+        region = self.view._vector_refine_job["viewport"]
+        index = args.index("--viewport")
+        self.assertEqual(tuple(float(v) for v in args[index+1:index+5]), region)
+        self.view._stop_vector_refine_worker()
+
+    def test_high_zoom_viewport_scene_pan_falls_back_and_requeues(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._apply_preview_zoom(8.0)
+        self.view.stop_rendering()
+        base = VectorPage(True, features=("image-downsample",))
+        self.view._vector_pages[0] = base
+        self.view._render_mode = "gpu"
+        region = self.view._gpu_visible_region(0, padded=True)
+        detail = VectorPage(True, raster_scale=8, viewport=region)
+        self.view._vector_viewport_pages[0] = detail
+        self.assertIs(self.view._display_vector_scene(0), detail)
+        self.view._schedule_vector_refine()
+        self.assertEqual(self.view._vector_refine_pages, [])
+        self.view.horizontalScrollBar().setValue(
+            self.view.horizontalScrollBar().value() + 800)
+        self.assertIs(self.view._display_vector_scene(0), base)
+        self.view._schedule_vector_refine()
+        self.assertEqual(self.view._vector_refine_pages, [0])
+        self.assertNotEqual(self.view._gpu_visible_region(0, padded=True), region)
+        self.view.clear()
+        self.assertFalse(self.view._vector_viewport_pages)
+
+    def test_completed_viewport_scene_is_view_owned_and_can_be_revisited(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view._apply_preview_zoom(8.0)
+        self.view.stop_rendering()
+        base = VectorPage(True, features=("image-downsample",))
+        self.view._vector_pages[0] = base
+        region = self.view._gpu_visible_region(0, padded=True)
+        detail = VectorPage(True, raster_scale=8, viewport=region)
+        directory = tempfile.mkdtemp()
+        result = Path(directory) / "result.pickle"
+        result.write_bytes(pickle.dumps(detail))
+        generation = self.doc.render_generation
+        key = (generation, 0, 8, region)
+        self.view._vector_refine_attempted.add(key)
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        self.view._vector_refine_process = process
+        self.view._vector_refine_job = dict(
+            document=self.doc, generation=generation, page=0, scale=8,
+            viewport=region, directory=directory, result=str(result))
+        with patch.object(self.doc, "install_gpu_vector_page") as install, \
+                patch.object(self.view, "_schedule_page_prefetch"):
+            self.view._poll_vector_refine_worker()
+            install.assert_not_called()
+        self.assertNotIn(key, self.view._vector_refine_attempted)
+        self.assertIs(self.view._vector_pages[0], base)
+        self.assertEqual(self.view._display_vector_scene(0), detail)
+
     def test_density_refresh_keeps_page_zoom_and_scene(self):
         from pdfeditor.dpi_refresh import refresh_widget_layout
         self.view.zoom = 1.25

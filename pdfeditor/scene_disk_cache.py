@@ -11,7 +11,7 @@ import zlib
 
 MAX_DECODED = 256 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 13
+SCENE_FORMAT_VERSION = 14
 
 
 def _limit():
@@ -212,6 +212,8 @@ def load(cache_key, page=None):
 
 
 def save(cache_key, scene):
+    if getattr(scene, "viewport", None) is not None:
+        return
     if cache_key is None or not scene.supported or not _limit():
         return
     db = None

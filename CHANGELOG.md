@@ -10,6 +10,7 @@
 
 ### 성능 개선
 
+- Keep high-zoom GPU image storage bounded by preparing only the visible image regions and up to one screen of margin on each side. Text and paths remain vector; approaching the prepared boundary starts replacement early, with a bounded area on large displays.
 - Release intermediate color/mask images as each alpha scope is combined during extraction, lowering preparation memory and keeping more source densities within the existing GPU image budget.
 - Fold compatible raster alpha masks into their color images, reducing GPU composition and image storage. Keep sharp masks with different sampling rules separate; filtered edges may differ slightly.
 - Reduce UI preparation work and duplicate scene storage during exact GPU updates.

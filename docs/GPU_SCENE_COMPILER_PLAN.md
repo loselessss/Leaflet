@@ -36,6 +36,7 @@
 
 ## 4. 구조 안정화 이후의 개선
 
+- [고배율 영역 이미지 준비](GPU_VIEWPORT_IMAGE_BENCHMARK_2026-10-26.md): 소스 bucket 4 이상에서 보이는 영역과 이동 여유분만 고해상도 이미지로 준비한다. ACB2019 800%·1600%·3200% 영역 장면을 기존 64MiB 한도 안에서 GPU로 그렸고, 영역 장면은 전체 페이지 캐시와 분리한다. 형식 14, 앱 1.37.1 및 ABI 24 유지. 아래 bucket 4 한계는 이 변경 이전의 전체 페이지 추출 결과다.
 - [알파 소스 수명 단축](GPU_ALPHA_SOURCE_LIFETIME_BENCHMARK_2026-10-23.md)으로 이미지·마스크 결합을 각 범위 종료 시점으로 옮기고 다른 명령이 참조하지 않는 중간 소스만 해제했다. ACB 2019의 source bucket 2가 기존 64MiB 예산에서 GPU 추출 가능해졌으며 최종 픽셀 입력은 약 56.52MiB다. 같은 bucket 1 화면은 이전 결과와 byte 일치했고, 추출·직렬화 별도 프로세스 3회 peak RSS 중앙값은 320.61→308.19MiB였다. 더 높은 bucket의 최종 자원 자체가 작아지는 변경은 아니며 4배 bucket은 한도에 걸린다. scene format 13, 앱/설치 프로그램 미배포 1.37.1과 ABI 24를 유지한다.
 - [래스터 알파 결합 비교](GPU_ALPHA_IMAGE_FUSION_BENCHMARK_2026-10-23.md)에서 보간 방식이 같은 단일 이미지 마스크를 BGRA 소스에 합쳤다. ACB 2019 마스크 23개를 없애 준비된 맞춤 그리기·readback/end_frame 중앙값은 63.68→22.70ms, 별도 peak RSS 관찰은 약 114MiB 낮았다. 추가 변환을 포함한 첫 화면은 1.346→1.350초로 거의 같다. 보간 방식이 다른 ACB 2015 마스크는 유지한다. 필터링 경계는 소폭 달라지며 두 원본 이미지 callback recipe로 확대 갱신한다. scene format은 12로 바꾸고 ABI 24를 유지했다.
 - 후속 [작은 복합 삽화 소스 컴파일](GPU_COMPLEX_REGION_COMPILER_BENCHMARK_2026-10-23.md)을 기본 GPU 장면 추출에 적용했다. 작은 isolated knockout 후보만 원래 callback에서 기록하고 복잡한 경우 그 그룹 자체를 투명 이미지로 바꾸며, 주변 글자·배경·clip·후속 객체는 기존 GPU 순서로 유지한다. 전체 사전 조사와 전체 페이지 crop 덮어쓰기를 사용하지 않는다. 새 소스는 장면당 64개/8MiB와 기존 전체 이미지 예산을 공유한다. ACB 2015 새 PDF부터 준비·upload·정밀 완료까지 7회 중앙값은 3.06→1.87초, 별도 peak RSS는 약 160MiB 낮았다. 색·AA 차이를 허용한 변경이며 2019 화면은 byte 일치했다. scene format은 11로 바꿨고 ABI 24는 유지한다.

@@ -18,6 +18,7 @@ def main(argv=None):
     parser.add_argument("--page", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--aggressive-band-merge", action="store_true")
+    parser.add_argument("--viewport", type=float, nargs=4)
     parser.add_argument("--base-scene")
     parser.add_argument("--disk-cache-key")
     args = parser.parse_args(argv)
@@ -27,11 +28,11 @@ def main(argv=None):
         page = document[args.page]
         started = time.monotonic()
         scene = None
-        if args.disk_cache_key:
+        if args.disk_cache_key and not args.viewport:
             from .scene_disk_cache import load
             scene = load(args.disk_cache_key, page)
         cache_hit = scene is not None
-        if scene is None and args.base_scene:
+        if scene is None and args.base_scene and not args.viewport:
             # This file is written by our parent into the private worker job.
             with open(args.base_scene, "rb") as stream:
                 base = pickle.load(stream)
@@ -41,8 +42,8 @@ def main(argv=None):
             scene = vector_page_from_pymupdf(
                 page, args.scale,
                 timeout_seconds=max(0.0, args.timeout - (time.monotonic() - started)),
-                aggressive_band_merge=args.aggressive_band_merge)
-        if args.disk_cache_key and scene.supported and not cache_hit:
+                aggressive_band_merge=args.aggressive_band_merge, viewport=args.viewport)
+        if args.disk_cache_key and not args.viewport and scene.supported and not cache_hit:
             from .scene_disk_cache import save
             save(args.disk_cache_key, scene)
     finally:

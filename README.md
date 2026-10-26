@@ -31,6 +31,7 @@ Press **F1** for the full usage guide.
   Small complex isolated illustrations are compiled into bounded transparent images at the requested zoom quality; surrounding text remains vector. Illustration colors and edges can differ, so use CPU mode for a fidelity check.
   Compatible raster alpha masks are folded into their images to reduce composition and memory. Different sampling rules remain separate; filtered image edges may differ slightly.
   Completed alpha sources are released during preparation, keeping more source densities within the bounded GPU image budget.
+  At high zoom, prepare only visible image regions with up to one screen of margin on each side; text and paths stay vector. New regions replace the previous detail scene in the background as you pan.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,
   then move or resize them. Select existing direct PDF images to move, resize, or delete them.
   Magnetic alignment snaps moving objects to page/object edges and centers; toggle it in

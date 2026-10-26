@@ -416,6 +416,8 @@ class Document:
     def install_gpu_vector_page(self, index, scene, *, persist=True, background=False,
                                 speculative=False):
         """Install a scene produced from the current page snapshot."""
+        if getattr(scene, "viewport", None) is not None:
+            return None  # View-owned crops must never enter the whole-page cache.
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
         key = (index, float(scene.raster_scale), aggressive_band_merge)
         if speculative and (self._gpu_vector_cache_bytes + _gpu_scene_cost(scene) >

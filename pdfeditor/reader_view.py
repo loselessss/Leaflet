@@ -135,6 +135,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._d2d_previews = {}
         self._d2d_tiles = {}
         self._vector_pages = {}
+        self._vector_viewport_pages = {}
         self._d2d_vector_paths = {}
         self._reported_render_device = None
         self._rasterized_pages = {}
@@ -228,7 +229,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             return {"mode": "cpu", "reason": "Direct2D WARP",
                     "features": ()}
         if self._d2d_requested:
-            scene = self._vector_pages.get(page)
+            scene = self._display_vector_scene(page)
             if scene is None:
                 return {"mode": "pending", "reason": "scene pending",
                         "features": ()}
@@ -307,7 +308,51 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._vector_pages[page] = refreshed
         return refreshed
 
+    def _gpu_visible_region(self, page, padded=False, guard=False):
+        transform = self._page_transforms.get(page)
+        if transform is None or page not in self._page_sizes:
+            return None
+        inverse, valid = transform.inverted()
+        if not valid:
+            return None
+        width, height = self._page_sizes[page]
+        region = inverse.mapRect(self._visible_scene_rect()).intersected(
+            QRectF(0, 0, width, height))
+        if region.isEmpty():
+            return None
+        if padded or guard:
+            # One screen on each side (3x3 screens total), bounded by a
+            # 12-million-pixel projected area before page clipping.
+            scale = self._vector_raster_scale()
+            visible = inverse.mapRect(self._visible_scene_rect())
+            pixels = max(1.0, visible.width() * visible.height() * scale * scale)
+            margin = max(0.0, min(1.0, (math.sqrt(12_000_000 / pixels) - 1) / 2))
+            if guard:
+                margin *= .4  # Start replacement while 40% of the margin remains.
+            dx, dy = visible.width() * margin, visible.height() * margin
+            region = visible.adjusted(-dx, -dy, dx, dy)
+            region = region.intersected(QRectF(0, 0, width, height))
+        return (region.left(), region.top(), region.right(), region.bottom())
+
+    def _viewport_scene_covers(self, page, scene, guard=False):
+        coverage = getattr(scene, "viewport", None)
+        visible = self._gpu_visible_region(page, guard=guard)
+        return (coverage is not None and visible is not None and
+                coverage[0] <= visible[0] + 1e-6 and
+                coverage[1] <= visible[1] + 1e-6 and
+                coverage[2] >= visible[2] - 1e-6 and
+                coverage[3] >= visible[3] - 1e-6)
+
+    def _display_vector_scene(self, page):
+        detail = self._vector_viewport_pages.get(page)
+        if detail is not None and self._viewport_scene_covers(page, detail):
+            return detail
+        return self._vector_pages.get(page)
+
     def _schedule_vector_refine(self, delay=VECTOR_SCENE_REFINE_DELAY_MS):
+        remaining = self._vector_refine_timer.remainingTime()
+        if remaining >= 0:
+            delay = min(delay, remaining)  # Continuous dragging must not starve preparation.
         self._vector_refine_timer.stop()
         self._vector_refine_pages.clear()
         self._vector_refine_document = self._document
@@ -321,7 +366,16 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             if scene is None:
                 continue
             generation = getattr(self._document, "render_generation", 0)
-            key = (generation, page, self._vector_refine_scale)
+            region = (self._gpu_visible_region(page, padded=True)
+                      if self._vector_refine_scale >= 4 else None)
+            if self._vector_refine_scale >= 4 and region is None:
+                continue
+            detail = self._vector_viewport_pages.get(page)
+            if (detail is not None and detail.raster_scale >= self._vector_refine_scale
+                    and self._viewport_scene_covers(page, detail, guard=True)):
+                continue
+            key = ((generation, page, self._vector_refine_scale, region)
+                   if region is not None else (generation, page, self._vector_refine_scale))
             deferred = (
                 self._render_mode in ("auto", "gpu") and not scene.supported and
                 scene.reason in ("GPU scene awaiting first frame",
@@ -379,8 +433,13 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         started = time.perf_counter()
         scale = self._vector_refine_scale
         generation = getattr(self._document, "render_generation", 0)
-        key = (generation, page, scale)
+        region = (self._gpu_visible_region(page, padded=True)
+                  if scale >= 4 and not speculative else None)
+        key = ((generation, page, scale, region) if region is not None
+               else (generation, page, scale))
         if not speculative:
+            if len(self._vector_refine_attempted) >= 512:
+                self._vector_refine_attempted.clear()
             self._vector_refine_attempted.add(key)
         directory = tempfile.mkdtemp(prefix="spdf-gpu-scene-")
         snapshot_path = os.path.join(directory, "page.pdf")
@@ -392,14 +451,17 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             arguments = [snapshot_path, result_path, "--scale", str(scale),
                          "--page", str(worker_page),
                          "--timeout", str(DEFERRED_GPU_SCENE_TIMEOUT_SECONDS)]
-            cache_key = self._document.gpu_scene_disk_cache_key(page, scale)
+            if region is not None:
+                arguments.extend(["--viewport", *(str(v) for v in region)])
+            cache_key = (None if region is not None else
+                         self._document.gpu_scene_disk_cache_key(page, scale))
             if cache_key:
                 arguments.extend(("--disk-cache-key", cache_key))
             from .gpu_raster import can_refine_images
             base = self._vector_pages.get(page)
             if speculative and base is None:
                 base = self._document.cached_gpu_vector_page(page, 1.0, memory_only=True)
-            if can_refine_images(base) and base.raster_scale < scale:
+            if region is None and can_refine_images(base) and base.raster_scale < scale:
                 from dataclasses import replace
                 from .gpu_raster import VectorImage
                 # Refinement regenerates pixels; send only the scene recipe.
@@ -431,7 +493,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         except Exception as error:
             shutil.rmtree(directory, ignore_errors=True)
             if not speculative:
-                self._finish_failed_vector_refine(page)
+                if region is None:
+                    self._finish_failed_vector_refine(page)
                 self.render_failed.emit(str(error))
             else:
                 self._schedule_page_prefetch()
@@ -442,6 +505,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._vector_refine_job = {
             "document": self._document, "generation": generation,
             "page": page, "scale": scale, "directory": directory,
+            "viewport": region,
             "result": result_path,
             "disk_cache_key": cache_key,
             "speculative": speculative,
@@ -521,19 +585,32 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         scale_matches = (job["scale"] == self._vector_raster_scale() or
                          (usable and
                           "image-downsample" not in scene.features))
-        if current and usable:
+        if usable and job.get("viewport") is not None:
+            # Successful crops are replaceable; revisiting an evicted region
+            # must be allowed to request it again.
+            self._vector_refine_attempted.discard((
+                job["generation"], job["page"], job["scale"], job["viewport"]))
+        if current and usable and getattr(scene, "viewport", None) is None:
             document.install_gpu_vector_page(
                 job["page"], scene, persist=not job.get("disk_cache_key"),
                 background=True)
         if current and usable and scale_matches:
-            self._discard_native_vector_page(job["page"])
-            self._vector_pages[job["page"]] = scene
+            if getattr(scene, "viewport", None) is not None:
+                previous = self._vector_viewport_pages.get(job["page"])
+                if (self._viewport_scene_covers(job["page"], scene) or
+                        not self._viewport_scene_covers(job["page"], previous)):
+                    self._discard_native_vector_page(job["page"])
+                    self._vector_viewport_pages[job["page"]] = scene
+            else:
+                self._discard_native_vector_page(job["page"])
+                self._vector_pages[job["page"]] = scene
             self.viewport().update()
-        elif current and not usable:
+        elif current and not usable and job.get("viewport") is None:
             self._finish_failed_vector_refine(job["page"])
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
 
+        self._schedule_vector_refine()
         self._schedule_page_prefetch()
 
     def _finish_failed_vector_refine(self, page):
@@ -1047,7 +1124,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             transform = self._page_transforms[page]
             self._set_page_transform(transform)
             width, height = self._page_sizes[page]
-            vector_scene = self._vector_pages.get(page)
+            vector_scene = self._display_vector_scene(page)
             if vector_scene is not None and vector_scene.supported:
                 self._draw_vector_page(page, vector_scene)
                 rasterized[page] = ("CPU+GPU" if
@@ -1124,6 +1201,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 bitmap.close()
             self._d2d_previews.clear()
             self._vector_pages.clear()
+            self._vector_viewport_pages.clear()
             for _scene, _draws, resources, retained in tuple(
                     self._d2d_vector_paths.values()):
                 if retained is not None:
@@ -1149,6 +1227,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 self._previews[page] = QPixmap.fromImage(image)
         # Document invalidation owns the scene cache. Ask it on every refresh
         # so an edit on the same page cannot leave stale native geometry here.
+        self._vector_viewport_pages.clear()
         self._vector_pages = {
             page: self._gpu_vector_page(document, page) for page in pages
         } if self._d2d_requested else {}
@@ -1341,6 +1420,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self.viewport().update()
         self.viewport_changed.emit()
         self._schedule_refine()
+        if self._vector_raster_scale() >= 4:
+            self._schedule_vector_refine()
 
     def _plan_tiles(self):
         self._pending.clear()
@@ -1359,7 +1440,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             visible = rect.intersected(exposed)
             if visible.isEmpty():
                 continue
-            vector_scene = self._vector_pages.get(page)
+            vector_scene = self._display_vector_scene(page)
             if self._d2d_requested and vector_scene is not None and vector_scene.supported:
                 continue
             inverse, _valid = self._page_transforms[page].inverted()
@@ -1485,6 +1566,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._page_transforms.clear()
         self._rotations.clear()
         self._vector_pages.clear()
+        self._vector_viewport_pages.clear()
         self._clear_tiles()
         self.canvas.clear()
         self.setSceneRect(QRectF())

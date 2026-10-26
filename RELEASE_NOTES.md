@@ -2,6 +2,7 @@
 
 ## Unreleased (1.37.1)
 
+- Reduce high-zoom GPU image memory by preparing visible image regions with up to one screen of margin on each side, preserving vector text and paths.
 - Hold the middle mouse button and drag to pan document views horizontally and vertically without switching tools.
 - Keep temporary files, including Outlook attachment copies, out of Recent Files on the home page and menu.
 - Lower GPU preparation memory by releasing intermediate alpha sources during extraction, allowing more source densities within the same image budget.

@@ -49,8 +49,9 @@ class RegionDevice(_mupdf.FzDevice2):
             return False
         area = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
         scale = self.recorder._raster_scale * REGION_OVERSAMPLE
-        cost = (math.ceil((box[2] - box[0]) * scale) + 4) * (
-            math.ceil((box[3] - box[1]) * scale) + 4) * 4
+        raster_box = self._raster_box(box)
+        cost = (math.ceil((raster_box[2] - raster_box[0]) * scale) + 4) * (
+            math.ceil((raster_box[3] - raster_box[1]) * scale) + 4) * 4
         from .gpu_raster import MAX_GPU_IMAGE_BYTES
         return (0 < area <= page_area * MAX_REGION_PAGE_FRACTION
                 and cost <= MAX_REGION_BYTES - self.region_bytes
@@ -135,12 +136,21 @@ class RegionDevice(_mupdf.FzDevice2):
             capture["list"], self.recorder, _mupdf.FzMatrix(),
             _mupdf.FzRect(_mupdf.FzRect.Fixed_INFINITE), self.recorder._cookie or _mupdf.FzCookie())
 
+    def _raster_box(self, box):
+        viewport = self.recorder._viewport
+        if viewport is None:
+            return box
+        x0, y0 = max(box[0], viewport[0]), max(box[1], viewport[1])
+        x1, y1 = min(box[2], viewport[2]), min(box[3], viewport[3])
+        # Offscreen groups need no expanded geometry or full raster allocation.
+        return (x0, y0, max(x0, x1), max(y0, y1))
+
     def _rasterize(self, capture):
         from .gpu_raster import MAX_GPU_IMAGE_BYTES, VectorImage
         if self.recorder._abort_if_expired():
             return None
         scale = self.recorder._raster_scale * REGION_OVERSAMPLE
-        x0, y0, x1, y1 = capture["bbox"]
+        x0, y0, x1, y1 = self._raster_box(capture["bbox"])
         left, top = math.floor(x0 * scale) - 1, math.floor(y0 * scale) - 1
         right, bottom = math.ceil(x1 * scale) + 1, math.ceil(y1 * scale) + 1
         width, height = right - left, bottom - top
