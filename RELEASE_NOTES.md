@@ -1,6 +1,6 @@
 # Leaflet Release Notes
 
-## Unreleased (1.37.2)
+## 1.37.2 - 2026-10-28
 
 - Use a dedicated left-sidebar icon for the panel button so its purpose stays clear, including when the panel is hidden.
 
