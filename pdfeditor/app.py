@@ -666,7 +666,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self.build_artboard_action(v)
         v.addSeparator()
         sidebar_menu = v.addMenu("왼쪽 패널")
-        sidebar_menu.setIcon(fluent_icon("pages"))
+        sidebar_menu.setIcon(fluent_icon("sidebar_left"))
         self._sidebar_group = QActionGroup(self)
         self._sidebar_group.setExclusive(True)
         self._sidebar_actions = {}
@@ -683,7 +683,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             self._sidebar_actions[mode] = action
         self._sidebar_cycle_act = _make_action(
             self, "왼쪽 패널 전환", "Ctrl+Shift+B",
-            self.cycle_sidebar_mode, "pages")
+            self.cycle_sidebar_mode, "sidebar_left")
         v.addAction(self._sidebar_cycle_act)
         v.addSeparator()
         self._presentation_act = self._act(
@@ -755,7 +755,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             self._sidebar_button = QToolButton(tool_bar)
             self._sidebar_button.setObjectName("sidebarRibbonButton")
             self._sidebar_button.setText(tr("왼쪽 패널"))
-            self._sidebar_button.setIcon(fluent_icon("pages"))
+            self._sidebar_button.setIcon(fluent_icon("sidebar_left"))
             self._sidebar_button.setIconSize(QSize(20, 20))
             self._sidebar_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
             self._sidebar_button.setToolTip(tr("왼쪽 패널"))

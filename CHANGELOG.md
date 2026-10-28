@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.37.2)
+
+### 개선
+
+- Use a dedicated left-sidebar icon for the panel button so its purpose stays clear, including when the panel is hidden.
+
 ## 1.37.1 - 2026-10-26
 
 ### 개선

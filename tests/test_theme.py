@@ -59,7 +59,7 @@ class FluentThemeTests(unittest.TestCase):
             "license", "magnet", "merge", "new_tab", "new_window", "note", "notes",
             "object_select", "ocr", "open", "pages", "power", "presentation", "print", "recent", "rectangle", "redo",
             "rotate_ccw", "rotate_cw", "save", "save_as", "search",
-            "select_all", "settings", "split", "star", "star_filled",
+            "select_all", "settings", "sidebar_left", "split", "star", "star_filled",
             "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out",
         }
         self.assertEqual(AVAILABLE_ICONS, expected)

@@ -373,16 +373,9 @@ class ViewerMixin(NavigationMixin):
                 localize(
                     "Left panel: %s (click to cycle)",
                     "왼쪽 패널: %s (클릭하여 전환)") % labels[mode])
-            self._sidebar_cycle_act.setIcon(fluent_icon({
-                "none": "close", "thumbnails": "pages",
-                "bookmarks": "notes",
-            }[mode]))
+            self._sidebar_cycle_act.setIcon(fluent_icon("sidebar_left"))
         if hasattr(self, "_sidebar_button"):
-            icon_name = {
-                "none": "close", "thumbnails": "pages",
-                "bookmarks": "notes",
-            }[mode]
-            self._sidebar_button.setIcon(fluent_icon(icon_name))
+            self._sidebar_button.setIcon(fluent_icon("sidebar_left"))
             self._sidebar_button.setToolTip(localize(
                 "Choose the left panel (current: %s)",
                 "왼쪽 패널 선택 (현재: %s)") % labels[mode])

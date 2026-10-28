@@ -10,7 +10,7 @@ AVAILABLE_ICONS = frozenset({
     "hand", "help", "highlight", "info", "license", "merge", "new_tab",
     "new_window", "note", "notes", "ocr", "open", "pages", "power",
     "presentation", "print", "recent", "redo", "rotate_ccw", "rotate_cw", "save", "save_as",
-    "image", "magnet", "object_select", "rectangle", "search", "select_all", "settings", "split", "star", "star_filled",
+    "image", "magnet", "object_select", "rectangle", "search", "select_all", "settings", "sidebar_left", "split", "star", "star_filled",
     "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out",
 })
 
@@ -334,6 +334,13 @@ def fluent_icon(name, color="#424242", size=20):
         line(13.8, 3.5, 16.5, 6.2)
         line(13.8, 3.5, 4.8, 12.5)
         line(4.8, 12.5, 4.0, 16.0)
+    elif name == "sidebar_left":
+        # Keep the panel metaphor visible even when the sidebar is hidden.
+        fill = QColor(color)
+        fill.setAlpha(55)
+        painter.fillRect(QRectF(3.0, 4.0, 4.5, 12.0), fill)
+        painter.drawRoundedRect(QRectF(2.5, 3.5, 15.0, 13.0), 1.2, 1.2)
+        line(7.5, 3.5, 7.5, 16.5)
     elif name == "pages":
         painter.drawRoundedRect(QRectF(5.0, 2.5, 10.5, 13.0), 1.2, 1.2)
         painter.drawRoundedRect(QRectF(2.8, 5.0, 10.5, 12.5), 1.2, 1.2)

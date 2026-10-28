@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.2)
+
+- Use a dedicated left-sidebar icon for the panel button so its purpose stays clear, including when the panel is hidden.
+
 ## 1.37.1 - 2026-10-26
 
 - Improve high-zoom GPU rendering by preparing visible image regions and nearby areas in advance, reducing image memory while keeping text and paths sharp.
