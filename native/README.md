@@ -19,6 +19,24 @@ The build also uses the Windows SDK's x64 `fxc.exe` to compile
 `d2d_renderer/mask_lerp.hlsl` into an ignored header in `native/bin`. The shader
 bytecode is embedded in the DLL; runtime shader compilation is not required.
 
+## Rust path packing
+
+`path_packer/` contains a small PyO3 extension, separate from the Direct2D DLL.
+Install Rust with the MSVC x64 toolchain and run
+`python native/build_path_packer.py` with the application virtual environment.
+Cargo must be on PATH. The build uses the committed Cargo.lock (`--locked`),
+records compiler/dependency versions and notices under `native/bin`, and copies
+the ABI3 Python 3.12+ extension to `pdfeditor/_path_packer.pyd`. Generated binaries
+are ignored. `build_exe.bat` builds both native modules; release builds require
+the extension. Source-only development retains the Python implementation.
+
+The packer writes one 28-byte little-endian record per command, with float64 to
+float32 rounding matching the existing ctypes path. It does not simplify paths,
+change the renderer ABI, release the GIL while reading Python objects, or retain
+page data. The bytearray is owned through the synchronous Direct2D call.
+The renderer still creates and owns its geometries. See
+`docs/RUST_PATH_PACKER_BENCHMARK_2026-10-31.md` for comparisons.
+
 ## Current ABI
 
 ABI version 24 can:

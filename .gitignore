@@ -14,6 +14,8 @@ test-*.log
 /dist/
 /Output/
 /native/bin/
+/pdfeditor/_path_packer*.pyd
+/native/path_packer/target/
 
 # OCR 모델 (설치본 빌드 시 rapidocr 패키지에서 가져옴 — 리포에 두지 않음)
 *.onnx

@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.3)
+
+- Reduce GPU scene preparation time by packing path coordinates in native code, preserving existing rendering quality.
+
 ## 1.37.2 - 2026-10-28
 
 - Use a dedicated left-sidebar icon for the panel button so its purpose stays clear, including when the panel is hidden.

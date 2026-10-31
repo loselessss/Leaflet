@@ -32,6 +32,47 @@ class _PathCommand(Structure):
     _fields_ = [("type", c_uint32), ("points", c_float * 6)]
 
 
+try:
+    from ._path_packer import COMMAND_BYTES, pack_path as _rust_pack_path
+except ImportError:
+    _rust_pack_path = None
+else:
+    # The renderer ABI is little-endian, with six float32 coordinate slots.
+    if COMMAND_BYTES != ctypes.sizeof(_PathCommand) or sys.byteorder != "little":
+        _rust_pack_path = None
+
+
+def _python_path_array(commands):
+    kinds = {"move": 1, "line": 2, "cubic": 3, "close": 4}
+    expected = {"move": 2, "line": 2, "cubic": 6, "close": 0}
+    native_commands = []
+    for command in commands:
+        kind, values = command[0], command[1:]
+        if kind not in kinds or len(values) != expected.get(kind):
+            raise ValueError("invalid Direct2D path command")
+        item = _PathCommand()
+        item.type = kinds[kind]
+        for index, value in enumerate(values):
+            item.points[index] = float(value)
+        native_commands.append(item)
+    if not native_commands:
+        raise ValueError("Direct2D path cannot be empty")
+    return (_PathCommand * len(native_commands))(*native_commands)
+
+
+def _path_array(commands):
+    if _rust_pack_path is not None and isinstance(commands, tuple):
+        try:
+            buffer = _rust_pack_path(commands)
+        except TypeError:
+            # Preserve the legacy API for lists and float-convertible objects.
+            return _python_path_array(commands)
+        # from_buffer owns a reference to the bytearray until the synchronous
+        # renderer call returns; it does not copy the packed coordinate data.
+        return (_PathCommand * len(commands)).from_buffer(buffer)
+    return _python_path_array(commands)
+
+
 class _Transform(Structure):
     _fields_ = [
         ("m11", c_float), ("m12", c_float),
@@ -283,24 +324,10 @@ class D2DSurface:
         """
         if self.closed:
             raise RuntimeError("Direct2D surface is closed")
-        kinds = {"move": 1, "line": 2, "cubic": 3, "close": 4}
-        native_commands = []
-        expected = {"move": 2, "line": 2, "cubic": 6, "close": 0}
-        for command in commands:
-            kind, values = command[0], command[1:]
-            if kind not in kinds or len(values) != expected.get(kind):
-                raise ValueError("invalid Direct2D path command")
-            item = _PathCommand()
-            item.type = kinds[kind]
-            for index, value in enumerate(values):
-                item.points[index] = float(value)
-            native_commands.append(item)
-        if not native_commands:
-            raise ValueError("Direct2D path cannot be empty")
-        array = (_PathCommand * len(native_commands))(*native_commands)
+        array = _path_array(commands)
         handle = c_void_p()
         result = self._library.spdf_d2d_create_path(
-            self._handle, array, len(native_commands), bool(even_odd),
+            self._handle, array, len(array), bool(even_odd),
             byref(handle))
         _check_hresult(result, "Direct2D path creation")
         path = D2DPath(self, handle)

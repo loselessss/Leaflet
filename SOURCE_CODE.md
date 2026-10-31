@@ -41,7 +41,11 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    The inventory includes transitive dependencies. Using `--no-deps` preserves
    the selected headless OpenCV wheel instead of adding the regular wheel
    requested by RapidOCR's metadata; both variants provide the same `cv2` import.
-3. Run `python ci_test_runner.py`. Install Inno Setup 6 at the location documented
+3. Install Rust (MSVC x64, Cargo on PATH) and Visual Studio C++ Build Tools.
+   Run `python native/build_path_packer.py`, then `python ci_test_runner.py`.
+   The Rust build uses `native/path_packer/Cargo.lock`; exact crate source links,
+   checksums, compiler version and notices are in `third-party/rust/`.
+   Install Inno Setup 6 at the location documented
    by `build_installer.bat`.
 4. Run `build_exe.bat`, then `build_installer.bat`. Run with the virtual
    environment's Python on PATH. Outputs appear in `dist/` and `Output/`.
@@ -54,6 +58,9 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
 `third-party/build-requirements.txt`의 패키지 버전을 사용합니다. 모든 하위 의존성이
 기록되어 있으므로 `pip install --no-deps -r`로 설치하여 OpenCV 일반판과 경량판이
 함께 설치되지 않도록 합니다.
+Rust(MSVC x64)와 C++ 빌드 도구를 설치하고 Cargo를 PATH에 추가한 뒤
+`python native/build_path_packer.py`로 확장을 먼저 빌드합니다. Rust 의존성은
+Cargo.lock에 고정되며 실제 컴파일러·원본 고지·소스 링크는 `third-party/rust/`에 기록됩니다.
 테스트 후 `build_exe.bat` → `build_installer.bat` 순서로 실행하세요.
 라이브러리 자체를 수정하려면 해당 소스의 빌드 설명을 따라 새 패키지를 만든 뒤
 Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.

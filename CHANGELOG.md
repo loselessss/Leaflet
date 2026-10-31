@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.37.3)
+
+### 성능 개선
+
+- Pack GPU path coordinates in a Rust extension to reduce native scene preparation time and temporary Python objects while preserving identical renderer input. Development environments without the extension retain the Python fallback.
+
 ## 1.37.2 - 2026-10-28
 
 ### 개선

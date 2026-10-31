@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 
@@ -59,6 +60,11 @@ def write_legal_bundle(target, root=None):
     root = Path(root or Path(__file__).resolve().parent)
     target.mkdir(parents=True, exist_ok=False)
     packages = collect_distributions(metadata.distributions(), target)
+    rust_legal = root / "native" / "bin" / "path-packer-legal"
+    if (root / "pdfeditor" / "_path_packer.pyd").is_file():
+        if not (rust_legal / "dependencies.json").is_file():
+            raise FileNotFoundError("Rebuild the Rust path packer to generate its notices")
+        shutil.copytree(rust_legal, target / "rust")
     try:
         commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL).strip()

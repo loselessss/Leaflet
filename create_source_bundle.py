@@ -168,6 +168,9 @@ def prepare_source_release(root, version):
         raise ValueError("Unsupported Python source version")
     records.append({"name": "Python", "version": python_version, "sha256": None,
                     "url": "https://www.python.org/ftp/python/%s/Python-%s.tar.xz" % (python_version, python_version)})
+    rust_inventory = legal / "rust" / "dependencies.json"
+    if rust_inventory.is_file():
+        records.extend(json.loads(rust_inventory.read_text(encoding="utf-8")))
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(check_source_access, records))
     document = dependency_document(version, records)

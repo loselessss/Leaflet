@@ -38,6 +38,8 @@ d2d_renderer = spec_root / "native" / "bin" / "spdf_d2d_renderer.dll"
 if not d2d_renderer.is_file():
     raise FileNotFoundError(
         "Direct2D renderer is missing; run native\\build_d2d_renderer.bat first")
+if not (spec_root / "pdfeditor" / "_path_packer.pyd").is_file():
+    raise FileNotFoundError("Rust path packer is missing; run native/build_path_packer.py first")
 
 # --- OCR 워커: onnxruntime/rapidocr/cv2, PyQt5 제외 ---
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
@@ -96,7 +98,7 @@ a_gui = Analysis(
            ("assets/spdf_doc.ico", "assets"),
            ("assets/leaflet_ai.ico", "assets"),
            ("assets/leaflet_eps.ico", "assets")] + legal_datas,
-    hiddenimports=["pdfeditor", "fitz", "pdfeditor.gpu_scene_worker"],
+    hiddenimports=["pdfeditor", "fitz", "pdfeditor.gpu_scene_worker", "pdfeditor._path_packer"],
     excludes=["rapidocr", "onnxruntime", "cv2", "onnx", "tensorrt", "paddle",
               "tkinter", "matplotlib", "PIL.AvifImagePlugin"],
 )

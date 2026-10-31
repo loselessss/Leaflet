@@ -9,6 +9,9 @@ python make_icons.py || goto :err
 echo === Building Direct2D renderer ===
 call native\build_d2d_renderer.bat || goto :err
 
+echo === Building Rust path packer ===
+python native\build_path_packer.py || goto :err
+
 echo === Cleaning previous build ===
 if exist build rmdir /s /q build
 if exist dist\Leaflet rmdir /s /q dist\Leaflet

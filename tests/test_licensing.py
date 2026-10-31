@@ -143,6 +143,12 @@ class LicensingTests(unittest.TestCase):
                                         for name in ("pymupdf", "PyQt5", "PyQt5-Qt5")]}
             inventory = legal / "build-environment.json"
             inventory.write_text(json.dumps(environment), encoding="utf-8")
+            rust = legal / "rust"
+            rust.mkdir()
+            rust_record = {"name": "pyo3", "version": "0.27.2",
+                           "url": "https://crates.io/api/v1/crates/pyo3/0.27.2/download",
+                           "sha256": "b" * 64}
+            (rust / "dependencies.json").write_text(json.dumps([rust_record]), encoding="utf-8")
             def git(command, **kwargs):
                 if command[1] == "status":
                     return b""
@@ -155,7 +161,12 @@ class LicensingTests(unittest.TestCase):
                     patch("create_source_bundle.source_record", side_effect=record), \
                     patch("create_source_bundle.check_source_access") as check:
                 result = prepare_source_release(root, APP_VERSION)
-                self.assertEqual(check.call_count, 4)  # Three dependencies and Python.
+                self.assertEqual(check.call_count, 5)  # Python packages, Python and Rust crate.
+                with zipfile.ZipFile(result) as archive:
+                    records = json.loads(archive.read("Leaflet-%s/dependency-sources.json" % APP_VERSION))
+                    self.assertIn(rust_record, records)
+                    self.assertIn("Leaflet-%s/third-party/rust/dependencies.json" % APP_VERSION,
+                                  archive.namelist())
                 checksum = Path(str(result) + ".sha256").read_text(encoding="ascii")
                 self.assertEqual(checksum.split()[0], hashlib.sha256(result.read_bytes()).hexdigest())
                 self.assertTrue((root / "Output" / ("Leaflet_Dependency_Sources_%s.md" % APP_VERSION)).is_file())
