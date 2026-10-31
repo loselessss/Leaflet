@@ -56,7 +56,8 @@ def main(argv=None):
     temporary = args.result + ".tmp"
     try:
         with open(temporary, "wb") as stream:
-            pickle.dump(scene, stream, protocol=pickle.HIGHEST_PROTOCOL)
+            from .scene_transfer import dump
+            dump(scene, stream)
         os.replace(temporary, args.result)
     finally:
         if os.path.exists(temporary):

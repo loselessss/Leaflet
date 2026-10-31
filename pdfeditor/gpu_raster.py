@@ -18,6 +18,15 @@ import time
 import pymupdf
 from pymupdf import mupdf as _mupdf
 
+try:
+    from . import _path_packer as _rust_geometry
+except ImportError:
+    _rust_geometry = None
+else:
+    if not all(hasattr(_rust_geometry, name) for name in
+               ("commands_bbox", "transform_commands", "merge_commands")):
+        _rust_geometry = None
+
 
 # Per-extraction work only: never retained between documents or zoom jobs.
 _extraction_work = ContextVar("spdf_extraction_work", default=None)
@@ -422,6 +431,15 @@ def _downsampled_size(width, height, factor):
 
 
 def _transform_commands(commands, transform):
+    if _rust_geometry is not None and isinstance(commands, tuple):
+        try:
+            return _rust_geometry.transform_commands(commands, transform)
+        except (TypeError, ArithmeticError):
+            pass
+    return _python_transform_commands(commands, transform)
+
+
+def _python_transform_commands(commands, transform):
     a, b, c, d, e, f = transform
 
     def point(x, y):
@@ -448,6 +466,15 @@ def _transform_commands(commands, transform):
 
 
 def _commands_bbox(commands, transform=None):
+    if _rust_geometry is not None and isinstance(commands, tuple):
+        try:
+            return _rust_geometry.commands_bbox(commands, transform)
+        except (TypeError, ArithmeticError):
+            pass
+    return _python_commands_bbox(commands, transform)
+
+
+def _python_commands_bbox(commands, transform=None):
     points = []
     for command in commands:
         kind = command[0]
@@ -1002,14 +1029,22 @@ def _average_fill_argb(chunk):
 def _merged_fill_path(chunk, *, approximate_color=False):
     if len(chunk) < 2:
         return chunk
-    commands = []
     first = chunk[0]
     shading = all(item.shading for item in chunk)
-    for item in chunk:
-        source = item.commands
-        if item.transform is not None:
-            source = _transform_commands(source, item.transform)
-        commands.extend(source)
+    commands = None
+    if _rust_geometry is not None:
+        try:
+            commands = _rust_geometry.merge_commands(
+                [(item.commands, item.transform) for item in chunk])
+        except (TypeError, ArithmeticError):
+            pass
+    if commands is None:
+        commands = []
+        for item in chunk:
+            source = item.commands
+            if item.transform is not None:
+                source = _transform_commands(source, item.transform)
+            commands.extend(source)
     return (VectorPath(
         tuple(commands), even_odd=first.even_odd,
         fill_argb=(_average_fill_argb(chunk) if approximate_color

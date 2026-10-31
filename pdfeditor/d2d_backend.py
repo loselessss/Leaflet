@@ -61,6 +61,16 @@ def _python_path_array(commands):
 
 
 def _path_array(commands):
+    from .scene_transfer import PackedCommands
+    if isinstance(commands, PackedCommands):
+        try:
+            from ._path_packer import pack_wire_path
+        except ImportError:
+            return _python_path_array(commands)
+        buffer = pack_wire_path(commands.data)
+        if len(buffer) != len(commands) * ctypes.sizeof(_PathCommand):
+            raise ValueError("packed path count mismatch")
+        return (_PathCommand * len(commands)).from_buffer(buffer)
     if _rust_pack_path is not None and isinstance(commands, tuple):
         try:
             buffer = _rust_pack_path(commands)

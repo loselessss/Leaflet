@@ -4,6 +4,8 @@
 
 ### 성능 개선
 
+- Keep worker path coordinates in packed float64 buffers through GPU upload, reducing Python object reconstruction and UI-side preparation. CPU-side refinement and disk storage retain compatibility paths.
+- Accelerate path bounds, coordinate transforms and merged-path assembly during GPU scene extraction with Rust, keeping the existing merge rules and float64 coordinates. Non-finite arithmetic retains the Python path.
 - Pack GPU path coordinates in a Rust extension to reduce native scene preparation time and temporary Python objects while preserving identical renderer input. Development environments without the extension retain the Python fallback.
 
 ## 1.37.2 - 2026-10-28

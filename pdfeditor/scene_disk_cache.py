@@ -37,6 +37,9 @@ def _image_digest(pixels, hashes):
 
 
 def _encode(value, image_hashes=None):
+    from .scene_transfer import PackedCommands
+    if isinstance(value, PackedCommands):
+        value = tuple(value)
     if image_hashes is None:
         image_hashes = {}
     if is_dataclass(value):

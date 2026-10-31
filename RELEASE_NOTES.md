@@ -2,6 +2,8 @@
 
 ## Unreleased (1.37.3)
 
+- Reduce UI-side GPU preparation by retaining packed path coordinates from the background worker through native upload.
+- Speed up GPU scene extraction by reducing intermediate coordinate lists and accelerating path bounds, transforms and merged-path assembly without changing merge rules.
 - Reduce GPU scene preparation time by packing path coordinates in native code, preserving existing rendering quality.
 
 ## 1.37.2 - 2026-10-28

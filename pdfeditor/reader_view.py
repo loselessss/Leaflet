@@ -50,6 +50,8 @@ def _axis_aligned_clip_rect(item):
     for command in item.commands:
         if command[0] in ("move", "line") and len(command) == 3:
             points.append((float(command[1]), float(command[2])))
+            if len(points) > 5:
+                return None
         elif command[0] != "close":
             return None
     if len(points) == 5 and points[-1] == points[0]:
@@ -791,7 +793,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                     item.commands, even_odd=item.even_odd))
                 continue
             if isinstance(item, ClipStrokePush):
-                key = (item.commands, False)
+                key = (getattr(item.commands, 'native_key', item.commands), False)
                 source = unique.get(key)
                 if source is None:
                     source = self._d2d_surface.create_path(item.commands)
@@ -808,7 +810,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 native_items.append(self._d2d_surface.create_stroked_path(
                     source, item.stroke_width, native_style))
                 continue
-            key = (item.commands, item.even_odd)
+            key = (getattr(item.commands, 'native_key', item.commands), item.even_odd)
             path = unique.get(key)
             if path is None:
                 path = self._d2d_surface.create_path(

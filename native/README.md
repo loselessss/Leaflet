@@ -37,6 +37,21 @@ page data. The bytearray is owned through the synchronous Direct2D call.
 The renderer still creates and owns its geometries. See
 `docs/RUST_PATH_PACKER_BENCHMARK_2026-10-31.md` for comparisons.
 
+The extension also supplies float64 path bounds, transforms and merged-command
+assembly during extraction. Bounds use a single traversal without point/X/Y
+lists; merged paths assemble directly into the final command sequence. Python
+still selects merge groups and preserves styles/opacity. Non-finite arithmetic
+falls back to Python to retain NaN propagation; missing/older extensions also
+retain the original extraction helpers. These operations do not use float32
+packing or change the scene cache format. See
+`docs/RUST_GEOMETRY_COMPILER_BENCHMARK_2026-10-31.md`.
+
+Worker transport can retain paths as packed float64 records. `pack_wire_path`
+validates and converts these bytes directly to the unchanged renderer ABI;
+the GUI does not reconstruct path tuples for upload. CPU-side compatibility
+iteration is available for refinement and disk-cache serialization. See
+`docs/PACKED_SCENE_CONSUMER_BENCHMARK_2026-10-31.md` for UI versus total timings.
+
 ## Current ABI
 
 ABI version 24 can:
