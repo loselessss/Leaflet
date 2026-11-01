@@ -21,7 +21,9 @@ bytecode is embedded in the DLL; runtime shader compilation is not required.
 
 ## Rust compiler and native PDF input
 
-The application and background worker use `pdfeditor.rust_scene_compiler.compile_vector_page`.
+The GUI uses `pdfeditor.rust_scene_compiler.compile_vector_page` for synchronous
+compilation. Background reader jobs use the standalone Rust executable
+`leaflet-gpu-scene-worker.exe`; both share the same compiler core.
 `mupdf_scene.h` records retained MuPDF resources without Python callbacks. Rust
 `scene_compiler/native_input.rs` validates scope nesting, selects bounded raster
 regions, folds alpha-image scopes, assigns image density across the page budget,
@@ -31,12 +33,34 @@ on this path. Stroked/text-clipping glyphs remain vector; shades, tiles and
 complex alpha coverage can use SDK rasters. Missing native support or invalid
 input returns CPU fallback, not the old Python compiler.
 
-Build the Rust extension with `python native/build_path_packer.py`, the MuPDF
+Build the Rust extension and standalone worker with `python native/build_path_packer.py`, the MuPDF
 adapter with `python native/build_mupdf_path.py`, and the renderer with the batch
 file above. `build_exe.bat` performs all three. MuPDF headers and runtime must
 match exactly. Only the caller's thread accesses SDK objects; Rust scoped
 threads process independent owned transfer blocks. See
 `docs/RUST_SCENE_COMPILER_REWRITE.md` for verification and measured limits.
+
+The worker opens the private PDF snapshot through the matching MuPDF adapter,
+plans and compiles native events, and writes a bounded LFSW v1 result containing
+the LFDC v1 binary scene. No Python interpreter, PyO3 or Qt is linked into this
+executable. Windows SQLite and CNG supply cache access and SHA-256 without extra
+bundled dependencies. A valid persistent scene can be read before loading MuPDF.
+Password authentication and private snapshot creation remain in the parent;
+encrypted or modified documents do not gain persistent cache keys. The existing
+parent process still cancels stale jobs and keeps the CPU preview visible.
+
+The build uses separate target directories for the Python extension (default
+`python` feature) and executable (`--no-default-features --features worker`),
+preventing a Python-free DLL from overwriting the extension. `spdf.spec` requires
+and bundles the worker under `native/`. Development without the executable keeps
+the Python control worker; `SPDF_GPU_SCENE_WORKER=python` selects that reference
+path for comparisons. See
+[the standalone worker comparison](../docs/NATIVE_READER_WORKER_BENCHMARK_2026-11-01.md).
+
+Packaging also copies the worker/bridge/MuPDF MSVC runtime dependencies beside
+the worker executable. It must start before Python or Qt can configure DLL search
+paths; relying on the GUI's Qt runtime directory or a machine-wide redistributable
+would make the independent worker fail on some installations.
 
 ## Earlier packing helpers (reference extractor only)
 
@@ -46,7 +70,7 @@ Install Rust with the MSVC x64 toolchain and run
 Cargo must be on PATH. The build uses the committed Cargo.lock (`--locked`),
 records compiler/dependency versions and notices under `native/bin`, and copies
 the ABI3 Python 3.12+ extension to `pdfeditor/_path_packer.pyd`. Generated binaries
-are ignored. `build_exe.bat` builds both native modules; release builds require
+are ignored. `build_exe.bat` builds all rendering components; release builds require
 the extension. Without native compiler support the application displays CPU pages.
 
 The packer writes one 28-byte little-endian record per command, with float64 to
@@ -89,6 +113,14 @@ consumes native events; `compile_scene` retains the normalized importer only
 for reference comparisons. `d2d_renderer/rust_scene_import.h` is the checked
 native upload adapter used by normal application rendering.
 See `docs/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
+
+Compiled scenes persist through `pdfeditor.scene_cache_packet` as a bounded
+binary envelope around unchanged LFSC v2 bytes. SHA-256 covers metadata and the
+uncompressed packet. Up to four independent 64MiB chunks use the existing Rust
+LZ4 codec; incompressible chunks remain raw. Restoration validates lengths and
+budgets before decoding, without JSON/Base64 or executable-object loading.
+Cache key format 16 invalidates earlier stored scenes once. See
+`docs/BINARY_SCENE_STORAGE_BENCHMARK_2026-11-01.md` for storage and restore timings.
 
 ### Post-extraction parallel buffers
 

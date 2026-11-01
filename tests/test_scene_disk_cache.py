@@ -200,3 +200,32 @@ class SceneDiskCacheTests(unittest.TestCase):
         self.assertEqual(cache._limit(), 250*1024*1024)
         with self.assertRaises(ValueError):
             settings.set_disk_cache_mb(-1)
+
+    def test_compiled_scene_uses_binary_without_json_or_source_replay(self):
+        from pdfeditor.rust_scene_compiler import compile_vector_page
+        from pdfeditor.scene_cache_packet import MAGIC
+        with pymupdf.open(self.path) as doc:
+            scene = compile_vector_page(doc[0], 2.)
+        self.assertTrue(scene.supported, scene.reason)
+        with patch.object(cache, '_encode', side_effect=AssertionError), \
+                patch.object(cache, '_decode', side_effect=AssertionError), \
+                patch.object(cache, '_source_pixels', side_effect=AssertionError):
+            cache.save('compiled', scene)
+            self.assertEqual(cache.load('compiled'), scene)
+        with sqlite3.connect(self.root / 'cache' / 'gpu-scenes.sqlite3') as db:
+            data, = db.execute("SELECT data FROM scenes WHERE key='compiled'").fetchone()
+        db.close()
+        self.assertTrue(data.startswith(MAGIC))
+
+    def test_corrupt_binary_cache_is_a_miss_and_keeps_other_entries(self):
+        from pdfeditor.rust_scene_compiler import compile_vector_page
+        with pymupdf.open(self.path) as doc:
+            scene = compile_vector_page(doc[0])
+        cache.save('good', scene)
+        cache.save('broken', scene)
+        with sqlite3.connect(self.root / 'cache' / 'gpu-scenes.sqlite3') as db:
+            data, = db.execute("SELECT data FROM scenes WHERE key='broken'").fetchone()
+            db.execute("UPDATE scenes SET data=? WHERE key='broken'", (data[:-1],))
+        db.close()
+        self.assertIsNone(cache.load('broken'))
+        self.assertEqual(cache.load('good'), scene)

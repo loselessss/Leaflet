@@ -549,7 +549,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         try:
             if process.returncode == 0 and os.path.isfile(job["result"]):
                 with open(job["result"], "rb") as stream:
-                    scene = pickle.load(stream)
+                    from .scene_worker_result import load
+                    scene = load(stream)
         except Exception:
             scene = None
         finally:

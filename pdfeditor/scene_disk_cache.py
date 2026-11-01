@@ -11,7 +11,7 @@ import zlib
 
 MAX_DECODED = 256 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 15
+SCENE_FORMAT_VERSION = 16
 
 
 def _limit():
@@ -186,28 +186,47 @@ def _source_pixels(page, payload):
     return pixels
 
 
+def _serialize_scene(scene):
+    if scene.compiled_packet:
+        from .scene_cache_packet import encode
+        return encode(scene)
+    raw = json.dumps(_encode(scene), separators=(",", ":"), allow_nan=False).encode()
+    if len(raw) > MAX_DECODED:
+        raise ValueError("scene exceeds decoded budget")
+    return zlib.compress(raw, 1)
+
+
+def _deserialize_scene(data, page):
+    from .scene_cache_packet import MAGIC, decode
+    if data.startswith(MAGIC):
+        return decode(data)
+    decoder = zlib.decompressobj()
+    raw = decoder.decompress(data, MAX_DECODED + 1)
+    if len(raw) > MAX_DECODED or not decoder.eof:
+        raise ValueError("invalid legacy scene")
+    payload = json.loads(raw)
+    return _decode(payload, _types(), _source_pixels(page, payload))
+
+
 def load(cache_key, page=None):
     if cache_key is None or not _limit():
         return None
     db = None
     try:
         db = _connect()
-        row = db.execute("SELECT data FROM scenes WHERE key=?", (cache_key,)).fetchone()
+        from .scene_cache_packet import MAX_BLOB
+        row = db.execute("SELECT data FROM scenes WHERE key=? AND length(data)<=?",
+                         (cache_key, MAX_BLOB)).fetchone()
         if row is None:
             return None
-        decoder = zlib.decompressobj()
-        raw = decoder.decompress(row[0], MAX_DECODED + 1)
-        if len(raw) > MAX_DECODED or not decoder.eof:
-            return None
-        payload = json.loads(raw)
-        scene = _decode(payload, _types(), _source_pixels(page, payload))
+        scene = _deserialize_scene(row[0], page)
         if type(scene).__name__ != "VectorPage" or not scene.supported:
             return None
         db.execute("UPDATE scenes SET used=julianday('now') WHERE key=?", (cache_key,))
         db.commit()
         return scene
     except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, RuntimeError,
-            zlib.error, RecursionError):
+            zlib.error, RecursionError, ImportError, MemoryError):
         return None
     finally:
         if db is not None:
@@ -221,10 +240,7 @@ def save(cache_key, scene):
         return
     db = None
     try:
-        raw = json.dumps(_encode(scene), separators=(",", ":"), allow_nan=False).encode()
-        if len(raw) > MAX_DECODED:
-            return
-        data = zlib.compress(raw, 1)
+        data = _serialize_scene(scene)
         # Reserve space for SQLite's index and page overhead within 100 MiB.
         budget = _limit() * 9 // 10
         if len(data) > budget:
@@ -239,7 +255,7 @@ def save(cache_key, scene):
             total -= oldest[1]
         db.execute("INSERT INTO scenes VALUES(?,?,julianday('now'))", (cache_key, data))
         db.commit()
-    except (OSError, sqlite3.Error, ValueError, TypeError, RecursionError):
+    except (OSError, sqlite3.Error, ValueError, TypeError, RecursionError, RuntimeError, MemoryError):
         pass
     finally:
         if db is not None:

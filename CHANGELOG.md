@@ -4,14 +4,11 @@
 
 ### 성능 개선
 
-- Replace the application GPU scene compiler with Rust. Native MuPDF input feeds Rust scope analysis, illustration simplification, alpha-image fusion, geometry/resource assembly and a single native GPU upload packet. Text, stroked text and text clips stay vector; bounded shading/transparency rasters can differ slightly from CPU mode.
-- Prepare large extracted image buffers for worker transfer with bounded Rust threads and lossless block compression. Keep small jobs and poorly compressible buffers on the original transfer path.
-- Batch glyph positions and transforms in native MuPDF code, merge text clips directly into packed paths, and pack RGB/RGBA images into premultiplied BGRA in Rust to reduce remaining Python preparation work.
-- Read MuPDF path segments through an exact-version native bridge and carry packed coordinates into Rust transforms and merging, reducing per-coordinate Python callbacks in background GPU extraction.
-- Generate large merged GPU paths directly as packed float64 buffers in background extraction, avoiding intermediate merged Python coordinate tuples and their later re-encoding.
-- Keep worker path coordinates in packed float64 buffers through GPU upload, reducing Python object reconstruction and UI-side preparation. CPU-side refinement and disk storage retain compatibility paths.
-- Accelerate path bounds, coordinate transforms and merged-path assembly during GPU scene extraction with Rust, keeping the existing merge rules and float64 coordinates. Non-finite arithmetic retains the Python path.
-- Pack GPU path coordinates in a Rust extension to reduce native scene preparation time and temporary Python objects while preserving identical renderer input. Development environments without the extension retain the Python fallback.
+- Prepare complex PDF pages faster when opening documents and switching pages.
+- Reduce memory use when viewing PDFs.
+- Reduce waiting when returning to previously opened PDFs.
+
+Some illustrations may show slight differences in colors or edges. Use CPU mode when you need to check the exact appearance.
 
 ## 1.37.2 - 2026-10-28
 

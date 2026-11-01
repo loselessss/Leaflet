@@ -9,6 +9,25 @@ _UNUSED_QT_LIBRARIES = {
 }
 
 
+def native_worker_runtime_binaries(*modules, search_paths=None):
+    """Put MSVC DLLs beside the independent worker, before its entry point runs.
+
+    The GUI's Qt DLL directories are not the worker executable directory. Its
+    directly imported runtime and the dynamically loaded MuPDF runtime must be
+    discoverable without requiring a machine-wide C++ runtime installation.
+    """
+    from PyInstaller.depend.bindepend import get_imports
+    runtimes = {}
+    for module in modules:
+        for name, source in get_imports(str(module), search_paths=search_paths):
+            key = name.lower()
+            if key.startswith(('msvcp140', 'vcruntime140', 'concrt140')) and key.endswith('.dll'):
+                if source is None:
+                    raise RuntimeError(f'Native reader worker runtime is missing: {name}')
+                runtimes.setdefault(key, source)
+    return [(source, 'native') for _, source in sorted(runtimes.items())]
+
+
 def keep_payload(destination, *, gui):
     path = PurePosixPath(destination.replace("\\", "/"))
     name = path.name.lower()

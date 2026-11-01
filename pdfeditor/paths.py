@@ -64,6 +64,17 @@ def ocr_command():
 
 def gpu_scene_worker_command():
     """Return the isolated GPU scene worker command for dev or frozen mode."""
+    parts = ("native",) if is_frozen() else ("native", "bin")
+    native = resource(*parts, "leaflet-gpu-scene-worker.exe")
+    if os.path.isfile(native) and os.environ.get("SPDF_GPU_SCENE_WORKER", "").lower() != "python":
+        import pymupdf
+        from . import settings
+        sdk = os.path.join(os.path.dirname(pymupdf.__file__), "mupdfcpp64.dll")
+        bridge = resource(*parts, "leaflet_mupdf_path.dll")
+        return [native, "--bridge", bridge, "--mupdf", sdk,
+                "--expected-mupdf", pymupdf.VersionFitz,
+                "--cache-db", os.path.join(user_data_dir(), "cache", "gpu-scenes.sqlite3"),
+                "--cache-limit", str(settings.disk_cache_mb() * 1024 * 1024)]
     if is_frozen():
         return [sys.executable, "--gpu-scene-worker"]
     return [sys.executable, "-m", "pdfeditor.gpu_scene_worker"]

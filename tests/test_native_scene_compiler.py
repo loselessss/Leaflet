@@ -156,3 +156,21 @@ class NativeSceneGpuTests(unittest.TestCase):
                 page.insert_text((20,80),'OUTLINE',fontsize=35,render_mode=mode,
                                  color=(1,0,0),fill=(0,0,1))
                 self.assertLess(self._compare_page(page),2.)
+
+    def test_binary_restored_scene_renders_identical_pixels(self):
+        from pdfeditor.scene_cache_packet import encode, decode
+        from tests.benchmark_gpu_pipeline import render_sample
+        with pymupdf.open(stream=fixtures.blended_mask_pdf_bytes(), filetype='pdf') as doc:
+            page = doc[0]
+            original = compile_vector_page(page)
+            self.assertTrue(original.supported, original.reason)
+            self.view._page_sizes[0] = (page.rect.width, page.rect.height)
+        restored = decode(encode(original))
+        self.assertEqual(original, restored)
+        for scale in (1., 8.):
+            frames = []
+            for scene in (original, restored):
+                self.view._native_vector_draws(0, scene)
+                frames.append(render_sample(self.surface, self.view._d2d_vector_paths[0][3],
+                    (scale, 0., 0., scale, 0., 0.), 256, 256, 'completed', .001)[3])
+            self.assertEqual(*frames)

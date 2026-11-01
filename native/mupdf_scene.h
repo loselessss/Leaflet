@@ -28,9 +28,11 @@ struct Record {
     }
 };
 struct Job {std::vector<std::unique_ptr<Record>> records;Result metadata;bool failed=false;fz_rect page;
+    fz_document* owned_document=nullptr;fz_page* owned_page=nullptr;
     std::map<std::pair<fz_font*,int>,Result> glyphs;size_t glyph_bytes=0;
     fz_cookie cookie={};bool count_only=false;uint64_t score=0,operations=0;
-    std::chrono::steady_clock::time_point deadline=std::chrono::steady_clock::time_point::max();};
+    std::chrono::steady_clock::time_point deadline=std::chrono::steady_clock::time_point::max();
+    ~Job(){records.clear();mupdf::ll_fz_drop_page(owned_page);mupdf::ll_fz_drop_document(owned_document);}};
 struct Device {fz_device super;Job* job;};
 template<class T> void put(Result& out,const T& value) {
     if(out.bytes.size()+sizeof(T)>budget) throw std::runtime_error("native scene budget exceeded");
@@ -333,3 +335,26 @@ extern "C" __declspec(dllexport) Result* leaflet_scene_materialize(leaflet_scene
     }catch(const std::exception& e){error=e.what();return nullptr;}catch(...){error="native materialization failure";return nullptr;}
 }
 extern "C" __declspec(dllexport) const char* leaflet_scene_error() noexcept{return leaflet_scene::error.c_str();}
+
+// Standalone reader worker input. All SDK ownership remains on this thread.
+extern "C" __declspec(dllexport) leaflet_scene::Job* leaflet_scene_open(const char* filename,int page_index,double timeout,
+    double* bounds,const unsigned char** data,size_t* size) noexcept {
+    using namespace leaflet_scene;
+    fz_document* doc=nullptr;fz_page* page=nullptr;
+    try {
+        const auto started=std::chrono::steady_clock::now();
+        if(!filename||!bounds||page_index<0)return nullptr;
+        mupdf::ll_fz_register_document_handlers();mupdf::ll_fz_set_aa_level(8);
+        doc=mupdf::ll_fz_open_document(filename);
+        if(mupdf::ll_fz_needs_password(doc))throw std::runtime_error("password required for worker input");
+        page=mupdf::ll_fz_load_page(doc,page_index);
+        const auto r=mupdf::ll_fz_bound_page(page);
+        const double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+        auto* job=leaflet_scene_collect(page,timeout<0?timeout:std::max(0.,timeout-elapsed),data,size);
+        if(!job){mupdf::ll_fz_drop_page(page);mupdf::ll_fz_drop_document(doc);return nullptr;}
+        job->owned_page=page;job->owned_document=doc;
+        bounds[0]=r.x0;bounds[1]=r.y0;bounds[2]=r.x1;bounds[3]=r.y1;
+        return job;
+    }catch(const std::exception& e){error=e.what();}catch(...){error="native PDF open failure";}
+    mupdf::ll_fz_drop_page(page);mupdf::ll_fz_drop_document(doc);return nullptr;
+}

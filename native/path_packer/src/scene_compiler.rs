@@ -1,6 +1,9 @@
 //! Owned scene compiler. Production input is native_input; Python import is a comparison oracle.
+#[cfg(feature="python")]
 use pyo3::prelude::*;
+#[cfg(feature="python")]
 use pyo3::types::{PyBytes,PyTuple};
+#[cfg(feature="python")]
 use pyo3::exceptions::PyValueError;
 use serde::Serialize;
 use bincode::Options;
@@ -41,11 +44,19 @@ struct Command {op:Operation,matrix:Matrix,bounds:Option<Rect>,scope_end:Option<
 #[derive(Serialize)]
 struct Scene {resources:Vec<Resource>,commands:Vec<Command>,resource_bytes:usize,image_bytes:usize}
 
-fn invalid(message:&str)->PyErr {PyValueError::new_err(message.to_string())}
-fn finite(values:&[f64])->PyResult<()> {
+#[cfg(feature="python")]
+type CompileError=pyo3::PyErr;
+#[cfg(not(feature="python"))]
+type CompileError=String;
+pub type CompileResult<T>=Result<T,CompileError>;
+#[cfg(feature="python")]
+fn invalid(message:&str)->CompileError {PyValueError::new_err(message.to_string())}
+#[cfg(not(feature="python"))]
+fn invalid(message:&str)->CompileError {message.to_string()}
+fn finite(values:&[f64])->CompileResult<()> {
     if values.iter().any(|x|!x.is_finite()) {return Err(invalid("non-finite compiler input"));} Ok(())
 }
-fn validate_path(data:&[u8])->PyResult<()> {
+fn validate_path(data:&[u8])->CompileResult<()> {
     let mut offset=0;let mut count=0;
     while offset<data.len() {
         let coordinates=match data[offset]{1|2=>2,3=>6,4=>0,_=>return Err(invalid("invalid compiler path tag"))};
@@ -59,11 +70,13 @@ fn validate_path(data:&[u8])->PyResult<()> {
     }
     Ok(())
 }
-fn matrix(item:&Bound<'_,PyAny>)->PyResult<Matrix> {
+#[cfg(feature="python")]
+fn matrix(item:&Bound<'_,PyAny>)->CompileResult<Matrix> {
     let value=item.getattr("transform")?;
     let result=if value.is_none(){IDENTITY}else{value.extract()?};finite(&result)?;Ok(result)
 }
-fn stroke(item:&Bound<'_,PyAny>)->PyResult<Option<Stroke>> {
+#[cfg(feature="python")]
+fn stroke(item:&Bound<'_,PyAny>)->CompileResult<Option<Stroke>> {
     let value=item.getattr("stroke_style")?;
     if value.is_none(){return Ok(None);}
     let (start,dash,end,join,miter,phase,dashes):(u32,u32,u32,u32,f64,f64,Vec<f64>)=value.extract()?;
@@ -73,14 +86,16 @@ fn stroke(item:&Bound<'_,PyAny>)->PyResult<Option<Stroke>> {
     }
     Ok(Some(Stroke{start,dash,end,join,miter,phase,dashes}))
 }
-fn stops(item:&Bound<'_,PyAny>)->PyResult<Vec<(f64,u32)>> {
+#[cfg(feature="python")]
+fn stops(item:&Bound<'_,PyAny>)->CompileResult<Vec<(f64,u32)>> {
     let values:Vec<(f64,u32)>=item.getattr("stops")?.extract()?;
     if values.is_empty()||values.len()>65536 {return Err(invalid("invalid gradient stop count"));}
     for (position,_) in &values {finite(&[*position])?;if !(0.0..=1.0).contains(position){return Err(invalid("invalid gradient position"));}}
     if values.windows(2).any(|pair|pair[0].0>pair[1].0){return Err(invalid("unordered gradient stops"));}
     Ok(values)
 }
-fn opacity(item:&Bound<'_,PyAny>)->PyResult<f64> {
+#[cfg(feature="python")]
+fn opacity(item:&Bound<'_,PyAny>)->CompileResult<f64> {
     let result:f64=item.getattr("opacity")?.extract()?;
     if !result.is_finite()||!(0.0..=1.0).contains(&result){return Err(invalid("invalid opacity"));}Ok(result)
 }
@@ -111,7 +126,7 @@ fn axis_rectangle(data:&[u8],matrix:&Matrix)->Option<Rect> {
 
 impl Scene {
     fn new()->Self {Self{resources:Vec::new(),commands:Vec::new(),resource_bytes:0,image_bytes:0}}
-    fn intern(&mut self,resource:Resource,index:&mut HashMap<u64,Vec<u32>>)->PyResult<u32> {
+    fn intern(&mut self,resource:Resource,index:&mut HashMap<u64,Vec<u32>>)->CompileResult<u32> {
         let (kind,bytes,dimensions)=match &resource {
             Resource::Path(data)=>(1u8,data.as_slice(),[0,0,0]),
             Resource::Image{pixels,width,height,stride}=>(2,pixels.as_slice(),[*width,*height,*stride]),
@@ -133,7 +148,7 @@ impl Scene {
         if kind==2 {self.image_bytes+=bytes.len();if self.image_bytes>IMAGE_LIMIT{return Err(invalid("compiler image budget exceeded"));}}
         let id=self.resources.len() as u32;self.resources.push(resource);index.entry(hash).or_default().push(id);Ok(id)
     }
-    fn analyse(mut self)->PyResult<Self> {
+    fn analyse(mut self)->CompileResult<Self> {
         if self.commands.len()>COMMAND_LIMIT{return Err(invalid("compiler command count exceeded"));}
         // Match the existing reader's text geometry-group semantics, including
         // a single transformed glyph. Compilation policy stays in Rust.
@@ -209,7 +224,8 @@ impl Scene {
     }
 }
 
-fn import_scene(py:Python<'_>,input:&Bound<'_,PyAny>)->PyResult<Scene> {
+#[cfg(feature="python")]
+fn import_scene(py:Python<'_>,input:&Bound<'_,PyAny>)->CompileResult<Scene> {
     if !input.getattr("supported")?.extract::<bool>()? {return Err(invalid("cannot compile unsupported scene"));}
     let mut scene=Scene::new();let mut index=HashMap::new();
     let items=input.getattr("drawables")?;
@@ -225,8 +241,7 @@ fn import_scene(py:Python<'_>,input:&Bound<'_,PyAny>)->PyResult<Scene> {
             let bytes=if let Ok(value)=commands.getattr("data") {value.cast_into::<PyBytes>()?}
                 else {super::encode_commands(py,commands.cast::<PyTuple>()?)?};
             validate_path(bytes.as_bytes())?;
-            let box_value=super::wire_bbox(bytes.as_bytes(),Some(transform))?;
-            bounds=box_value.map(|(a,b,c,d)|[a,b,c,d]);
+            bounds=packed_bounds(bytes.as_bytes(),transform)?;
             if name=="ClipPush"{axis_clip=axis_rectangle(bytes.as_bytes(),&transform);}
             if bytes.as_bytes().len()>LIMIT{return Err(invalid("compiler path budget exceeded"));}
             resource=scene.intern(Resource::Path(bytes.as_bytes().to_vec()),&mut index)?;
@@ -280,9 +295,10 @@ fn import_scene(py:Python<'_>,input:&Bound<'_,PyAny>)->PyResult<Scene> {
     Ok(scene)
 }
 
-#[pyclass(frozen,module="pdfeditor._path_packer")]
+#[cfg_attr(feature="python",pyclass(frozen,module="pdfeditor._path_packer"))]
 pub struct RustCompiledScene {scene:Scene,source_count:usize}
 
+#[cfg(feature="python")]
 #[pymethods]
 impl RustCompiledScene {
     #[getter] fn command_count(&self)->usize{self.scene.commands.len()}
@@ -293,7 +309,7 @@ impl RustCompiledScene {
     #[getter] fn requires_luminosity(&self)->bool {
         self.scene.commands.iter().any(|command|matches!(command.op,Operation::Mask{luminosity:true,..}))
     }
-    fn to_bytes<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyBytes>> {
+    fn to_bytes<'py>(&self,py:Python<'py>)->CompileResult<Bound<'py,PyBytes>> {
         let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(256*1024*1024);
         let size=py.detach(||options.serialized_size(&self.scene))
             .map_err(|error|invalid(&error.to_string()))?;
@@ -308,7 +324,7 @@ impl RustCompiledScene {
     fn scope_plan(&self)->Vec<(Option<u32>,Option<u32>,u32)> {
         self.scene.commands.iter().map(|command|(command.scope_end,command.capture_end,command.complex_depth)).collect()
     }
-    fn viewport_plan(&self,rect:Rect,padding:f64)->PyResult<Vec<u32>> {
+    fn viewport_plan(&self,rect:Rect,padding:f64)->CompileResult<Vec<u32>> {
         finite(&rect)?;
         if rect[2]<rect[0]||rect[3]<rect[1]||!padding.is_finite()||padding<0.{return Err(invalid("invalid viewport"));}
         let mut result=Vec::new();
@@ -321,10 +337,36 @@ impl RustCompiledScene {
     }
 }
 
+#[cfg(feature="python")]
 #[pyfunction]
-pub fn compile_scene(py:Python<'_>,scene:&Bound<'_,PyAny>)->PyResult<RustCompiledScene> {
+pub fn compile_scene(py:Python<'_>,scene:&Bound<'_,PyAny>)->CompileResult<RustCompiledScene> {
     let owned=import_scene(py,scene)?;
     let source_count=owned.commands.len();
     let scene=py.detach(||owned.analyse())?;
     Ok(RustCompiledScene{scene,source_count})
+}
+
+// The standalone worker uses the same owned scene and serializer as the bindings.
+impl RustCompiledScene {
+    pub fn commands_len(&self)->usize{self.scene.commands.len()}
+    pub fn images_bytes(&self)->usize{self.scene.image_bytes}
+    pub fn packet(&self)->CompileResult<Vec<u8>>{
+        let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(256*1024*1024);
+        let size=options.serialized_size(&self.scene).map_err(|e|invalid(&e.to_string()))? as usize;
+        if size>256*1024*1024-8{return Err(invalid("compiler packet byte budget exceeded"));}
+        let mut bytes=Vec::with_capacity(size+8);bytes.extend_from_slice(b"LFSC\x02\0\0\0");
+        options.serialize_into(&mut bytes,&self.scene).map_err(|e|invalid(&e.to_string()))?;Ok(bytes)
+    }
+}
+fn packed_bounds(data:&[u8],m:Matrix)->CompileResult<Option<Rect>>{
+    validate_path(data)?;let mut at=0;let mut bounds:Option<Rect>=None;
+    while at<data.len(){let n=match data[at]{1|2=>2,3=>6,_=>0};at+=1;
+        for _ in (0..n).step_by(2){
+            let x=f64::from_le_bytes(data[at..at+8].try_into().unwrap());
+            let y=f64::from_le_bytes(data[at+8..at+16].try_into().unwrap());at+=16;
+            let px=m[0]*x+m[2]*y+m[4];let py=m[1]*x+m[3]*y+m[5];finite(&[px,py])?;
+            if let Some(b)=&mut bounds{if px<b[0]{b[0]=px;}if py<b[1]{b[1]=py;}if px>b[2]{b[2]=px;}if py>b[3]{b[3]=py;}}
+            else{bounds=Some([px,py,px,py]);}
+        }
+    }Ok(bounds)
 }

@@ -1,4 +1,4 @@
-"""Build the Rust scene compiler and path helpers with the active Python/Cargo."""
+"""Build the Rust extension and independent reader worker with active Python/Cargo."""
 import json
 import os
 from pathlib import Path
@@ -19,6 +19,12 @@ def main():
     subprocess.run([cargo, "build", "--release", "--locked", "--manifest-path",
                     str(manifest), "--target-dir", str(target)], env=env, check=True)
     shutil.copy2(target / "release/_path_packer.dll", root / "pdfeditor/_path_packer.pyd")
+    worker_target = root / "native/bin/scene-worker-target"
+    subprocess.run([cargo, "build", "--release", "--locked", "--manifest-path",
+                    str(manifest), "--target-dir", str(worker_target), "--no-default-features",
+                    "--features", "worker", "--bin", "leaflet-gpu-scene-worker"], env=env, check=True)
+    shutil.copy2(worker_target / "release/leaflet-gpu-scene-worker.exe",
+                 root / "native/bin/leaflet-gpu-scene-worker.exe")
     metadata = json.loads(subprocess.check_output([
         cargo, "metadata", "--locked", "--format-version", "1", "--manifest-path",
         str(manifest)], env=env, text=True))

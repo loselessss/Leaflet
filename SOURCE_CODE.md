@@ -42,7 +42,8 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    the selected headless OpenCV wheel instead of adding the regular wheel
    requested by RapidOCR's metadata; both variants provide the same `cv2` import.
 3. Install Rust (MSVC x64, Cargo on PATH) and Visual Studio C++ Build Tools.
-   Run `python native/build_path_packer.py`, then `python ci_test_runner.py`.
+   Run `python native/build_path_packer.py` to build the Python extension and the
+   independent Rust reader worker, then `python ci_test_runner.py`.
    Build the MuPDF bridge with `python native/build_mupdf_path.py` before tests
    to include its native tests. It uses the headers and import library from the
    installed PyMuPDF wheel; do not substitute a different MuPDF DLL at runtime.
@@ -62,7 +63,7 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
 기록되어 있으므로 `pip install --no-deps -r`로 설치하여 OpenCV 일반판과 경량판이
 함께 설치되지 않도록 합니다.
 Rust(MSVC x64)와 C++ 빌드 도구를 설치하고 Cargo를 PATH에 추가한 뒤
-`python native/build_path_packer.py`로 확장을 먼저 빌드합니다. Rust 의존성은
+`python native/build_path_packer.py`로 확장과 독립 Rust 열람 작업 프로세스를 빌드합니다. Rust 의존성은
 Cargo.lock에 고정되며 실제 컴파일러·원본 고지·소스 링크는 `third-party/rust/`에 기록됩니다.
 `python native/build_mupdf_path.py`도 실행해 설치된 PyMuPDF와 동일한 SDK로
 좌표 추출 브리지를 빌드합니다. 실행 시 다른 버전의 MuPDF DLL로 교체하지 마세요.

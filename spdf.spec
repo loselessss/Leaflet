@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 스펙 — 실행 파일 두 개(원폴더 빌드).
+"""PyInstaller 스펙 — GUI·OCR와 독립 Rust 열람 작업 프로세스(원폴더 빌드).
 
   dist\\Leaflet\\Leaflet.exe          GUI (PyQt5, onnxruntime 미포함)
   dist\\Leaflet\\ocr\\leaflet-ocr.exe  OCR 워커 (onnxruntime, PyQt5 미포함)
+  dist\\Leaflet\\_internal\\native\\leaflet-gpu-scene-worker.exe  GPU 장면 워커
 
 왜 둘로 나누나: 같은 프로세스/같은 폴더에서 Qt DLL과 onnxruntime가
 공존하면 onnxruntime DLL 초기화가 깨진다(dev·frozen 공통). GUI가 OCR을
@@ -24,7 +25,7 @@ sys.path.insert(0, str(spec_root))
 from build_version_info import write_version_info_files
 from build_legal import write_legal_bundle
 from pdfeditor.meta import APP_VERSION
-from build_payload import trim_payload
+from build_payload import trim_payload, native_worker_runtime_binaries
 
 
 # 작업 관리자가 GUI와 OCR 자식 프로세스를 의미 있는 제품명으로 표시하도록
@@ -43,6 +44,15 @@ if not (spec_root / "pdfeditor" / "_path_packer.pyd").is_file():
 mupdf_path_bridge = spec_root / "native" / "bin" / "leaflet_mupdf_path.dll"
 if not mupdf_path_bridge.is_file():
     raise FileNotFoundError("MuPDF path bridge is missing; run native/build_mupdf_path.py first")
+scene_worker = spec_root / "native" / "bin" / "leaflet-gpu-scene-worker.exe"
+if not scene_worker.is_file():
+    raise FileNotFoundError("Native GPU worker is missing; run native/build_path_packer.py first")
+import pymupdf
+from PyQt5.QtCore import QLibraryInfo
+worker_runtimes = native_worker_runtime_binaries(
+    scene_worker, mupdf_path_bridge, Path(pymupdf.__file__).parent / 'mupdfcpp64.dll',
+    search_paths=[str(Path(pymupdf.__file__).parent), sys.base_prefix,
+                  QLibraryInfo.location(QLibraryInfo.BinariesPath)])
 
 # --- OCR 워커: onnxruntime/rapidocr/cv2, PyQt5 제외 ---
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
@@ -96,7 +106,8 @@ exe_ocr = EXE(
 # --- GUI: PyQt5/PyMuPDF, onnxruntime류 제외(워커가 담당) ---
 a_gui = Analysis(
     ["run.py"],
-    binaries=[(str(d2d_renderer), "native"), (str(mupdf_path_bridge), "native")],
+    binaries=[(str(d2d_renderer), "native"), (str(mupdf_path_bridge), "native"),
+              (str(scene_worker), "native")] + worker_runtimes,
     datas=[("assets/spdf.ico", "assets"),
            ("assets/spdf_doc.ico", "assets"),
            ("assets/leaflet_ai.ico", "assets"),

@@ -2,11 +2,26 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
-from build_payload import keep_payload, trim_payload
+from build_payload import keep_payload, trim_payload, native_worker_runtime_binaries
 
 
 class BuildPayloadTests(unittest.TestCase):
+    def test_independent_worker_gets_shared_msvc_runtime_in_its_own_directory(self):
+        with patch('PyInstaller.depend.bindepend.get_imports', side_effect=[
+                {('VCRUNTIME140.dll', 'runtime/VCRUNTIME140.dll'), ('KERNEL32.dll', None)},
+                {('VCRUNTIME140.dll', 'runtime/VCRUNTIME140.dll'),
+                 ('MSVCP140.dll', 'qt/MSVCP140.dll')}]) as imports:
+            self.assertEqual(native_worker_runtime_binaries('worker.exe', 'sdk.dll', search_paths=['qt']),
+                [('qt/MSVCP140.dll', 'native'), ('runtime/VCRUNTIME140.dll', 'native')])
+            imports.assert_any_call('sdk.dll', search_paths=['qt'])
+
+    def test_missing_worker_runtime_stops_packaging(self):
+        with patch('PyInstaller.depend.bindepend.get_imports', return_value={('MSVCP140.dll', None)}):
+            with self.assertRaisesRegex(RuntimeError, 'MSVCP140.dll'):
+                native_worker_runtime_binaries('sdk.dll')
+
     def test_preserves_rendering_image_printing_and_worker_runtimes(self):
         for name in (
             "native/spdf_d2d_renderer.dll", "python312.dll", "numpy.libs/openblas.dll",

@@ -4,16 +4,16 @@ use super::*;
 
 struct Reader<'a>{data:&'a [u8],at:usize}
 impl<'a> Reader<'a>{
-    fn take(&mut self,n:usize)->PyResult<&'a [u8]>{
+    fn take(&mut self,n:usize)->CompileResult<&'a [u8]>{
         if n>self.data.len()-self.at{return Err(invalid("truncated native scene input"));}
         let p=&self.data[self.at..self.at+n];self.at+=n;Ok(p)
     }
-    fn u32(&mut self)->PyResult<u32>{Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))}
-    fn u64(&mut self)->PyResult<usize>{usize::try_from(u64::from_le_bytes(self.take(8)?.try_into().unwrap())).map_err(|_|invalid("native input overflow"))}
-    fn number(&mut self)->PyResult<f64>{let x=f64::from_le_bytes(self.take(8)?.try_into().unwrap());finite(&[x])?;Ok(x)}
-    fn rect(&mut self)->PyResult<Rect>{Ok([self.number()?,self.number()?,self.number()?,self.number()?])}
-    fn matrix(&mut self)->PyResult<Matrix>{Ok([self.number()?,self.number()?,self.number()?,self.number()?,self.number()?,self.number()?])}
-    fn done(&self)->PyResult<()>{if self.at!=self.data.len(){Err(invalid("trailing native input"))}else{Ok(())}}
+    fn u32(&mut self)->CompileResult<u32>{Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))}
+    fn u64(&mut self)->CompileResult<usize>{usize::try_from(u64::from_le_bytes(self.take(8)?.try_into().unwrap())).map_err(|_|invalid("native input overflow"))}
+    fn number(&mut self)->CompileResult<f64>{let x=f64::from_le_bytes(self.take(8)?.try_into().unwrap());finite(&[x])?;Ok(x)}
+    fn rect(&mut self)->CompileResult<Rect>{Ok([self.number()?,self.number()?,self.number()?,self.number()?])}
+    fn matrix(&mut self)->CompileResult<Matrix>{Ok([self.number()?,self.number()?,self.number()?,self.number()?,self.number()?,self.number()?])}
+    fn done(&self)->CompileResult<()>{if self.at!=self.data.len(){Err(invalid("trailing native input"))}else{Ok(())}}
 }
 struct Raw{kind:u32,flags:u32,area:Rect,alpha:f64,end:usize,capture:usize,density:f64}
 fn intersect(a:Rect,b:Rect)->Rect {
@@ -25,14 +25,12 @@ fn request(out:&mut Vec<u8>,mode:u32,start:usize,end:usize,rect:Rect,scale:f64){
     for x in rect.into_iter().chain([scale]){out.extend_from_slice(&x.to_le_bytes());}
 }
 
-#[pyfunction]
-#[pyo3(signature=(metadata,page,scale=1.,viewport=None))]
-pub fn plan_native_scene<'py>(py:Python<'py>,metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->PyResult<Bound<'py,PyBytes>>{
+pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileResult<Vec<u8>>{
     finite(&page)?;if area(page)<=0.||!scale.is_finite()||scale<=0.||scale>64.{return Err(invalid("invalid native page scale"));}
     let view=viewport.unwrap_or(page);finite(&view)?;
     if view[2]<view[0]||view[3]<view[1]{return Err(invalid("invalid native viewport"));}
     if metadata.len()%48!=0||metadata.len()/48>COMMAND_LIMIT{return Err(invalid("invalid native metadata size"));}
-    let out=py.detach(||->PyResult<Vec<u8>>{
+    let build=||->CompileResult<Vec<u8>>{
         let mut reader=Reader{data:metadata,at:0};let mut raw=Vec::new();let mut scopes=Vec::new();
         while reader.at<metadata.len(){
             let kind=reader.u32()?;let flags=reader.u32()?;let area=reader.rect()?;let alpha=reader.number()?;
@@ -127,8 +125,8 @@ pub fn plan_native_scene<'py>(py:Python<'py>,metadata:&[u8],page:Rect,scale:f64,
             request(&mut out,mode,start,end,rect,density);
         }
         Ok(out)
-    })?;
-    Ok(PyBytes::new(py,&out))
+    };
+    build()
 }
 
 fn argb(values:[f64;4])->u32{
@@ -144,7 +142,7 @@ fn polygon(points:&[[f64;2]])->Vec<u8>{
 fn push(scene:&mut Scene,op:Operation,bounds:Option<Rect>,axis_clip:Option<Rect>){
     scene.commands.push(Command{op,matrix:IDENTITY,bounds,axis_clip,scope_end:None,capture_end:None,complex_depth:0,native_opcode:0});
 }
-fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<u32>>)->PyResult<()>{
+fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<u32>>)->CompileResult<()>{
     let kind=p.u32()?;let m=p.matrix()?;let b=p.rect()?;
     let coords=[p.number()?,p.number()?,p.number()?,p.number()?,p.number()?,p.number()?];
     let extend=[p.u32()?!=0,p.u32()?!=0];let mut lut=Vec::with_capacity(256);
@@ -186,7 +184,7 @@ fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<
         else{Operation::Linear{resource,start,end,stops,even_odd:false}};
     push(scene,op,Some(b),None);push(scene,Operation::ClipEnd,None,None);Ok(())
 }
-fn import_native(data:&[u8])->PyResult<Scene>{
+fn import_native(data:&[u8])->CompileResult<Scene>{
     if data.len()>256*1024*1024{return Err(invalid("native input byte budget exceeded"));}
     let mut reader=Reader{data,at:0};let mut scene=Scene::new();let mut index=HashMap::new();
     while reader.at<data.len(){
@@ -209,7 +207,7 @@ fn import_native(data:&[u8])->PyResult<Scene>{
                 }
                 let n=p.u64()?;let bytes=p.take(n)?;validate_path(bytes)?;
                 if bytes.is_empty()&&kind<2{p.done()?;continue;}
-                if kind==0||kind==2{bounds=super::super::wire_bbox(bytes,Some(matrix))?.map(|(a,b,c,d)|[a,b,c,d]);}
+                if kind==0||kind==2{bounds=packed_bounds(bytes,matrix)?;}
                 if kind==2{axis_clip=axis_rectangle(bytes,&matrix);}
                 let owned=if bytes.is_empty(){let mut v=vec![1];v.extend_from_slice(&[0;16]);v.push(4);v}else{bytes.to_vec()};
                 let resource=scene.intern(Resource::Path(owned),&mut index)?;
@@ -245,7 +243,18 @@ fn import_native(data:&[u8])->PyResult<Scene>{
     }
     Ok(scene)
 }
+pub fn compile(data:&[u8])->CompileResult<RustCompiledScene>{
+    let owned=import_native(data)?;let source_count=owned.commands.len();
+    let scene=owned.analyse()?;Ok(RustCompiledScene{scene,source_count})
+}
+#[cfg(feature="python")]
 #[pyfunction]
-pub fn compile_native_scene(py:Python<'_>,data:&[u8])->PyResult<RustCompiledScene>{
-    py.detach(||{let owned=import_native(data)?;let source_count=owned.commands.len();let scene=owned.analyse()?;Ok(RustCompiledScene{scene,source_count})})
+#[pyo3(signature=(metadata,page,scale=1.,viewport=None))]
+pub fn plan_native_scene<'py>(py:Python<'py>,metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileResult<Bound<'py,PyBytes>>{
+    let bytes=py.detach(||plan(metadata,page,scale,viewport))?;Ok(PyBytes::new(py,&bytes))
+}
+#[cfg(feature="python")]
+#[pyfunction]
+pub fn compile_native_scene(py:Python<'_>,data:&[u8])->CompileResult<RustCompiledScene>{
+    py.detach(||compile(data))
 }

@@ -2,14 +2,11 @@
 
 ## Unreleased (1.37.3)
 
-- Replace GPU scene preparation with a Rust compiler and native PDF input, removing Python work for individual drawing commands. Keep text and outlines sharp at high zoom, with bounded memory for images and transparency; some shading and filtered edges can differ from CPU mode.
-- Prepare large PDF image transfers in parallel with lossless compression, reducing transfer size while preserving exact pixels.
-- Reduce Python preparation work further with native glyph metadata iteration, packed text clips and Rust image-channel conversion.
-- Reduce Python callback overhead when extracting PDF paths and glyph outlines for GPU rendering through a native MuPDF bridge.
-- Build large merged paths directly in the packed GPU transport format during background extraction, reducing intermediate Python coordinate objects.
-- Reduce UI-side GPU preparation by retaining packed path coordinates from the background worker through native upload.
-- Speed up GPU scene extraction by reducing intermediate coordinate lists and accelerating path bounds, transforms and merged-path assembly without changing merge rules.
-- Reduce GPU scene preparation time by packing path coordinates in native code, preserving existing rendering quality.
+- Prepare complex PDF pages faster when opening documents and switching pages.
+- Reduce memory use when viewing PDFs.
+- Reduce waiting when returning to previously opened PDFs.
+
+Some illustrations may show slight differences in colors or edges. Use CPU mode when you need to check the exact appearance.
 
 ## 1.37.2 - 2026-10-28
 
