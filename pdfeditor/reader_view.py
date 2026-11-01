@@ -244,7 +244,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                             "features": scene.features}
                 return {"mode": "fallback", "reason": scene.reason,
                         "features": scene.features}
-            bitmap_features = {"image", "stencil", "raster-shading", "clip-mask", "cpu-island", "text-raster-fallback"}
+            bitmap_features = {"image", "stencil", "raster-shading", "clip-mask", "cpu-island", "text-raster-fallback", "raster-pattern"}
             mode = ("composite" if bitmap_features.intersection(scene.features)
                     else "direct")
             return {"mode": mode, "reason": "",
@@ -496,7 +496,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             shutil.rmtree(directory, ignore_errors=True)
             if not speculative:
                 if region is None:
-                    self._finish_failed_vector_refine(page)
+                    self._finish_failed_vector_refine(
+                        page, "GPU scene worker could not start: " + str(error))
                 self.render_failed.emit(str(error))
             else:
                 self._schedule_page_prefetch()
@@ -546,12 +547,20 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
         self._vector_refine_process = None
         self._vector_refine_job = None
         scene = None
+        failure_reason = None
         try:
-            if process.returncode == 0 and os.path.isfile(job["result"]):
+            if job.get("terminating"):
+                failure_reason = "GPU scene worker timed out"
+            elif process.returncode != 0:
+                failure_reason = "GPU scene worker exited (%s)" % process.returncode
+            elif os.path.isfile(job["result"]):
                 with open(job["result"], "rb") as stream:
                     from .scene_worker_result import load
                     scene = load(stream)
-        except Exception:
+            else:
+                failure_reason = "GPU scene worker returned no result"
+        except Exception as error:
+            failure_reason = "GPU scene result could not be read: " + str(error)
             scene = None
         finally:
             shutil.rmtree(job["directory"], ignore_errors=True)
@@ -609,20 +618,27 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 self._vector_pages[job["page"]] = scene
             self.viewport().update()
         elif current and not usable and job.get("viewport") is None:
-            self._finish_failed_vector_refine(job["page"])
+            reason = (scene.reason if isinstance(scene, VectorPage) and scene.reason
+                      else failure_reason or "GPU scene worker returned invalid result")
+            self._finish_failed_vector_refine(job["page"], reason)
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
 
         self._schedule_vector_refine()
         self._schedule_page_prefetch()
 
-    def _finish_failed_vector_refine(self, page):
+    def _finish_failed_vector_refine(self, page, reason=None):
         # Keep a usable lower-resolution scene when image refinement fails.
         from .gpu_raster import VectorPage
         previous = self._vector_pages.get(page)
         if previous is None or not previous.supported:
+            if reason in ("GPU scene awaiting first frame",
+                          "GPU scene deferred by complexity probe",
+                          "GPU scene time budget exceeded"):
+                # This job has finished; its failure must not look pending.
+                reason = "GPU scene preparation failed: " + reason
             self._vector_pages[page] = VectorPage(
-                False, reason="GPU scene preparation failed")
+                False, reason=(reason or "GPU scene preparation failed")[:1024])
             self.viewport().update()
 
     def _stop_vector_refine_worker(self):
@@ -1138,7 +1154,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             if vector_scene is not None and vector_scene.supported:
                 self._draw_vector_page(page, vector_scene)
                 rasterized[page] = ("CPU+GPU" if
-                    {"raster-shading", "cpu-island"}.intersection(vector_scene.features)
+                    {"raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"}.intersection(vector_scene.features)
                     else "GPU")
             else:
                 rasterized[page] = "CPU"
@@ -1233,7 +1249,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             if page not in self._previews:
                 w, h = self._page_sizes[page]
                 scale = min(0.75, math.sqrt(PREVIEW_PIXELS / max(1, w * h)))
-                image = qimage_from_render(*document.render(page, scale))
+                image = qimage_from_render(*document.render(page, scale, copy_pixels=False))
                 self._previews[page] = QPixmap.fromImage(image)
         # Document invalidation owns the scene cache. Ask it on every refresh
         # so an edit on the same page cannot leave stale native geometry here.

@@ -57,8 +57,7 @@ fn compile(a:&Args,start:Instant)->Result<(Vec<u8>,Option<[f64;4]>),String>{
         let data=job.materialize(&plan)?;
         _path_packer::scene_compiler::native_input::compile(data.bytes()?)?
     };
-    let mut features=vec!["rust-compiler".into()];
-    if compiled.images_bytes()>0{features.extend(["image".into(),"image-downsample".into(),"raster-shading".into()]);}
+    let mut features=compiled.feature_names();
     if a.viewport.is_some(){features.push("viewport-images".into());}
     let scene=packet::Scene{scale:a.scale,commands:compiled.commands_len() as u32,features,packet:compiled.packet()?};drop(compiled);
     if start.elapsed().as_secs_f64()>=a.timeout{return Err("GPU scene time budget exceeded".into());}

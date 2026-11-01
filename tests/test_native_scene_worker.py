@@ -69,6 +69,16 @@ class NativeSceneWorkerTests(unittest.TestCase):
         self.assertTrue(actual.supported,actual.reason)
         self.assertEqual(actual,expected)
 
+    def test_sdk_version_mismatch_returns_exact_versions_without_compilation(self):
+        # A missing PDF proves the version guard runs before parsing its input.
+        command=native_command()
+        command[command.index('--expected-mupdf')+1]='0.0.0-test-mismatch'
+        actual=self.invoke(command=command)
+        self.assertFalse(actual.supported)
+        self.assertEqual(actual.reason,
+            'unsupported Rust GPU scene: native MuPDF version mismatch '
+            f'(bridge={pymupdf.VersionFitz}, runtime=0.0.0-test-mismatch)')
+
     def test_python_cache_is_read_without_loading_sdk_and_native_cache_is_read_by_python(self):
         self.input.write_bytes(fixtures.soft_mask_pdf_bytes())
         with pymupdf.open(self.input) as doc:expected=compile_vector_page(doc[0])

@@ -1,7 +1,7 @@
 import sys
 
 
-def main():
+def main(*, allow_residency=True):
     if "--gpu-scene-worker" in sys.argv:
         from .gpu_scene_worker import main as gpu_scene_main
         index = sys.argv.index("--gpu-scene-worker")
@@ -28,16 +28,19 @@ def main():
     parser.add_argument("--peer-token")
     parser.add_argument("--peer-request")
     parser.add_argument("--no-updates", action="store_true")
+    parser.add_argument("--no-resident", action="store_true",
+                        help="Open a fresh process and exit when its last window closes")
     args = parser.parse_args()
     from .paths import is_packaged
     # MSIX updates are installed through the package channel, not Inno Setup.
     args.no_updates = args.no_updates or is_packaged()
     workspace = args.workspace or settings.startup_workspace()
+    allow_residency = allow_residency and not args.no_resident
 
     # A launch that only forwards a file needs no QApplication, UI DLLs or
     # theme initialization. Blocking local-socket waits work before the GUI
     # event loop exists. Authenticated peer handoffs keep their own channel.
-    if workspace == "reader" and not args.peer and settings.reader_resident():
+    if allow_residency and workspace == "reader" and not args.peer and settings.reader_resident():
         from .reader_launch import forward_to_resident
         if forward_to_resident(args.path):
             return
@@ -64,6 +67,7 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app._spdf_standalone_reader = workspace == "reader"
+    app._spdf_reader_residency_allowed = allow_residency
     from .app import new_window
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
@@ -89,7 +93,7 @@ def main():
     # pdfeditor를 내부 모듈로 불러 new_window/AppWindow를 만들면 기본값은 꺼짐이다.
     new_window(args.path, updates_enabled=not args.no_updates,
                workspace_mode=workspace)
-    if workspace == "reader" and settings.reader_resident():
+    if allow_residency and workspace == "reader" and settings.reader_resident():
         from .reader_resident import configure_residency
         configure_residency(True, updates_enabled=not args.no_updates)
     from .process_workspace import application_bridge

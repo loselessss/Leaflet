@@ -1,14 +1,21 @@
 # Changelog
 
-## Unreleased (1.37.3)
+## 1.37.3 - 2026-11-01
 
 ### 성능 개선
 
 - Prepare complex PDF pages faster when opening documents and switching pages.
-- Reduce memory use when viewing PDFs.
+- Reduce memory use when viewing PDFs, including page previews and thumbnails.
 - Reduce waiting when returning to previously opened PDFs.
 
 Some illustrations may show slight differences in colors or edges. Use CPU mode when you need to check the exact appearance.
+
+### 버그 수정
+
+- Fix GPU-rendered pages containing ordinary images being incorrectly labeled CPU+GPU.
+- Fix GPU display falling back to CPU when a development launch uses another Python environment's PDF libraries.
+- Preserve the reason for switching to CPU display when GPU preparation fails.
+- Make development launches through `run.pyw` open a fresh process and exit on close without reusing or remaining in the system tray.
 
 ## 1.37.2 - 2026-10-28
 

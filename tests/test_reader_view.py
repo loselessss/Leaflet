@@ -429,6 +429,14 @@ class ReaderViewTests(unittest.TestCase):
             self.assertEqual(text, "CPU+GPU rendering")
             self.assertIn("shading bitmap preparation", tip)
             self.assertIn("blend/transparency region rasterization", tip)
+            for features in (("image", "image-downsample"),
+                             ("image", "alpha-image-fusion", "clip-mask", "vector-shading")):
+                text, tip = _render_diagnostic_summary({"mode": "composite", "features": features})
+                self.assertEqual(text, "GPU rendering (composited)")
+                self.assertNotIn("shading bitmap preparation", tip)
+            for feature in ('raster-pattern', 'text-raster-fallback'):
+                text, _tip = _render_diagnostic_summary({"mode": "composite", "features": (feature,)})
+                self.assertEqual(text, "CPU+GPU rendering")
         finally:
             set_language(previous)
 
@@ -1186,7 +1194,39 @@ class ReaderViewTests(unittest.TestCase):
         }
         self.view._poll_vector_refine_worker()
         self.assertEqual(self.view.render_diagnostic(0)["mode"], "fallback")
+        self.assertEqual(self.view.render_diagnostic(0)["reason"], "GPU scene worker exited (1)")
         self.assertFalse(Path(directory).exists())
+
+    def test_failed_worker_keeps_specific_compiler_or_result_failure(self):
+        from pdfeditor.gpu_raster import VectorPage
+        cases = (
+            (pickle.dumps(VectorPage(False, reason='unsupported Rust GPU scene: native MuPDF version mismatch')),
+             'unsupported Rust GPU scene: native MuPDF version mismatch'),
+            (pickle.dumps(VectorPage(False, reason='GPU scene time budget exceeded')),
+             'GPU scene preparation failed: GPU scene time budget exceeded'),
+            (b'LFSW\x01\0\0\0bad', 'GPU scene result could not be read: truncated native worker header'),
+            (pickle.dumps(None), 'GPU scene worker returned invalid result'),
+            (None, 'GPU scene worker returned no result'),
+        )
+        for payload, expected in cases:
+            with self.subTest(expected=expected):
+                self.view._d2d_requested = True
+                self.view._vector_pages[0] = VectorPage(False, reason='GPU scene awaiting first frame')
+                process = Mock(returncode=0)
+                process.poll.return_value = 0
+                directory = tempfile.mkdtemp(prefix='spdf-worker-test-')
+                result = Path(directory) / 'result.bin'
+                if payload is not None:
+                    result.write_bytes(payload)
+                self.view._vector_refine_process = process
+                self.view._vector_refine_job = {
+                    'document': self.doc, 'generation': self.doc.render_generation,
+                    'page': 0, 'scale': self.view._vector_raster_scale(),
+                    'directory': directory, 'result': str(result),
+                }
+                self.view._poll_vector_refine_worker()
+                self.assertEqual(self.view.render_diagnostic(0)['reason'], expected)
+                self.assertFalse(Path(directory).exists())
 
     def test_failed_image_refinement_keeps_usable_scene(self):
         from pdfeditor.gpu_raster import VectorPage

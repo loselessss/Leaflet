@@ -50,7 +50,8 @@ class ReaderResident(QObject):
         self.tray.hide()
 
     def park(self, window):
-        if self.quitting or window.workspace_mode != "reader" or not settings.reader_resident():
+        if (not getattr(self.app, "_spdf_reader_residency_allowed", True) or
+                self.quitting or window.workspace_mode != "reader" or not settings.reader_resident()):
             return False
         if not self.start():
             return False
@@ -120,6 +121,8 @@ class ReaderResident(QObject):
 def configure_residency(enabled, *, updates_enabled=True):
     app = QApplication.instance()
     if app is None or not getattr(app, "_spdf_standalone_reader", False):
+        return False
+    if enabled and not getattr(app, "_spdf_reader_residency_allowed", True):
         return False
     resident = getattr(app, "_spdf_reader_resident", None)
     if not enabled:

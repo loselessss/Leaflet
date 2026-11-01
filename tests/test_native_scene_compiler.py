@@ -13,6 +13,71 @@ from tests import test_gpu_raster as fixtures
 
 
 class NativeSceneCompilerTests(unittest.TestCase):
+    def test_preparation_provenance_changes_features_without_changing_gpu_packet(self):
+        from pdfeditor._path_packer import compile_native_scene
+        expected_packet = None
+        for provenance, expected_feature in ((0, None), (0x100, 'raster-shading'),
+                (0x200, 'cpu-island'), (0x4000, 'raster-pattern'),
+                (0x1000, 'text-raster-fallback'), (0xc00, 'alpha-image-fusion')):
+            payload = struct.pack('<6d4I', 20., 0., 0., 20., 0., 0., 1, 1, 4, 1 | provenance)
+            payload += bytes((10, 20, 30, 255))
+            compiled = compile_native_scene(struct.pack('<IQ', 9, len(payload)) + payload)
+            if expected_packet is None:
+                expected_packet = compiled.to_bytes()
+            self.assertEqual(compiled.to_bytes(), expected_packet)
+            if expected_feature is not None:
+                self.assertIn(expected_feature, compiled.features)
+            self.assertEqual('raster-shading' in compiled.features, bool(provenance & 0x100))
+
+    def test_actual_cpu_composite_capture_keeps_mixed_rendering_feature(self):
+        with pymupdf.open(stream=fixtures.nonisolated_single_path_pdf_bytes(alpha=1., knockout=True),
+                          filetype='pdf') as doc:
+            page = doc[0]
+            page.set_mediabox(pymupdf.Rect(0, 0, 5000, 5000))
+            form = page.get_xobjects()[0][0]
+            doc.update_stream(form, doc.xref_stream(form) * 130)
+            scene = compile_vector_page(page)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertIn('cpu-island', scene.features)
+            self.assertNotIn('raster-shading', scene.features)
+
+    def test_cpu_function_shading_bitmap_is_reported_as_cpu_preparation(self):
+        with pymupdf.open() as doc:
+            page = doc.new_page(width=100, height=100)
+            function = doc.get_new_xref()
+            doc.update_object(function, '<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1] >>')
+            doc.update_stream(function, b'{ pop dup 0 exch }')
+            shading = doc.get_new_xref()
+            doc.update_object(shading, f'<< /ShadingType 1 /ColorSpace /DeviceRGB /Domain [0 1 0 1] '
+                                      f'/Matrix [100 0 0 100 0 0] /Function {function} 0 R >>')
+            resources = int(doc.xref_get_key(page.xref, 'Resources')[1].split()[0])
+            doc.update_object(resources, f'<< /Shading << /Sh1 {shading} 0 R >> >>')
+            contents = doc.get_new_xref()
+            doc.update_object(contents, '<< >>')
+            doc.update_stream(contents, b'/Sh1 sh')
+            page.set_contents(contents)
+            scene = compile_vector_page(page)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertIn('raster-shading', scene.features)
+            self.assertNotIn('vector-shading', scene.features)
+
+    def test_native_features_distinguish_images_gpu_gradients_and_cpu_pattern_capture(self):
+        for name in ('repeated_image_pdf_bytes', 'linear_gradient_pdf_bytes',
+                     'radial_gradient_pdf_bytes', 'image_mask_pdf_bytes', 'tiling_pattern_pdf_bytes'):
+            with self.subTest(name=name), pymupdf.open(stream=getattr(fixtures, name)(), filetype='pdf') as doc:
+                scene = compile_vector_page(doc[0])
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertNotIn('raster-shading', scene.features)
+                self.assertNotIn('cpu-island', scene.features)
+                if name == 'tiling_pattern_pdf_bytes':
+                    self.assertIn('raster-pattern', scene.features)
+                else:
+                    self.assertNotIn('raster-pattern', scene.features)
+                if 'gradient' in name:
+                    self.assertIn('vector-shading', scene.features)
+                elif name == 'repeated_image_pdf_bytes':
+                    self.assertIn('image', scene.features)
+
     def test_all_pdf_primitive_fixtures_compile_without_python_extractor(self):
         from pdfeditor.mupdf_path import compile_page
         with patch.object(reference,'_vector_page_from_pymupdf',side_effect=AssertionError), \

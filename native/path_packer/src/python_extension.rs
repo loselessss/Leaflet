@@ -1,9 +1,10 @@
 // Pack existing Python path tuples into the renderer's 28-byte command ABI.
-// No renderer handles, pointer casts, or unsafe buffer access are needed here.
+// Native buffer copying is isolated in raster_copy with checked buffer exports.
 use pyo3::exceptions::{PyFloatingPointError, PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyTuple};
 mod parallel_buffers;
+mod raster_copy;
 
 
 const COMMAND_BYTES: usize = 28;
@@ -281,6 +282,7 @@ fn _path_packer(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(scene_compiler::native_input::compile_native_scene, module)?)?;
     module.add_function(wrap_pyfunction!(parallel_buffers::compress_buffers, module)?)?;
     module.add_function(wrap_pyfunction!(parallel_buffers::decompress_buffer, module)?)?;
+    module.add_function(wrap_pyfunction!(raster_copy::copy_rgb_rows, module)?)?;
     module.add("COMMAND_BYTES", COMMAND_BYTES)?;
     module.add_function(wrap_pyfunction!(pack_path, module)?)?;
     module.add_function(wrap_pyfunction!(pack_pixels, module)?)?;

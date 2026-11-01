@@ -47,8 +47,11 @@ def process_command(mode, endpoint, token, request_id):
     from .paths import is_frozen
     base = ([sys.executable] if is_frozen() else
             [process_python_executable(), str(Path(__file__).resolve().parents[1] / "run.py")])
-    return base + ["--workspace", mode, "--peer", endpoint, "--peer-token", token,
-                   "--peer-request", request_id]
+    command = base + ["--workspace", mode, "--peer", endpoint, "--peer-token", token,
+                      "--peer-request", request_id]
+    if not getattr(QApplication.instance(), "_spdf_reader_residency_allowed", True):
+        command.append("--no-resident")
+    return command
 
 
 @dataclass

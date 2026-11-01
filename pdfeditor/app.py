@@ -106,7 +106,7 @@ def _render_diagnostic_summary(info):
     if reason == "OpenGL CPU tiles":
         text = localize("CPU rendering · OpenGL composition",
                         "CPU 렌더링 · OpenGL 합성")
-    if mode == "composite" and {"raster-shading", "cpu-island"}.intersection(features):
+    if mode == "composite" and {"raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"}.intersection(features):
         text = localize("CPU+GPU rendering", "CPU+GPU 렌더링")
     if mode == "fallback" and short_reason:
         text += " · " + short_reason
@@ -121,6 +121,8 @@ def _render_diagnostic_summary(info):
         "vector-shading": localize("GPU gradient drawing", "GPU 그라데이션 그리기"),
         "gradient-primitive": localize("native gradient brush", "네이티브 그라데이션 브러시"),
         "raster-shading": localize("CPU-prepared gradient bitmap", "CPU에서 준비한 그라데이션 비트맵"),
+        "raster-pattern": localize("CPU-prepared pattern bitmap", "CPU에서 준비한 패턴 비트맵"),
+        "text-raster-fallback": localize("CPU-prepared glyph bitmap", "CPU에서 준비한 글자 비트맵"),
         "cpu-island": localize("CPU-prepared composite region", "CPU에서 준비한 합성 영역"),
         "transparency-group": localize(
             "transparency group", "투명도 그룹"),
@@ -170,6 +172,10 @@ def _render_diagnostic_summary(info):
         if "raster-shading" in features:
             cpu_tasks.append(localize("shading bitmap preparation",
                                       "그라데이션 비트맵 준비"))
+        if "raster-pattern" in features:
+            cpu_tasks.append(localize("pattern bitmap preparation", "패턴 비트맵 준비"))
+        if "text-raster-fallback" in features:
+            cpu_tasks.append(localize("glyph bitmap preparation", "글자 비트맵 준비"))
         if "vector-shading" in features:
             cpu_tasks.append(localize("gradient colors and geometry preparation",
                                       "그라데이션 색상·기하 정보 준비"))
@@ -1772,7 +1778,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
                 action.setChecked(settings.startup_workspace() == mode)
                 modes.addAction(action)
                 action.triggered.connect(lambda _checked, mode=mode: self._select_startup_workspace(mode))
-            if self.workspace_mode == "reader":
+            if (self.workspace_mode == "reader" and
+                    getattr(QApplication.instance(), "_spdf_reader_residency_allowed", True)):
                 resident = startup.addAction(localize(
                     "Keep reader in system tray", "리더를 트레이에 상주"))
                 resident.setCheckable(True)
@@ -1858,6 +1865,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
             self._show_shell_status(str(error), 8000)
 
     def _set_reader_resident(self, enabled):
+        if not getattr(QApplication.instance(), "_spdf_reader_residency_allowed", True):
+            return
         try:
             settings.set_reader_resident(enabled)
         except OSError as error:

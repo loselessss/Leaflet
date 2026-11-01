@@ -7,7 +7,7 @@
 GPU 가속으로 부드럽게 확대·이동하고, 텍스트 편집·페이지 구성·주석·오프라인 OCR을
 사용할 수 있는 Windows PDF 리더·편집기입니다.
 
-**버전: 1.37.3 (미배포)** · Windows · 한국어·영어
+**버전: 1.37.3** · Windows · 한국어·영어
 
 GPU 장면은 MuPDF 네이티브 입력을 받아 Rust에서 컴파일합니다. 백그라운드 열람 작업은 독립 Rust 프로세스가 PDF 열기부터 장면 준비까지 맡고, Python은 창과 페이지 작업을 제어합니다. 글자·윤곽선 글자·텍스트 클립은 벡터로 유지합니다. 정확한 표현 확인에는 CPU 모드를 사용합니다.
 
@@ -77,6 +77,15 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 ## 개발
 
 Python, PyQt5, PyMuPDF, Direct2D, RapidOCR로 개발했습니다.
+
+`run.py`와 `run.pyw`는 저장소의 `.venv`가 있으면 먼저 해당 Python으로 전환합니다.
+Windows 기본 Python과 네이티브 렌더러의 MuPDF 버전이 달라지는 것을 방지합니다.
+`.venv`가 없는 소스 환경에서는 직접 선택한 Python과 같은 SDK로 네이티브 모듈을 빌드해야 합니다.
+설치본과 다른 프로그램의 내부 모듈 실행에는 이 개발 런처 전환이 적용되지 않습니다.
+
+`run.pyw`는 콘솔 없이 새 개발 프로세스를 열고 트레이 연결·상주를 사용하지 않습니다.
+창을 닫으면 종료하며, 저장된 트레이 설정은 바꾸지 않습니다. `run.py`에도
+`--no-resident`를 붙이면 같은 방식으로 실행할 수 있습니다.
 
 [소스·빌드 안내](SOURCE_CODE.md),
 [리더 API 연동](docs/READER_INTEGRATION.md),

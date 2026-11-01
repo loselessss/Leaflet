@@ -42,7 +42,8 @@ enum Operation {
 struct Command {op:Operation,matrix:Matrix,bounds:Option<Rect>,scope_end:Option<u32>,capture_end:Option<u32>,complex_depth:u32,native_opcode:u32,axis_clip:Option<Rect>}
 
 #[derive(Serialize)]
-struct Scene {resources:Vec<Resource>,commands:Vec<Command>,resource_bytes:usize,image_bytes:usize}
+struct Scene {resources:Vec<Resource>,commands:Vec<Command>,resource_bytes:usize,image_bytes:usize,
+    #[serde(skip)] preparation:u32}
 
 #[cfg(feature="python")]
 type CompileError=pyo3::PyErr;
@@ -125,7 +126,7 @@ fn axis_rectangle(data:&[u8],matrix:&Matrix)->Option<Rect> {
 }
 
 impl Scene {
-    fn new()->Self {Self{resources:Vec::new(),commands:Vec::new(),resource_bytes:0,image_bytes:0}}
+    fn new()->Self {Self{resources:Vec::new(),commands:Vec::new(),resource_bytes:0,image_bytes:0,preparation:0}}
     fn intern(&mut self,resource:Resource,index:&mut HashMap<u64,Vec<u32>>)->CompileResult<u32> {
         let (kind,bytes,dimensions)=match &resource {
             Resource::Path(data)=>(1u8,data.as_slice(),[0,0,0]),
@@ -306,6 +307,7 @@ impl RustCompiledScene {
     #[getter] fn resource_count(&self)->usize{self.scene.resources.len()}
     #[getter] fn resource_bytes(&self)->usize{self.scene.resource_bytes}
     #[getter] fn image_bytes(&self)->usize{self.scene.image_bytes}
+    #[getter] fn features(&self)->Vec<String>{self.feature_names()}
     #[getter] fn requires_luminosity(&self)->bool {
         self.scene.commands.iter().any(|command|matches!(command.op,Operation::Mask{luminosity:true,..}))
     }
@@ -348,6 +350,19 @@ pub fn compile_scene(py:Python<'_>,scene:&Bound<'_,PyAny>)->CompileResult<RustCo
 
 // The standalone worker uses the same owned scene and serializer as the bindings.
 impl RustCompiledScene {
+    pub fn feature_names(&self)->Vec<String>{
+        let mut features=vec!["rust-compiler".to_string()];
+        if self.scene.image_bytes>0{features.extend(["image".into(),"image-downsample".into()]);}
+        if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Linear{..}|Operation::Radial{..})){
+            features.extend(["shading".into(),"vector-shading".into(),"gradient-primitive".into()]);
+        }
+        for (flag,names) in [(0x100,&["raster-shading"][..]),(0x200,&["cpu-island"][..]),
+            (0x400,&["clip-mask"][..]),(0x800,&["alpha-image-fusion"][..]),
+            (0x1000,&["text-raster-fallback"][..]),(0x2000,&["stencil"][..]),
+            (0x4000,&["raster-pattern"][..])]{
+            if self.scene.preparation&flag!=0{features.extend(names.iter().map(|s|s.to_string()));}
+        }features
+    }
     pub fn commands_len(&self)->usize{self.scene.commands.len()}
     pub fn images_bytes(&self)->usize{self.scene.image_bytes}
     pub fn packet(&self)->CompileResult<Vec<u8>>{

@@ -9,6 +9,12 @@ from PyQt5.QtWidgets import (
 )
 
 from .i18n import tr
+from .raster_buffer import RasterBuffer
+
+try:
+    from ._path_packer import copy_rgb_rows as _copy_rgb_rows
+except ImportError:
+    _copy_rgb_rows = None
 
 THUMB_W = 120  # 썸네일 가로 픽셀
 THUMB_H = int(THUMB_W * 1.5)
@@ -224,13 +230,23 @@ class ThumbnailDelegate(QStyledItemDelegate):
 
 
 def qimage_from_render(w, h, stride, samples, device_pixel_ratio=1.0):
-    """core.Document.render() 결과를 QImage로.
-
-    copy()가 필요한 이유: samples는 PyMuPDF가 소유한 버퍼라 pixmap이
-    해제되면 사라진다. QImage는 기본적으로 버퍼를 참조만 하므로 복사본을
-    쥐고 있어야 나중에 그릴 때 깨지지 않는다.
-    """
-    image = QImage(samples, w, h, stride, QImage.Format_RGB888).copy()
+    """Copy pixels into Qt-owned memory; no borrowed pointer escapes this call."""
+    if isinstance(samples, RasterBuffer):
+        if samples.geometry != (w, h, stride):
+            raise ValueError('display buffer geometry mismatch')
+        if _copy_rgb_rows is None:
+            # Development with an older/missing extension still avoids bytes.
+            image = QImage(samples.view, w, h, stride, QImage.Format_RGB888).copy()
+        else:
+            image = QImage(w, h, QImage.Format_RGB888)
+            if image.isNull():
+                raise MemoryError('display image allocation failed')
+            bits = image.bits()
+            bits.setsize(image.sizeInBytes())
+            with memoryview(bits) as destination:
+                _copy_rgb_rows(samples.view, destination, w, h, stride, image.bytesPerLine())
+    else:
+        image = QImage(samples, w, h, stride, QImage.Format_RGB888).copy()
     image.setDevicePixelRatio(max(1.0, float(device_pixel_ratio)))
     return image
 

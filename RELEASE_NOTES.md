@@ -1,10 +1,11 @@
 # Leaflet Release Notes
 
-## Unreleased (1.37.3)
+## 1.37.3 - 2026-11-01
 
 - Prepare complex PDF pages faster when opening documents and switching pages.
-- Reduce memory use when viewing PDFs.
+- Reduce memory use when viewing PDFs, including page previews and thumbnails.
 - Reduce waiting when returning to previously opened PDFs.
+- Improve GPU display reliability and show accurate display status and reasons for switching to CPU mode.
 
 Some illustrations may show slight differences in colors or edges. Use CPU mode when you need to check the exact appearance.
 

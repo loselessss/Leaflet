@@ -208,15 +208,22 @@ class Document:
 
     # --- 렌더 -------------------------------------------------------
 
-    def render(self, index, zoom=1.0):
+    def render(self, index, zoom=1.0, *, copy_pixels=True):
         """페이지를 RGB888 픽셀로 렌더. (width, height, stride, bytes) 반환.
 
+        copy_pixels=False는 표시용 소비자가 복사할 때까지 픽셀 수명을
+        유지하는 RasterBuffer를 반환한다. 기본 bytes 반환은 그대로 유지한다.
         Qt 타입(QImage)을 여기서 만들지 않는 건 이 모듈을 Qt 비의존으로
         유지하기 위해서다 — 조립은 widgets.py가 한다.
         """
         display = self._display_list(index)
         pix = display.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        return pix.width, pix.height, pix.stride, pix.samples
+        if copy_pixels:
+            samples = pix.samples
+        else:
+            from .raster_buffer import RasterBuffer
+            samples = RasterBuffer(pix)
+        return pix.width, pix.height, pix.stride, samples
 
     def _display_list(self, index):
         display = self._display_cache.get(index)

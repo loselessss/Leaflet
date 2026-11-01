@@ -453,7 +453,7 @@ class ViewerMixin(NavigationMixin):
             zoom = width / pw if pw else 0.2
             pixel_ratio = render_pixel_ratio(self.thumbs)
             image = qimage_from_render(
-                *self.doc.render(row, zoom * pixel_ratio),
+                *self.doc.render(row, zoom * pixel_ratio, copy_pixels=False),
                 device_pixel_ratio=pixel_ratio)
             rotation = getattr(self.view, "page_rotation", lambda _page: 0)(row)
             if rotation:

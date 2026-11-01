@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 text editing, page organization, annotations, and offline OCR.
 
-**Version: 1.37.3 (Unreleased)** · Windows · English and Korean
+**Version: 1.37.3** · Windows · English and Korean
 
 EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.html) installed on the PC. Leaflet converts EPS to a private PDF for viewing and editing; save the result as PDF. Ghostscript is not bundled.
 
@@ -77,6 +77,16 @@ panel directly with the X button in its header.
 ## Development
 
 Built with Python, PyQt5, PyMuPDF, Direct2D, and RapidOCR.
+
+`run.py` and `run.pyw` select the repository's `.venv` interpreter, when present,
+before importing GUI/native modules. This prevents Windows' default Python from
+loading a different MuPDF version than the native bridge was built against.
+Without a local `.venv`, build native modules against the explicitly selected Python's SDK.
+Packaged and embedded launches retain their own runtimes.
+
+`run.pyw` opens a fresh development process without a console or tray forwarding/residency.
+Closing its last window exits; saved tray preferences stay unchanged. Use
+`run.py --no-resident` for the same behavior with a console.
 
 See [source and build instructions](SOURCE_CODE.md),
 [reader integration](docs/READER_INTEGRATION.md),

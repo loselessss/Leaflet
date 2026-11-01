@@ -24,9 +24,7 @@ def compile_vector_page(page, raster_scale=1., timeout_seconds=None, *, viewport
         packet=compiled.to_bytes()
         if timeout_seconds is not None and time.monotonic()-started>timeout_seconds:
             raise TimeoutError
-        features=['rust-compiler']
-        if compiled.image_bytes:
-            features.extend(('image','image-downsample','raster-shading'))
+        features=list(compiled.features)
         if viewport is not None:
             features.append('viewport-images')
         return VectorPage(True,features=tuple(features),raster_scale=scale,

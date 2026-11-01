@@ -220,7 +220,8 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
                 matrix=p.matrix()?;let width=p.u32()?;let height=p.u32()?;let stride=p.u32()?;
                 // Smooth continuous-tone images; retain nearest sampling for
                 // binary/stencil art unless the PDF explicitly requests it.
-                let interpolate=p.u32()?&3!=0;
+                let flags=p.u32()?;let interpolate=flags&3!=0;
+                scene.preparation|=flags&0x7f00;
                 let size=(height as usize).checked_mul(stride as usize).ok_or_else(||invalid("native image overflow"))?;
                 if width==0||height==0||stride as u64!=width as u64*4||size>IMAGE_LIMIT{return Err(invalid("invalid native image"));}
                 let rgba=p.take(size)?;let mut pixels=rgba.to_vec();

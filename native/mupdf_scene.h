@@ -175,7 +175,15 @@ void raster(Job& job,Result& out,uint32_t start,uint32_t end,uint32_t mode,fz_re
     if(pix->n!=4||pix->stride<w*4)throw std::runtime_error("native raster layout");
     if(mode==2||mode==3) {Result p;rect(p,area);event(out,13,p);}
     Result p;matrix(p,fz_matrix{float(w/scale),0,0,float(h/scale),float(box.x0/scale),float(box.y0/scale)});
-    put(p,uint32_t(w));put(p,uint32_t(h));put(p,uint32_t(w*4));put(p,uint32_t(1));
+    uint32_t preparation=0;const auto source_kind=job.records[start]->kind;
+    // High image-flag bits describe actual preparation, not GPU drawing.
+    if(source_kind==8)preparation|=0x100;       // CPU shading bitmap.
+    if(source_kind==15)preparation|=0x200;     // CPU composite region.
+    if(source_kind==17)preparation|=0x4000;    // CPU pattern bitmap.
+    if(source_kind>=4&&source_kind<=7)preparation|=0x1000; // Glyph fallback.
+    if(mode==2||mode==3||source_kind==13)preparation|=0x400; // Mask coverage.
+    if(source_kind==13&&mode==1)preparation|=0x800; // Single image alpha.
+    put(p,uint32_t(w));put(p,uint32_t(h));put(p,uint32_t(w*4));put(p,uint32_t(1)|preparation);
     for(int y=0;y<h;++y)blob(p,pix->samples+y*pix->stride,size_t(w)*4);
     event(out,9,p);
     if(mode==2||mode==3)event(out,14,Result{});
@@ -209,7 +217,9 @@ void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,
     if(pix->n!=4)throw std::runtime_error("native image layout");
     const fz_matrix crop={float(w/tw),0,0,float(h/th),float(x0/tw),float(y0/th)};
     Result p;matrix(p,mupdf::ll_fz_concat(crop,m));put(p,uint32_t(w));put(p,uint32_t(h));put(p,uint32_t(w*4));
-    put(p,uint32_t(image->image->interpolate)|(image->kind==9&&image->image->bpc>1?2u:0u));
+    uint32_t preparation=image->kind==10?0x2000u:0u;
+    if(end>start)preparation|=0xc00; // Image alpha fusion and mask coverage.
+    put(p,uint32_t(image->image->interpolate)|(image->kind==9&&image->image->bpc>1?2u:0u)|preparation);
     for(int y=0;y<h;++y)blob(p,pix->samples+y*pix->stride,size_t(w)*4);event(out,9,p);
 }
 void materialize(Job& job,Result& out,const Record& r,fz_rect area) {

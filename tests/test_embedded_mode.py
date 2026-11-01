@@ -57,6 +57,33 @@ class EmbeddedModeTests(unittest.TestCase):
                     for _ in range(4):
                         self.app.processEvents()
 
+    def test_no_resident_launch_cannot_enable_tray_or_park_and_inherits_to_children(self):
+        from PyQt5.QtWidgets import QAction
+        from pdfeditor import settings
+        from pdfeditor.reader_resident import ReaderResident, configure_residency
+        from pdfeditor.process_workspace import process_command
+
+        with self.document_windows() as (module, source), \
+                patch.object(self.app, '_spdf_standalone_reader', True, create=True), \
+                patch.object(self.app, '_spdf_reader_residency_allowed', False, create=True), \
+                patch.object(settings, 'reader_resident', return_value=True), \
+                patch.object(settings, 'set_reader_resident') as save_setting, \
+                patch('pdfeditor.reader_resident.ReaderResident') as create_resident:
+            window = module.new_window(source, workspace_mode='reader')
+            self.app.processEvents()
+            menu_texts = [action.text() for action in window.findChildren(QAction)]
+            self.assertNotIn('Keep reader in system tray', menu_texts)
+            window._set_reader_resident(True)
+            save_setting.assert_not_called()
+            self.assertFalse(configure_residency(True))
+            create_resident.assert_not_called()
+            resident = SimpleNamespace(app=self.app, start=Mock())
+            self.assertFalse(ReaderResident.park(resident, window))
+            resident.start.assert_not_called()
+            self.assertIn('--no-resident', process_command('reader', 'endpoint', 'token', 'request'))
+            self.assertTrue(window.close())
+            self.assertNotIn(window, module._app_windows)
+
     def test_first_open_renders_after_initial_layout_only_once(self):
         with self.document_windows() as (module, source):
             window = module.new_window(read_only=True)

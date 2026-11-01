@@ -40,6 +40,14 @@ match exactly. Only the caller's thread accesses SDK objects; Rust scoped
 threads process independent owned transfer blocks. See
 `docs/RUST_SCENE_COMPILER_REWRITE.md` for verification and measured limits.
 
+Render diagnostics come from actual native preparation provenance. Image flags
+carry separate shading, composite-region, mask, alpha-fusion, glyph-fallback,
+stencil and pattern bits into a nonserialized Rust scene field. Ordinary decoded
+images and fused image alpha do not imply CPU page rasterization. Rust supplies
+the same feature names to the GUI and independent worker; native gradients are
+reported as GPU gradients. LFSC drawing bytes remain unchanged. Cache identity
+version 17 invalidates earlier overbroad `raster-shading` metadata.
+
 The worker opens the private PDF snapshot through the matching MuPDF adapter,
 plans and compiles native events, and writes a bounded LFSW v1 result containing
 the LFDC v1 binary scene. No Python interpreter, PyO3 or Qt is linked into this
@@ -61,6 +69,28 @@ Packaging also copies the worker/bridge/MuPDF MSVC runtime dependencies beside
 the worker executable. It must start before Python or Qt can configure DLL search
 paths; relying on the GUI's Qt runtime directory or a machine-wide redistributable
 would make the independent worker fail on some installations.
+
+## RGB preview and thumbnail handoff
+
+Reader previews and sidebar thumbnails request `Document.render(copy_pixels=False)`.
+The Qt-independent `RasterBuffer` retains the SDK pixmap while its `samples_mv` is
+borrowed. `qimage_from_render` allocates a Qt-owned RGB888 image and the Rust
+`raster_copy::copy_rgb_rows` helper copies directly between the two exported
+buffers. No Python `bytes` pixel buffer is created. Both buffer exports and the
+GIL stay held throughout the synchronous copy; no SDK object enters a new thread.
+
+The copier validates RGB row sizes, pitches, contiguous byte buffers, writable
+output, non-overlap, checked arithmetic and the 256 MiB bound before any write.
+It clears Qt row padding and does not change color channels, alpha or display
+density. Qt images and their implicit copies own their storage after handoff;
+no Python attributes or external-buffer pointer lifetimes are needed to keep
+them alive. The SDK pixmap is then released instead of entering a new cache.
+
+The public default `Document.render()` still returns `(w,h,stride,bytes)`.
+CPU fallback tiles and editing/printing consumers retain their existing paths.
+Development with an older/missing extension uses an owned Qt copy of the borrowed
+view. See the [preview/thumbnail handoff benchmark](../docs/RGB_PREVIEW_HANDOFF_BENCHMARK_2026-11-01.md)
+for timings and memory limits.
 
 ## Earlier packing helpers (reference extractor only)
 

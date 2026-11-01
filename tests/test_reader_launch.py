@@ -91,6 +91,29 @@ class ReaderLaunchTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertEqual(self.requests, [{"path": os.path.abspath("sample.pdf")}])
 
+    def test_pyw_and_no_resident_flag_ignore_a_live_resident(self):
+        self.acknowledge()
+        root = Path(__file__).resolve().parents[1]
+        for entry, options in (('run.pyw', []), ('run.py', ['--no-resident'])):
+            with self.subTest(entry=entry):
+                result = self.run_client("""
+import sys,json,runpy
+from unittest.mock import patch
+settings.reader_resident=lambda:True
+sys.argv=[%r, 'sample.pdf', '--workspace', 'reader', *%r]
+class FreshApplication(Exception): pass
+with patch('pdfeditor.reader_launch.forward_to_resident', side_effect=AssertionError('must not reuse resident')), \
+     patch('PyQt5.QtWidgets.QApplication.setAttribute', side_effect=FreshApplication):
+    try:
+        runpy.run_path(%r, run_name='__main__')
+    except FreshApplication:
+        print(json.dumps({'fresh':True, 'saved_preference':settings.reader_resident()}))
+    else:
+        raise AssertionError('new application was not reached')
+""" % (entry, options, str(root / entry)))
+                self.assertEqual(result, {'fresh': True, 'saved_preference': True})
+        self.assertEqual(self.requests, [])
+
     def test_fragmented_acknowledgment_before_qapplication(self):
         self.acknowledge(fragmented=True)
         self.assertTrue(self.run_client(
