@@ -127,7 +127,10 @@ def dependency_document(version, records):
 def write_archive(destination, archive_bytes, legal_root, document, records, version):
     prefix = "Leaflet-%s/" % version
     # Exclusive creation prevents accidental replacement of existing release assets.
-    with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as output:
+    # Upstream crate notices can retain Unix-epoch dates, outside ZIP's range.
+    # Clamp archive timestamps without changing the notice bytes or originals.
+    with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED,
+                         strict_timestamps=False) as output:
         with zipfile.ZipFile(io.BytesIO(archive_bytes)) as source:
             for item in source.infolist():
                 if not item.is_dir() and include_source(item.filename):

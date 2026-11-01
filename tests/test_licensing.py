@@ -109,6 +109,9 @@ class LicensingTests(unittest.TestCase):
             legal = root / "legal"
             legal.mkdir()
             (legal / "build-requirements.txt").write_text("PyQt5==5.15.11\n", encoding="utf-8")
+            notice = legal / "LICENSE.md"
+            notice.write_bytes(b"Upstream notice with an epoch timestamp\n")
+            os.utime(notice, (0, 0))
             destination = root / "source.zip"
             write_archive(destination, source.getvalue(), legal, "source directions", [], APP_VERSION)
             prefix = "Leaflet-%s/" % APP_VERSION
@@ -118,6 +121,10 @@ class LicensingTests(unittest.TestCase):
                 self.assertEqual(archive.read(prefix + "DEPENDENCY_SOURCES.md"), b"source directions")
                 self.assertEqual(json.loads(archive.read(prefix + "dependency-sources.json")), [])
                 self.assertIn(prefix + "third-party/build-requirements.txt", archive.namelist())
+                archived_notice = prefix + "third-party/LICENSE.md"
+                self.assertEqual(archive.read(archived_notice), notice.read_bytes())
+                self.assertEqual(archive.getinfo(archived_notice).date_time[:3], (1980, 1, 1))
+                self.assertEqual(notice.stat().st_mtime, 0)
             before = destination.read_bytes()
             with self.assertRaises(FileExistsError):
                 write_archive(destination, source.getvalue(), legal, "new", [], APP_VERSION)

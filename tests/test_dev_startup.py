@@ -74,14 +74,14 @@ def main(*,allow_residency=True):
             time.sleep(.01)
         self.assertTrue(output.exists(), 'project interpreter did not reach the entry point')
         value = json.loads(output.read_text(encoding='utf-8'))
-        self.assertEqual(Path(value['prefix']), self.root / '.venv')
+        self.assertTrue(Path(value['prefix']).samefile(self.root / '.venv'))
         self.assertEqual(value['args'], args)
         self.assertFalse(value['native_imported'])
         return value
 
     def test_system_python_pyw_relaunches_pythonw_in_project_venv_before_native_imports(self):
         value = self.invoke('run.pyw')
-        self.assertEqual(Path(value['executable']), self.root / '.venv/Scripts/pythonw.exe')
+        self.assertTrue(Path(value['executable']).samefile(self.root / '.venv/Scripts/pythonw.exe'))
         self.assertFalse(value['allow_residency'])
         self.assertEqual(value['ignore_environment'], 1)
         self.assertEqual(value['no_user_site'], 1)
@@ -89,13 +89,13 @@ def main(*,allow_residency=True):
 
     def test_system_python_console_launch_uses_same_project_environment(self):
         value = self.invoke('run.py')
-        self.assertEqual(Path(value['executable']), self.root / '.venv/Scripts/python.exe')
+        self.assertTrue(Path(value['executable']).samefile(self.root / '.venv/Scripts/python.exe'))
         self.assertTrue(value['allow_residency'])
         self.assertEqual(value['ignore_environment'], 1)
 
     def test_already_selected_project_interpreter_does_not_relaunch(self):
         value = self.invoke('run.pyw', already_in_venv=True)
-        self.assertEqual(Path(value['executable']), self.root / '.venv/Scripts/python.exe')
+        self.assertTrue(Path(value['executable']).samefile(self.root / '.venv/Scripts/python.exe'))
         self.assertEqual(value['ignore_environment'], 0)
         self.assertFalse(value['allow_residency'])
 
