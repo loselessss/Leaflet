@@ -172,8 +172,9 @@ class ComplexIllustrationTests(unittest.TestCase):
             source.unlink()
             scene = pickle.loads(target.read_bytes())
         self.assertTrue(scene.supported, scene.reason)
-        self.assertIn("complex-illustration", scene.features)
-        self.assertTrue(next(x for x in scene.items if isinstance(x, VectorImage)).pixels)
+        self.assertIn("rust-compiler", scene.features)
+        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x02'))
+        self.assertGreater(scene.command_count, 0)
 
 
 if __name__ == "__main__":

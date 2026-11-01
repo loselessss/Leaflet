@@ -508,6 +508,26 @@ class D2DSurface:
         self._scenes.add(scene)
         return scene
 
+    def create_rust_scene(self, compiled, width, height):
+        """Upload the owned Rust compiler packet through one native adapter call."""
+        if self.closed:
+            raise RuntimeError("Direct2D surface is closed")
+        function = getattr(self._library, 'spdf_d2d_import_rust_scene', None)
+        if function is None:
+            raise RuntimeError("native renderer has no Rust scene import adapter")
+        if compiled.requires_luminosity:
+            self._ensure_luminosity_table()
+        payload = compiled.to_bytes()
+        function.argtypes = [c_void_p, c_void_p, c_size_t, c_float, c_float, POINTER(c_void_p)]
+        function.restype = c_int32
+        handle = c_void_p()
+        _check_hresult(function(self._handle, ctypes.c_char_p(payload), len(payload),
+                               float(width), float(height), byref(handle)),
+                       "Rust compiled scene upload")
+        result = D2DScene(self, handle)
+        self._scenes.add(result)
+        return result
+
     def draw_scene_preview(self, scene, transform):
         """Reuse a GPU raster during zoom, without allocating another scale."""
         if self.closed or scene.closed or scene._surface is not self:

@@ -698,10 +698,13 @@ class GpuRasterSceneTests(unittest.TestCase):
             recipe = replace(base, items=tuple(replace(x, pixels=b"")
                              if isinstance(x, g.VectorImage) else x for x in base.items))
             recipe_path.write_bytes(pickle.dumps(recipe))
-            with patch.object(worker, "vector_page_from_pymupdf", side_effect=AssertionError):
+            with patch.object(g, "_vector_page_from_pymupdf", side_effect=AssertionError):
                 self.assertEqual(worker.main([str(snapshot), str(result_path), "--scale", "2",
                                               "--base-scene", str(recipe_path)]), 0)
-            self.assertEqual(pickle.loads(result_path.read_bytes()), expected)
+            result = pickle.loads(result_path.read_bytes())
+            self.assertTrue(result.supported, result.reason)
+            self.assertTrue(result.compiled_packet.startswith(b'LFSC\x02'))
+            self.assertEqual(result.raster_scale, expected.raster_scale)
             self.assertFalse(Path(str(result_path) + ".tmp").exists())
 
     def test_image_refinement_reuses_vectors_and_matches_full_extraction(self):
@@ -1240,6 +1243,12 @@ class GpuRasterSceneTests(unittest.TestCase):
                             for item in scene.drawables))
 
     def setUp(self):
+        # Reference policy corpus; production is tested in test_native_scene_compiler.
+        from pdfeditor import gpu_raster as reference
+        reference_compiler = patch('pdfeditor.core.compile_vector_page',
+                                   side_effect=lambda *a, **kw: reference.vector_page_from_pymupdf(*a, **kw))
+        reference_compiler.start()
+        self.addCleanup(reference_compiler.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.path = Path(self.directory.name) / "gpu-scene.pdf"
         with fitz.open() as pdf:
@@ -1378,7 +1387,8 @@ class GpuRasterSceneTests(unittest.TestCase):
             with result_path.open("rb") as stream:
                 scene = pickle.load(stream)
         self.assertTrue(scene.supported, scene.reason)
-        self.assertGreater(len(scene.drawables), 0)
+        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x02'))
+        self.assertGreater(scene.command_count, 0)
 
     def test_original_font_cmap_can_recover_missing_glyph_id(self):
         from pdfeditor.gpu_raster import _encoded_glyph_id

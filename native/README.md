@@ -19,7 +19,26 @@ The build also uses the Windows SDK's x64 `fxc.exe` to compile
 `d2d_renderer/mask_lerp.hlsl` into an ignored header in `native/bin`. The shader
 bytecode is embedded in the DLL; runtime shader compilation is not required.
 
-## Rust path packing
+## Rust compiler and native PDF input
+
+The application and background worker use `pdfeditor.rust_scene_compiler.compile_vector_page`.
+`mupdf_scene.h` records retained MuPDF resources without Python callbacks. Rust
+`scene_compiler/native_input.rs` validates scope nesting, selects bounded raster
+regions, folds alpha-image scopes, assigns image density across the page budget,
+normalizes strokes/pixels and compiles the owned scene. `rust_scene_import.h`
+uploads LFSC v2 in one native call. Python never constructs per-drawing objects
+on this path. Stroked/text-clipping glyphs remain vector; shades, tiles and
+complex alpha coverage can use SDK rasters. Missing native support or invalid
+input returns CPU fallback, not the old Python compiler.
+
+Build the Rust extension with `python native/build_path_packer.py`, the MuPDF
+adapter with `python native/build_mupdf_path.py`, and the renderer with the batch
+file above. `build_exe.bat` performs all three. MuPDF headers and runtime must
+match exactly. Only the caller's thread accesses SDK objects; Rust scoped
+threads process independent owned transfer blocks. See
+`docs/RUST_SCENE_COMPILER_REWRITE.md` for verification and measured limits.
+
+## Earlier packing helpers (reference extractor only)
 
 `path_packer/` contains a small PyO3 extension, separate from the Direct2D DLL.
 Install Rust with the MSVC x64 toolchain and run
@@ -28,7 +47,7 @@ Cargo must be on PATH. The build uses the committed Cargo.lock (`--locked`),
 records compiler/dependency versions and notices under `native/bin`, and copies
 the ABI3 Python 3.12+ extension to `pdfeditor/_path_packer.pyd`. Generated binaries
 are ignored. `build_exe.bat` builds both native modules; release builds require
-the extension. Source-only development retains the Python implementation.
+the extension. Without native compiler support the application displays CPU pages.
 
 The packer writes one 28-byte little-endian record per command, with float64 to
 float32 rounding matching the existing ctypes path. It does not simplify paths,
@@ -52,7 +71,58 @@ the GUI does not reconstruct path tuples for upload. CPU-side compatibility
 iteration is available for refinement and disk-cache serialization. See
 `docs/PACKED_SCENE_CONSUMER_BENCHMARK_2026-10-31.md` for UI versus total timings.
 
+Background extraction also enables `packed_paths=True`: merged paths are written
+directly as float64 buffers and their bounds are computed without decoding.
+Unmerged MuPDF callbacks still produce Python tuples. See
+`docs/DIRECT_PACKED_EXTRACTION_BENCHMARK_2026-10-31.md` for timing and worker
+scene-budget observations; whole-process memory savings were not measured.
+
 ## Current ABI
+
+### Rust scene compiler
+
+`path_packer/src/scene_compiler.rs` owns paths/images/styles/gradients and
+group/clip/mask commands, validates scopes and budgets, classifies native clip
+roles, batches transformed glyph geometry and emits a versioned binary IR.
+Analysis/serialization run without Python callbacks. The production importer
+consumes native events; `compile_scene` retains the normalized importer only
+for reference comparisons. `d2d_renderer/rust_scene_import.h` is the checked
+native upload adapter used by normal application rendering.
+See `docs/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
+
+### Post-extraction parallel buffers
+
+`path_packer/src/parallel_buffers.rs` uses scoped Rust threads on immutable image/packet
+bytes only, with the GIL released. Worker transfer defaults to two execution
+lanes for batches of at least 8MiB, partitions into 1MiB LZ4 blocks, and retains
+raw buffers when compression is poor. MuPDF objects and GPU resources stay on
+their original execution paths. Input/decoded size is bounded by 64MiB.
+See `docs/RUST_PARALLEL_TRANSFER_BENCHMARK_2026-10-31.md` for phase timings,
+small-job bypass, decode cost and worker peak-RSS observations.
+
+### MuPDF path extraction
+
+`python native/build_mupdf_path.py` builds `bin/leaflet_mupdf_path.dll` with the
+active PyMuPDF wheel's SDK, import library and the installed C++ toolchain.
+It calls the exported C++ `ll_fz_walk_path` wrapper and handles path segments
+entirely in native callbacks. Rust transforms/merges the float64 buffer directly.
+The bridge retains no borrowed path pointers after the synchronous call, keeps
+the GIL for MuPDF's thread-local context, catches allocation/native exceptions
+and caps a single output at 16MiB. It requires matching MuPDF runtime/header
+versions. Reference extraction helpers can still use the original walker;
+production compilation returns CPU fallback if the native adapter is unavailable.
+
+The PDF-level native device is implemented in `mupdf_scene.h`; pattern and
+region selection now belong to Rust. The older Python extractor remains a
+comparison oracle and is not called by either application compilation entry.
+`build_exe.bat` builds and packages the bridge; the renderer ABI stays 24.
+
+The bridge now also scans glyph metadata/placement in native code and supplies
+packed outlines for uncached glyphs. Negative glyph-ID recovery and missing
+outlines use the original fallback in the reference extractor. Production input
+resolves glyph recovery and unavailable outlines natively. Rust packs channels into
+BGRA with the original integer premultiplication. See
+`docs/NATIVE_TEXT_PIXEL_BENCHMARK_2026-10-31.md` for isolated comparisons and limits.
 
 ABI version 24 can:
 

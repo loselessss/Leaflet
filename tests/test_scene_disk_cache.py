@@ -90,7 +90,7 @@ class SceneDiskCacheTests(unittest.TestCase):
         finally:
             doc.close()
         result = self.root / "result.pickle"
-        with patch("pdfeditor.gpu_scene_worker.vector_page_from_pymupdf",
+        with patch("pdfeditor.gpu_scene_worker.compile_vector_page",
                    side_effect=AssertionError("Unexpected extraction")):
             self.assertEqual(main([str(self.path), str(result),
                                    "--disk-cache-key", key]), 0)

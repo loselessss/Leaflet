@@ -9,6 +9,22 @@ from pdfeditor import d2d_backend as backend
 
 
 class PathPackerTests(unittest.TestCase):
+    def test_pixel_swizzle_and_premultiplication_match_for_all_channel_alpha_pairs(self):
+        from pdfeditor import gpu_raster as g
+        if g._rust_geometry is None or not hasattr(g._rust_geometry, 'pack_pixels'):
+            self.skipTest('Rust pixel packer not built')
+        source=bytes(channel for alpha in range(256) for value in range(256)
+                     for channel in (value, 255-value, value//2, alpha))
+        with patch.object(g, '_native_pixel_pack', False):
+            expected=g._rgba_to_premul_bgra(source,256,256)
+        self.assertEqual(g._rgba_to_premul_bgra(source,256,256),expected)
+        for source,width in ((b'',0),(bytes(range(255)),85),(bytearray(range(255)),85)):
+            with patch.object(g, '_native_pixel_pack', False):
+                expected=g._rgb_to_bgra(source,width,1)
+            self.assertEqual(g._rgb_to_bgra(source,width,1),expected)
+        with self.assertRaises(ValueError):
+            g._rgb_to_bgra(b'xx',1,1)
+
     def test_fallback_and_buffer_lifetime(self):
         commands = (("move", 1, -2), ("cubic", 1, 2, 3, 4, 5, 6), ("close",))
         expected = bytes(backend._python_path_array(commands))

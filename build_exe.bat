@@ -9,8 +9,11 @@ python make_icons.py || goto :err
 echo === Building Direct2D renderer ===
 call native\build_d2d_renderer.bat || goto :err
 
-echo === Building Rust path packer ===
+echo === Building Rust GPU scene compiler ===
 python native\build_path_packer.py || goto :err
+
+echo === Building native MuPDF input adapter ===
+python native\build_mupdf_path.py || goto :err
 
 echo === Cleaning previous build ===
 if exist build rmdir /s /q build

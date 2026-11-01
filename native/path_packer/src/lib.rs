@@ -3,10 +3,120 @@
 use pyo3::exceptions::{PyFloatingPointError, PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyTuple};
+mod parallel_buffers;
+mod scene_compiler;
 
 const COMMAND_BYTES: usize = 28;
 
 type Matrix = [f64; 6];
+
+#[pyfunction]
+fn pack_pixels<'py>(py: Python<'py>, source: &[u8], count: usize, alpha: bool)
+    -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+    let channels=if alpha {4} else {3};
+    let input=count.checked_mul(channels).ok_or_else(|| PyOverflowError::new_err("pixel size overflow"))?;
+    let size=count.checked_mul(4).ok_or_else(|| PyOverflowError::new_err("pixel size overflow"))?;
+    if source.len()<input {return Err(PyValueError::new_err("rasterized image data is incomplete"));}
+    pyo3::types::PyBytes::new_with(py,size,|output| {
+        for (input,output) in source[..input].chunks_exact(channels).zip(output.chunks_exact_mut(4)) {
+            let a=if alpha {input[3]} else {255};
+            for (target,source) in [(0,2),(1,1),(2,0)] {
+                output[target]=if a==255 {input[source]} else {
+                    ((input[source] as u16 * a as u16 + 127)/255) as u8
+                };
+            }
+            output[3]=a;
+        }
+        Ok(())
+    })
+}
+
+#[pyfunction]
+fn merge_wire_commands<'py>(py: Python<'py>, sources: Vec<(Bound<'py, PyAny>, Option<Matrix>)>)
+    -> PyResult<(Bound<'py, pyo3::types::PyBytes>, usize)> {
+    let mut output = Vec::new();
+    let mut commands_count = 0;
+    for (commands, transform) in sources {
+        if let Ok(bytes) = commands.cast::<pyo3::types::PyBytes>() {
+            commands_count += append_wire(bytes.as_bytes(), transform.as_ref(), &mut output)?;
+            continue;
+        }
+        let commands = commands.cast::<PyTuple>()?;
+        for command in commands.iter() {
+            let command = command.cast::<PyTuple>()?;
+            let name = command.get_item(0)?;
+            let (kind, count) = match name.extract::<&str>()? {
+                "move" => (1u8, 2), "line" => (2, 2), "cubic" => (3, 6), "close" => (4, 0),
+                _ => return Err(PyValueError::new_err("invalid wire path command")),
+            };
+            if command.len() != count + 1 { return Err(PyValueError::new_err("invalid wire path length")); }
+            output.push(kind);
+            for index in (1..=count).step_by(2) {
+                let x = command.get_item(index)?.extract::<f64>()?;
+                let y = command.get_item(index + 1)?.extract::<f64>()?;
+                let (x, y) = if let Some(matrix) = &transform { point(x, y, matrix)? } else { (x, y) };
+                output.extend_from_slice(&x.to_le_bytes());
+                output.extend_from_slice(&y.to_le_bytes());
+            }
+            commands_count += 1;
+        }
+    }
+    Ok((pyo3::types::PyBytes::new(py, &output), commands_count))
+}
+
+fn append_wire(data: &[u8], transform: Option<&Matrix>, output: &mut Vec<u8>) -> PyResult<usize> {
+    let mut offset = 0; let mut commands = 0;
+    while offset < data.len() {
+        let kind = data[offset]; offset += 1;
+        let count = match kind {1|2 => 2, 3 => 6, 4 => 0,
+            _ => return Err(PyValueError::new_err("invalid wire tag"))};
+        if data.len()-offset < count*8 {return Err(PyValueError::new_err("truncated wire path"));}
+        output.push(kind);
+        for _ in (0..count).step_by(2) {
+            let mut a=[0u8;8];let mut b=[0u8;8];
+            a.copy_from_slice(&data[offset..offset+8]);b.copy_from_slice(&data[offset+8..offset+16]);offset+=16;
+            let (x,y)=(f64::from_le_bytes(a),f64::from_le_bytes(b));
+            let (x,y)=if let Some(matrix)=transform {point(x,y,matrix)?} else {(x,y)};
+            output.extend_from_slice(&x.to_le_bytes());output.extend_from_slice(&y.to_le_bytes());
+        }
+        commands+=1;
+    }
+    Ok(commands)
+}
+
+#[pyfunction]
+fn transform_wire<'py>(py: Python<'py>, data: &[u8], transform: Matrix)
+    -> PyResult<(Bound<'py, pyo3::types::PyBytes>, usize)> {
+    let mut output=Vec::with_capacity(data.len());
+    let count=append_wire(data,Some(&transform),&mut output)?;
+    Ok((pyo3::types::PyBytes::new(py,&output),count))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data, transform=None))]
+fn wire_bbox(data: &[u8], transform: Option<Matrix>) -> PyResult<Option<(f64, f64, f64, f64)>> {
+    let mut bounds: Option<(f64, f64, f64, f64)> = None;
+    let mut offset = 0;
+    while offset < data.len() {
+        let count = match data[offset] { 1 | 2 => 2, 3 => 6, 4 => 0,
+            _ => return Err(PyValueError::new_err("invalid wire path tag")) };
+        offset += 1;
+        if data.len() - offset < count*8 { return Err(PyValueError::new_err("truncated wire path")); }
+        for _ in (0..count).step_by(2) {
+            let mut first = [0u8;8]; let mut second = [0u8;8];
+            first.copy_from_slice(&data[offset..offset+8]);
+            second.copy_from_slice(&data[offset+8..offset+16]); offset += 16;
+            let (x, y) = (f64::from_le_bytes(first), f64::from_le_bytes(second));
+            let (x, y) = if let Some(matrix) = &transform { point(x, y, matrix)? } else { (x, y) };
+            if !x.is_finite() || !y.is_finite() { return Err(PyFloatingPointError::new_err("non-finite bounds")); }
+            if let Some((x0,y0,x1,y1)) = &mut bounds {
+                if x < *x0 { *x0=x; } if y < *y0 { *y0=y; }
+                if x > *x1 { *x1=x; } if y > *y1 { *y1=y; }
+            } else { bounds = Some((x,y,x,y)); }
+        }
+    }
+    Ok(bounds)
+}
 
 #[pyfunction]
 fn pack_wire_path<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyByteArray>> {
@@ -165,11 +275,21 @@ fn pack_path<'py>(py: Python<'py>, commands: &Bound<'py, PyTuple>) -> PyResult<B
 
 #[pymodule]
 fn _path_packer(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<scene_compiler::RustCompiledScene>()?;
+    module.add_function(wrap_pyfunction!(scene_compiler::compile_scene, module)?)?;
+    module.add_function(wrap_pyfunction!(scene_compiler::native_input::plan_native_scene, module)?)?;
+    module.add_function(wrap_pyfunction!(scene_compiler::native_input::compile_native_scene, module)?)?;
+    module.add_function(wrap_pyfunction!(parallel_buffers::compress_buffers, module)?)?;
+    module.add_function(wrap_pyfunction!(parallel_buffers::decompress_buffer, module)?)?;
     module.add("COMMAND_BYTES", COMMAND_BYTES)?;
     module.add_function(wrap_pyfunction!(pack_path, module)?)?;
+    module.add_function(wrap_pyfunction!(pack_pixels, module)?)?;
     module.add_function(wrap_pyfunction!(commands_bbox, module)?)?;
     module.add_function(wrap_pyfunction!(transform_commands, module)?)?;
     module.add_function(wrap_pyfunction!(merge_commands, module)?)?;
+    module.add_function(wrap_pyfunction!(merge_wire_commands, module)?)?;
+    module.add_function(wrap_pyfunction!(wire_bbox, module)?)?;
+    module.add_function(wrap_pyfunction!(transform_wire, module)?)?;
     module.add_function(wrap_pyfunction!(encode_commands, module)?)?;
     module.add_function(wrap_pyfunction!(decode_commands, module)?)?;
     module.add_function(wrap_pyfunction!(pack_wire_path, module)?)?;

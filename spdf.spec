@@ -40,6 +40,9 @@ if not d2d_renderer.is_file():
         "Direct2D renderer is missing; run native\\build_d2d_renderer.bat first")
 if not (spec_root / "pdfeditor" / "_path_packer.pyd").is_file():
     raise FileNotFoundError("Rust path packer is missing; run native/build_path_packer.py first")
+mupdf_path_bridge = spec_root / "native" / "bin" / "leaflet_mupdf_path.dll"
+if not mupdf_path_bridge.is_file():
+    raise FileNotFoundError("MuPDF path bridge is missing; run native/build_mupdf_path.py first")
 
 # --- OCR 워커: onnxruntime/rapidocr/cv2, PyQt5 제외 ---
 ocr_datas, ocr_bins, ocr_hidden = [], [], []
@@ -93,7 +96,7 @@ exe_ocr = EXE(
 # --- GUI: PyQt5/PyMuPDF, onnxruntime류 제외(워커가 담당) ---
 a_gui = Analysis(
     ["run.py"],
-    binaries=[(str(d2d_renderer), "native")],
+    binaries=[(str(d2d_renderer), "native"), (str(mupdf_path_bridge), "native")],
     datas=[("assets/spdf.ico", "assets"),
            ("assets/spdf_doc.ico", "assets"),
            ("assets/leaflet_ai.ico", "assets"),

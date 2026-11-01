@@ -30,6 +30,10 @@ else:
 
 # Per-extraction work only: never retained between documents or zoom jobs.
 _extraction_work = ContextVar("spdf_extraction_work", default=None)
+_packed_path_extraction = ContextVar("spdf_packed_path_extraction", default=False)
+_native_path_walk = ContextVar("spdf_native_path_walk", default=False)
+_native_text_walk = ContextVar("spdf_native_text_walk", default=False)
+_native_pixel_pack = True
 
 
 MAX_GPU_IMAGE_BYTES = 64 * 1024 * 1024
@@ -164,6 +168,16 @@ class VectorPage:
     features: tuple = ()
     raster_scale: float = 1.0
     viewport: tuple = None
+    compiled_packet: bytes = b""
+    command_count: int = 0
+
+    @property
+    def requires_luminosity(self):
+        # Native input resolves luminosity/transfer into alpha coverage.
+        return False
+
+    def to_bytes(self):
+        return self.compiled_packet
 
     @property
     def drawables(self):
@@ -279,22 +293,24 @@ class _SceneProbeDevice(_mupdf.FzDevice2):
 
 def probe_gpu_scene_complexity(page):
     """Return ``(weighted score, operations)`` from a cheap full-page pass."""
-    cookie = _mupdf.FzCookie()
-    device = _SceneProbeDevice()
-    try:
-        _mupdf.fz_run_page(page.this, device, _mupdf.FzMatrix(), cookie)
-        return device.score, device.operations
-    finally:
-        _mupdf.fz_close_device(device)
+    from .mupdf_path import probe_page
+    return probe_page(page)
 
 
 def _path_commands(path, *, allow_empty=False):
-    walker = _PathWalker()
     if isinstance(path, _mupdf.FzPath):
         resource = path
     else:
         resource = _mupdf.FzPath(path)
         resource.thisown = False
+    if _native_path_walk.get():
+        from .mupdf_path import walk_path
+        commands = walk_path(resource)
+        if commands is not None:
+            if not commands and not allow_empty:
+                raise ValueError("empty vector path")
+            return commands
+    walker = _PathWalker()
     _mupdf.fz_walk_path(resource, walker, walker.m_internal)
     if not walker.commands and not allow_empty:
         raise ValueError("empty vector path")
@@ -394,6 +410,8 @@ def _rect_tuple(rect):
 
 
 def _translate_commands(commands, dx, dy):
+    if hasattr(commands, 'native_key'):
+        return _transform_commands(commands, (1., 0., 0., 1., dx, dy))
     translated = []
     for command in commands:
         kind = command[0]
@@ -431,6 +449,13 @@ def _downsampled_size(width, height, factor):
 
 
 def _transform_commands(commands, transform):
+    if hasattr(commands, 'native_key') and _rust_geometry is not None:
+        try:
+            from .scene_transfer import PackedCommands
+            data, count = _rust_geometry.transform_wire(commands.data, transform)
+            return PackedCommands(data, count)
+        except (AttributeError, TypeError, ArithmeticError):
+            pass
     if _rust_geometry is not None and isinstance(commands, tuple):
         try:
             return _rust_geometry.transform_commands(commands, transform)
@@ -466,6 +491,12 @@ def _python_transform_commands(commands, transform):
 
 
 def _commands_bbox(commands, transform=None):
+    from .scene_transfer import PackedCommands
+    if isinstance(commands, PackedCommands) and _rust_geometry is not None:
+        try:
+            return _rust_geometry.wire_bbox(commands.data, transform)
+        except (AttributeError, TypeError, ArithmeticError):
+            pass
     if _rust_geometry is not None and isinstance(commands, tuple):
         try:
             return _rust_geometry.commands_bbox(commands, transform)
@@ -503,6 +534,8 @@ def _image_mask_area(transform, page_rect):
 
 
 def _rect_path_bbox(commands, transform=None):
+    if len(commands) != 5:
+        return None
     if tuple(command[0] for command in commands) != (
             "move", "line", "line", "line", "close"):
         return None
@@ -681,6 +714,8 @@ def _rgb_to_bgra(samples, width, height):
     count = int(width) * int(height)
     if len(samples) < count * 3:
         raise ValueError("rasterized image data is incomplete")
+    if _native_pixel_pack and isinstance(samples, bytes) and _rust_geometry is not None and hasattr(_rust_geometry, 'pack_pixels'):
+        return _rust_geometry.pack_pixels(samples, count, False)
     bgra = bytearray(count * 4)
     for target, source in ((0, 2), (1, 1), (2, 0)):
         bgra[target::4] = samples[source:count * 3:3]
@@ -692,6 +727,8 @@ def _rgba_to_premul_bgra(samples, width, height):
     cost = int(width) * int(height) * 4
     if len(samples) < cost:
         raise ValueError("rasterized image data is incomplete")
+    if _native_pixel_pack and isinstance(samples, bytes) and _rust_geometry is not None and hasattr(_rust_geometry, 'pack_pixels'):
+        return _rust_geometry.pack_pixels(samples, cost // 4, True)
     bgra = bytearray(cost)
     alpha = samples[3:cost:4]
     opaque = alpha.count(255) == len(alpha)
@@ -1032,7 +1069,16 @@ def _merged_fill_path(chunk, *, approximate_color=False):
     first = chunk[0]
     shading = all(item.shading for item in chunk)
     commands = None
-    if _rust_geometry is not None:
+    if _packed_path_extraction.get() and _rust_geometry is not None:
+        try:
+            from .scene_transfer import PackedCommands
+            data, count = _rust_geometry.merge_wire_commands(
+                [(getattr(item.commands, 'native_key', item.commands), item.transform)
+                 for item in chunk])
+            commands = PackedCommands(data, count)
+        except (AttributeError, TypeError, ArithmeticError):
+            pass
+    if commands is None and _rust_geometry is not None:
         try:
             commands = _rust_geometry.merge_commands(
                 [(item.commands, item.transform) for item in chunk])
@@ -1045,8 +1091,10 @@ def _merged_fill_path(chunk, *, approximate_color=False):
             if item.transform is not None:
                 source = _transform_commands(source, item.transform)
             commands.extend(source)
+    if not (_packed_path_extraction.get() and hasattr(commands, 'native_key')):
+        commands = tuple(commands)
     return (VectorPath(
-        tuple(commands), even_odd=first.even_odd,
+        commands, even_odd=first.even_odd,
         fill_argb=(_average_fill_argb(chunk) if approximate_color
                    else first.fill_argb),
         shading=shading),)
@@ -1975,6 +2023,26 @@ class _DisplayListDevice(_mupdf.FzDevice2):
                 self._set_failure(str(error))
 
     def _text_outlines(self, text, ctm):
+        if _native_text_walk.get():
+            from .mupdf_path import scan_text, walk_glyph
+            records = scan_text(text, _matrix(ctm))
+            if records is not None:
+                outlines = []
+                for font, gid, ucs, *matrix in records:
+                    key = (font, gid)
+                    commands = self._glyphs.get(key)
+                    if commands is None:
+                        commands = walk_glyph(font, gid)
+                        if commands is None:
+                            # Preserve bitmap/Type3 and invisible-text recovery.
+                            break
+                        if not commands:
+                            self._features.add("text-empty-glyph")
+                        self._glyphs[key] = commands
+                    if commands:
+                        outlines.append((commands, tuple(matrix)))
+                else:
+                    return outlines
         outlines = []
         span_ptr = text.head
         while span_ptr:
@@ -2152,14 +2220,12 @@ class _DisplayListDevice(_mupdf.FzDevice2):
     def clip_text(self, _context, text, ctm, _scissor):
         try:
             self._features.add("text-clip")
-            commands = []
-            for outline, transform in self._text_outlines(text, ctm):
-                commands.extend(_transform_commands(outline, transform))
+            commands = self._merged_text_clip(text, ctm)
             if not commands:
                 # Empty text clips everything out; dropping the clip would
                 # expose drawings that MuPDF correctly hides.
                 commands = [("move", 0.0, 0.0), ("close",)]
-            self._append_item(ClipPush(tuple(commands)))
+            self._append_item(ClipPush(commands if hasattr(commands, 'native_key') else tuple(commands)))
             self._clip_depth += 1
         except Exception as error:
             self._set_failure(str(error))
@@ -2169,17 +2235,30 @@ class _DisplayListDevice(_mupdf.FzDevice2):
             self._features.add("stroked-text-clip")
             width, style = _stroke_parameters(stroke)
             width *= _uniform_scale(ctm)
-            commands = []
-            for outline, transform in self._text_outlines(text, ctm):
-                commands.extend(_transform_commands(outline, transform))
+            commands = self._merged_text_clip(text, ctm)
             if not commands:
                 self._append_item(ClipPush((("move", 0.0, 0.0), ("close",))))
             else:
                 self._append_item(ClipStrokePush(
-                    tuple(commands), width, style))
+                    commands if hasattr(commands, 'native_key') else tuple(commands), width, style))
             self._clip_depth += 1
         except Exception as error:
             self._set_failure(str(error))
+
+    def _merged_text_clip(self, text, ctm):
+        outlines = self._text_outlines(text, ctm)
+        if _packed_path_extraction.get() and _rust_geometry is not None:
+            try:
+                from .scene_transfer import PackedCommands
+                data, count = _rust_geometry.merge_wire_commands(
+                    [(getattr(commands, 'native_key', commands), matrix) for commands, matrix in outlines])
+                return PackedCommands(data, count)
+            except (AttributeError, TypeError, ArithmeticError):
+                pass
+        commands = []
+        for outline, matrix in outlines:
+            commands.extend(_transform_commands(outline, matrix))
+        return commands
 
     def clip_stroke_path(self, _context, path, stroke, ctm, _scissor):
         try:
@@ -2625,9 +2704,12 @@ structure are reused. Callers must reject stale document generations.
 def vector_page_from_pymupdf(
         page, raster_scale=1.0, timeout_seconds=None,
         *, aggressive_band_merge=False, simplify_regions=True, fuse_alpha=True,
-        stream_alpha=True, viewport=None):
+        stream_alpha=True, viewport=None, packed_paths=False, native_paths=False, native_text=False):
     """Extract with bounded, job-local reuse of geometry and color calculations."""
     token = _extraction_work.set(({}, {}, {}))
+    packed_token = _packed_path_extraction.set(bool(packed_paths))
+    native_token = _native_path_walk.set(bool(native_paths and packed_paths))
+    text_token = _native_text_walk.set(bool(native_text and native_paths and packed_paths))
     try:
         return _vector_page_from_pymupdf(
             page, raster_scale, timeout_seconds,
@@ -2636,6 +2718,9 @@ def vector_page_from_pymupdf(
             stream_alpha=stream_alpha, viewport=viewport)
     finally:
         _extraction_work.reset(token)
+        _packed_path_extraction.reset(packed_token)
+        _native_path_walk.reset(native_token)
+        _native_text_walk.reset(text_token)
 
 
 def _vector_page_from_pymupdf(

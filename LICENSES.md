@@ -28,7 +28,8 @@ GPL v3의 PyQt5를 포함합니다. 따라서 해당 오픈소스판으로 만�
 
 ## Third-party components / 외부 구성요소
 
-The Rust path packer uses PyO3 (MIT OR Apache-2.0) and its locked dependencies.
+The Rust scene compiler and path helpers use PyO3 (MIT OR Apache-2.0) and their locked dependencies.
+Its parallel buffer transport also uses lz4_flex (MIT) with safe encoding/decoding.
 Packaged builds include their versions, exact source links and original notices,
 plus Rust standard-library notices, under `third-party/rust/`.
 Rust 경로 변환 모듈의 의존성·소스 링크·원본 라이선스와 표준 라이브러리 고지는

@@ -4365,3 +4365,5 @@ void spdf_d2d_destroy_scene(void* scene) noexcept {
 void spdf_d2d_destroy_surface(void* surface) noexcept {
     delete static_cast<Surface*>(surface);
 }
+
+#include "rust_scene_import.h"

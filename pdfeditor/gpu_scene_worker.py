@@ -7,7 +7,7 @@ import time
 
 import pymupdf
 
-from .gpu_raster import vector_page_from_pymupdf, refine_page_images, VectorPage
+from .rust_scene_compiler import compile_vector_page
 
 
 def main(argv=None):
@@ -19,8 +19,9 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--aggressive-band-merge", action="store_true")
     parser.add_argument("--viewport", type=float, nargs=4)
-    parser.add_argument("--base-scene")
+    parser.add_argument("--base-scene")  # Older callers may send a reference-extractor recipe; Rust rebuilds from PDF.
     parser.add_argument("--disk-cache-key")
+    parser.add_argument("--transfer-workers", type=int, choices=(0, 1, 2, 4), default=2)
     args = parser.parse_args(argv)
 
     document = pymupdf.open(args.snapshot, filetype="pdf")
@@ -32,14 +33,8 @@ def main(argv=None):
             from .scene_disk_cache import load
             scene = load(args.disk_cache_key, page)
         cache_hit = scene is not None
-        if scene is None and args.base_scene and not args.viewport:
-            # This file is written by our parent into the private worker job.
-            with open(args.base_scene, "rb") as stream:
-                base = pickle.load(stream)
-            if isinstance(base, VectorPage):
-                scene = refine_page_images(page, base, args.scale, args.timeout)
         if scene is None:
-            scene = vector_page_from_pymupdf(
+            scene = compile_vector_page(
                 page, args.scale,
                 timeout_seconds=max(0.0, args.timeout - (time.monotonic() - started)),
                 aggressive_band_merge=args.aggressive_band_merge, viewport=args.viewport)
@@ -57,7 +52,7 @@ def main(argv=None):
     try:
         with open(temporary, "wb") as stream:
             from .scene_transfer import dump
-            dump(scene, stream)
+            dump(scene, stream, parallel_workers=args.transfer_workers)
         os.replace(temporary, args.result)
     finally:
         if os.path.exists(temporary):

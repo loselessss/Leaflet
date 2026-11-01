@@ -27,9 +27,10 @@ Press **F1** for the full usage guide.
 
 - **Reading:** GPU rendering, zoom up to 800%, search, bookmarks, draggable tabs that detach and merge,
   two-page view, and presentation mode.
+  GPU scenes compile from native MuPDF events in Rust; Python controls page jobs and hands off an opaque GPU packet. Text and stroked/text-clipping outlines stay vector. CPU mode remains the fidelity reference.
   Exact GPU updates plan temporary surface lifetimes and batch allocations within each tile; temporary storage has a fixed slot limit.
   Small complex isolated illustrations are compiled into bounded transparent images at the requested zoom quality; surrounding text remains vector. Illustration colors and edges can differ, so use CPU mode for a fidelity check.
-  Compatible raster alpha masks are folded into their images to reduce composition and memory. Different sampling rules remain separate; filtered image edges may differ slightly.
+  Raster alpha masks can be folded into their images to reduce composition and memory; filtered image edges may differ slightly.
   Completed alpha sources are released during preparation, keeping more source densities within the bounded GPU image budget.
   At high zoom, prepare only visible image regions with up to one screen of margin on each side; text and paths stay vector. New regions replace the previous detail scene in the background as you pan.
 - **Editing:** Change text, fonts, sizes, and colors. Add rectangles and images,

@@ -31,8 +31,13 @@ jobs:
           python -m pip install --force-reinstall --no-deps -c requirements-build.txt opencv-python-headless
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build Rust path packer
-        run: python native/build_path_packer.py
+      - name: Build native GPU scene compiler
+        run: |
+          python native/build_path_packer.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python native/build_mupdf_path.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmd /c native\build_d2d_renderer.bat
 
       - name: Run tests
         env:

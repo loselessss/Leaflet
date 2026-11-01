@@ -1,4 +1,4 @@
-"""Build the optional CPython path packer with the active Python and Cargo."""
+"""Build the Rust scene compiler and path helpers with the active Python/Cargo."""
 import json
 import os
 from pathlib import Path

@@ -49,7 +49,8 @@ class GpuWorkerInputTests(unittest.TestCase):
         with result.open("rb") as stream:
             scene = pickle.load(stream)
         self.assertTrue(scene.supported)
-        self.assertTrue(scene.items)  # Page zero is deliberately empty.
+        self.assertTrue(scene.compiled_packet)  # Page zero is deliberately empty.
+        self.assertGreater(scene.command_count, 0)
 
     def test_edited_input_exports_current_page(self):
         doc = Document(str(self.source), isolated=True)

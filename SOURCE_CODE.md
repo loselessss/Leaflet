@@ -43,6 +43,9 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    requested by RapidOCR's metadata; both variants provide the same `cv2` import.
 3. Install Rust (MSVC x64, Cargo on PATH) and Visual Studio C++ Build Tools.
    Run `python native/build_path_packer.py`, then `python ci_test_runner.py`.
+   Build the MuPDF bridge with `python native/build_mupdf_path.py` before tests
+   to include its native tests. It uses the headers and import library from the
+   installed PyMuPDF wheel; do not substitute a different MuPDF DLL at runtime.
    The Rust build uses `native/path_packer/Cargo.lock`; exact crate source links,
    checksums, compiler version and notices are in `third-party/rust/`.
    Install Inno Setup 6 at the location documented
@@ -61,6 +64,8 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
 Rust(MSVC x64)와 C++ 빌드 도구를 설치하고 Cargo를 PATH에 추가한 뒤
 `python native/build_path_packer.py`로 확장을 먼저 빌드합니다. Rust 의존성은
 Cargo.lock에 고정되며 실제 컴파일러·원본 고지·소스 링크는 `third-party/rust/`에 기록됩니다.
+`python native/build_mupdf_path.py`도 실행해 설치된 PyMuPDF와 동일한 SDK로
+좌표 추출 브리지를 빌드합니다. 실행 시 다른 버전의 MuPDF DLL로 교체하지 마세요.
 테스트 후 `build_exe.bat` → `build_installer.bat` 순서로 실행하세요.
 라이브러리 자체를 수정하려면 해당 소스의 빌드 설명을 따라 새 패키지를 만든 뒤
 Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.

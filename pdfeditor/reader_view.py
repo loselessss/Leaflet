@@ -756,13 +756,20 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
     def _native_vector_draws(self, page, scene):
         cached = self._d2d_vector_paths.get(page)
         if cached is not None and cached[0] is scene and \
-                all(not path.closed for path in cached[2]):
+                all(not path.closed for path in cached[2]) and \
+                (cached[3] is None or not cached[3].closed):
             return cached[1]
         if cached is not None:
             if cached[3] is not None:
                 cached[3].close()
             for path in cached[2]:
                 path.close()
+        if scene.compiled_packet:
+            width, height = self._page_sizes[page]
+            retained = self._d2d_surface.create_rust_scene(scene, width, height)
+            draws = range(scene.command_count)
+            self._d2d_vector_paths[page] = (scene, draws, (), retained)
+            return draws
         from .gpu_raster import (ClipPop, ClipPush, ClipStrokePush, GroupPop,
                                  GroupPush, MaskBegin, MaskEnd, VectorImage,
                                  VectorLinearGradient, VectorPath,
