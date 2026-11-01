@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
 
 from .i18n import tr
 from .raster_buffer import RasterBuffer
+from .wheel_pan import pan_wheel_event, wheel_scroll_delta
 
 try:
     from ._path_packer import copy_rgb_rows as _copy_rgb_rows
@@ -653,6 +654,9 @@ class PageView(QScrollArea):
             ev.accept()
             return
 
+        if wheel_scroll_delta(ev).x() and pan_wheel_event(self, ev):
+            self._flip_accum = 0
+            return
         dy = ev.angleDelta().y()
         bar = self.verticalScrollBar()
         at_top = bar.value() <= bar.minimum()
@@ -673,7 +677,8 @@ class PageView(QScrollArea):
             ev.accept()
         else:
             self._flip_accum = 0  # 도중에 방향을 틀면 누적 초기화
-            super().wheelEvent(ev)
+            if not pan_wheel_event(self, ev):
+                super().wheelEvent(ev)
 
     def reset_flip(self):
         """페이지가 바뀌면 누적 초기화 — 다음 장에서 곧바로 또 넘어가지 않게."""

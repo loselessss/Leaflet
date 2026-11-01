@@ -61,6 +61,7 @@
 
 ## Git hygiene
 
+- Work directly on `main`. Do not create feature branches unless the user explicitly requests one.
 - Preserve unrelated local changes.
 - Stage only files that belong to the requested change.
 - Do not commit or push unless the user asks for it explicitly.

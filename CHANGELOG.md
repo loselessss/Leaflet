@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.37.4)
+
+### 버그 수정
+
+- Fix two-finger touchpad scrolling losing diagonal movement in document and artboard views, and prevent diagonal movement at page edges from turning pages unexpectedly.
+
 ## 1.37.3 - 2026-11-01
 
 ### 성능 개선

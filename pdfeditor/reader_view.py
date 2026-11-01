@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidge
 from . import settings
 from .d2d_backend import D2DSurface, probe_d2d_backend
 from .reader_prefetch import ReaderPrefetchMixin
+from .wheel_pan import pan_wheel_event, wheel_scroll_delta
 from .widgets import (EDIT_BOX_COLOR, SEARCH_COLOR, SEARCH_CUR_COLOR, SEL_COLOR,
                       PageCanvas, qimage_from_render)
 
@@ -1701,6 +1702,10 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
+        if not event.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            if (wheel_scroll_delta(event).x() or not delta) and pan_wheel_event(self, event):
+                self._flip_accum = 0
+                return
         if not delta:
             super().wheelEvent(event)
             return
@@ -1724,7 +1729,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             event.accept()
         else:
             self._flip_accum = 0
-            super().wheelEvent(event)
+            if not pan_wheel_event(self, event):
+                super().wheelEvent(event)
 
     def reset_flip(self):
         self._flip_accum = 0

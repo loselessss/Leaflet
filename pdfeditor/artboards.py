@@ -12,6 +12,7 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QTransform
 from PyQt5.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView
 
 from .widgets import qimage_from_render
+from .wheel_pan import pan_wheel_event
 
 PREVIEW_CACHE_BYTES = 32 * 1024 * 1024
 PREVIEW_MAX_PIXELS = 500_000
@@ -299,7 +300,7 @@ class ArtboardView(QGraphicsView):
         if event.modifiers() & Qt.ControlModifier:
             self.set_zoom(self.zoom * (1.25 ** (event.angleDelta().y() / 120)), event.pos())
             event.accept()
-        else:
+        elif not pan_wheel_event(self, event):
             super().wheelEvent(event)
 
     def _board_at(self, position):

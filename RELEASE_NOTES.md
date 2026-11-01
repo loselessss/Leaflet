@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.4)
+
+- Improve two-finger touchpad scrolling so documents move diagonally and do not turn pages unexpectedly during diagonal movement.
+
 ## 1.37.3 - 2026-11-01
 
 - Prepare complex PDF pages faster when opening documents and switching pages.
