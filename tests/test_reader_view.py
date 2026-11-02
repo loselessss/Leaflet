@@ -53,6 +53,14 @@ class ReaderViewTests(unittest.TestCase):
         self.app.processEvents()
         self.directory.cleanup()
 
+    def finish_worker_result(self):
+        import time
+        deadline = time.monotonic() + 5
+        while self.view._vector_refine_process is not None and time.monotonic() < deadline:
+            self.view._poll_vector_refine_worker()
+            time.sleep(.001)
+        self.assertIsNone(self.view._vector_refine_process, 'background result did not finish')
+
     def test_pan_guard_prepares_before_detail_becomes_blurry(self):
         from pdfeditor.gpu_raster import VectorPage
         self.view._apply_preview_zoom(8.0)
@@ -142,7 +150,7 @@ class ReaderViewTests(unittest.TestCase):
             viewport=region, directory=directory, result=str(result))
         with patch.object(self.doc, "install_gpu_vector_page") as install, \
                 patch.object(self.view, "_schedule_page_prefetch"):
-            self.view._poll_vector_refine_worker()
+            self.finish_worker_result()
             install.assert_not_called()
         self.assertNotIn(key, self.view._vector_refine_attempted)
         self.assertIs(self.view._vector_pages[0], base)
@@ -284,7 +292,7 @@ class ReaderViewTests(unittest.TestCase):
             speculative=True, document=self.doc, page=1, scale=scale,
             generation=self.doc.render_generation if generation is None else generation,
             directory=directory, result=str(result))
-        self.view._poll_vector_refine_worker()
+        self.finish_worker_result()
 
     def test_late_prefetch_keeps_zoom_independent_scene_but_rejects_old_revision(self):
         from pdfeditor.gpu_raster import VectorPage
@@ -524,20 +532,53 @@ class ReaderViewTests(unittest.TestCase):
         self.view.render_document(self.doc, [11], 11)
         self.assertEqual(set(self.view._previews), {11})
 
-    def test_800_percent_uses_visible_small_tiles_not_full_page(self):
+    def test_high_zoom_uses_visible_small_tiles_not_full_page(self):
         from pdfeditor.reader_view import MAX_VISIBLE_TILES, TILE_PIXELS
-        self.view.preview_zoom(8)
-        self.view.centerOn(2400, 3360)
-        with patch.object(self.doc, "render") as full, \
-                patch.object(self.doc, "render_region", wraps=self.doc.render_region) as region:
-            self.finish_tiles()
-        full.assert_not_called()
-        self.assertGreater(region.call_count, 0)
-        self.assertLessEqual(region.call_count, MAX_VISIBLE_TILES)
-        for pixmap, rect in self.view._tiles.values():
-            self.assertLessEqual(pixmap.width(), TILE_PIXELS + 3)
-            self.assertLessEqual(pixmap.height(), TILE_PIXELS + 3)
-            self.assertLess(rect.width(), 65)
+        for zoom in (8, 32):
+            with self.subTest(zoom=zoom):
+                self.view.preview_zoom(zoom)
+                self.view.centerOn(300*zoom, 420*zoom)
+                with patch.object(self.doc, "render") as full, \
+                        patch.object(self.doc, "render_region", wraps=self.doc.render_region) as region:
+                    self.finish_tiles()
+                full.assert_not_called()
+                self.assertGreater(region.call_count, 0)
+                self.assertLessEqual(region.call_count, MAX_VISIBLE_TILES)
+                for pixmap, rect in self.view._tiles.values():
+                    self.assertLessEqual(pixmap.width(), TILE_PIXELS + 3)
+                    self.assertLessEqual(pixmap.height(), TILE_PIXELS + 3)
+                    self.assertLess(rect.width(), 65)
+
+    def test_3200_percent_gpu_margin_stays_bounded_at_high_dpi(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view.preview_zoom(self.view.ZOOM_MAX)
+        self.view.centerOn(300*self.view.zoom, 420*self.view.zoom)
+        self.view.stop_rendering()
+        with patch.object(self.view.viewport(), 'devicePixelRatioF', return_value=2):
+            scale = self.view._vector_raster_scale()
+            region = self.view._gpu_visible_region(0, padded=True)
+            self.assertLessEqual((region[2]-region[0])*(region[3]-region[1])*scale*scale,
+                                 12_000_001)
+            self.assertLessEqual(scale, 64)
+            detail = VectorPage(True, raster_scale=scale, viewport=region)
+            self.view._vector_pages[0] = VectorPage(True, features=('image-downsample',))
+            self.view._vector_viewport_pages[0] = detail
+            bar = self.view.horizontalScrollBar()
+            bar.setValue(bar.value()+round(self.view.viewport().width()*1.5))
+            self.assertFalse(self.view._viewport_scene_covers(0, detail))
+            self.view._schedule_vector_refine()
+            self.assertEqual(self.view._vector_refine_pages, [0])
+
+    def test_3200_percent_prefetch_does_not_prepare_whole_pages_at_64x(self):
+        from pdfeditor.render_memory import RenderMemory, MIB
+        self.view._d2d_requested = True
+        self.view.zoom = self.view.ZOOM_MAX
+        self.assertGreaterEqual(self.view._vector_raster_scale(), 32)
+        with patch('pdfeditor.reader_prefetch.render_memory', return_value=RenderMemory(512*MIB, 2)), \
+                patch.object(self.view, '_start_vector_refine_worker') as launch:
+            self.view._prefetch_next_page()
+        launch.assert_called_once_with(1, speculative=True)
+        self.assertEqual(self.view._vector_refine_scale, 8)
 
     def test_tile_lru_is_bounded_across_zoom_and_page_changes(self):
         from pdfeditor import reader_view
@@ -1169,7 +1210,7 @@ class ReaderViewTests(unittest.TestCase):
             "deadline": 0,
         }
 
-        self.view._poll_vector_refine_worker()
+        self.finish_worker_result()
 
         installed = self.view._vector_pages[0]
         self.assertEqual(installed, scene)
@@ -1192,7 +1233,7 @@ class ReaderViewTests(unittest.TestCase):
             "page": 0, "scale": self.view._vector_raster_scale(),
             "directory": directory, "result": str(Path(directory) / "missing"),
         }
-        self.view._poll_vector_refine_worker()
+        self.finish_worker_result()
         self.assertEqual(self.view.render_diagnostic(0)["mode"], "fallback")
         self.assertEqual(self.view.render_diagnostic(0)["reason"], "GPU scene worker exited (1)")
         self.assertFalse(Path(directory).exists())
@@ -1224,7 +1265,7 @@ class ReaderViewTests(unittest.TestCase):
                     'page': 0, 'scale': self.view._vector_raster_scale(),
                     'directory': directory, 'result': str(result),
                 }
-                self.view._poll_vector_refine_worker()
+                self.finish_worker_result()
                 self.assertEqual(self.view.render_diagnostic(0)['reason'], expected)
                 self.assertFalse(Path(directory).exists())
 
@@ -1263,7 +1304,7 @@ class ReaderViewTests(unittest.TestCase):
                     "page": 0, "scale": 2, "directory": directory,
                     "result": str(result), "deadline": 0}
                 with patch.object(self.doc, "install_gpu_vector_page") as install:
-                    self.view._poll_vector_refine_worker()
+                    self.finish_worker_result()
                 self.assertIs(self.view._vector_pages[0], old)
                 self.assertEqual(install.call_count, 0 if stale_generation else 1)
                 self.assertFalse(Path(directory).exists())

@@ -1454,6 +1454,18 @@ public:
         return S_OK;
     }
 
+    bool geometry_realization_is_sharp(const SpdfD2DTransform& t) const noexcept {
+        // Maximum singular value includes rotations, shear and target DPI.
+        // Existing realizations have a 0.05-point flattening tolerance. Use
+        // the original geometry when that can exceed half a device pixel.
+        const double xx = double(t.m11) * t.m11 + double(t.m12) * t.m12;
+        const double yy = double(t.m21) * t.m21 + double(t.m22) * t.m22;
+        const double xy = double(t.m11) * t.m21 + double(t.m12) * t.m22;
+        const double largest = .5 * (xx + yy + std::sqrt((xx - yy) * (xx - yy) + 4 * xy * xy));
+        const double ratio = dpi_ / 96.;
+        return largest * ratio * ratio <= 100.;
+    }
+
     HRESULT fill_path(Path* path, std::uint32_t argb) noexcept {
         if (!drawing_ || path == nullptr || path->owner != this || !path->resource) {
             return E_INVALIDARG;
@@ -1463,7 +1475,11 @@ public:
         if (FAILED(result)) {
             return result;
         }
-        if (d2d_context1_ && path->fill_realization) {
+        D2D1_MATRIX_3X2_F matrix;
+        d2d_context_->GetTransform(&matrix);
+        const SpdfD2DTransform transform{matrix._11, matrix._12, matrix._21, matrix._22,
+                                       matrix._31, matrix._32};
+        if (d2d_context1_ && path->fill_realization && geometry_realization_is_sharp(transform)) {
             d2d_context1_->DrawGeometryRealization(
                 path->fill_realization.Get(), brush.Get());
         } else {
@@ -2060,7 +2076,8 @@ private:
 
     void realize_path(Path* path) noexcept {
         if (d2d_context1_ && path != nullptr && path->resource) {
-            // 0.05 PDF points stays below half a pixel at the 800% UI limit.
+            // High zoom bypasses this approximation rather than increasing
+            // tessellation storage for every ordinary-zoom page.
             d2d_context1_->CreateFilledGeometryRealization(
                 path->resource.Get(), 0.05f, &path->fill_realization);
         }
@@ -4293,6 +4310,11 @@ std::int32_t spdf_d2d_draw_scene(
     if (retained->owner != context) return static_cast<std::int32_t>(E_INVALIDARG);
     if (!retained->recordable) {
         return static_cast<std::int32_t>(context->draw_cached_scene(retained, *transform));
+    }
+    // A command list recorded at identity can embed coarse realizations.
+    // Replay original geometry at high zoom so curves refine at target density.
+    if (!context->geometry_realization_is_sharp(*transform)) {
+        return static_cast<std::int32_t>(replay_scene(context, retained, *transform));
     }
     if (!retained->display_list) {
         ComPtr<ID2D1Image> previous_target;

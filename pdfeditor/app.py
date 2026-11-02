@@ -444,8 +444,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self.statusBar().addPermanentWidget(self._page_size_label)
         self.statusBar().addPermanentWidget(self._page_label)
         self._zoom_input = QSpinBox()
+        from .zoom_limits import MAX_ZOOM_PERCENT
         self._zoom_input.setRange(
-            round(self.view.ZOOM_MIN * 100), round(self.view.ZOOM_MAX * 100))
+            round(self.view.ZOOM_MIN * 100), MAX_ZOOM_PERCENT)
         self._zoom_input.setSingleStep(1)
         self._zoom_input.setSuffix("%")
         self._zoom_input.setKeyboardTracking(False)
@@ -1208,9 +1209,10 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                 self._zoom_input.blockSignals(True)
                 scale = self._actual_size_scale()
                 workspace = self.active_workspace_view()
+                from .zoom_limits import MAX_ZOOM_PERCENT
                 self._zoom_input.setRange(
                     max(1, round(workspace.ZOOM_MIN / scale * 100)),
-                    round(workspace.ZOOM_MAX / scale * 100))
+                    MAX_ZOOM_PERCENT)
                 self._zoom_input.setValue(round(self.zoom_percent()))
                 self._zoom_input.blockSignals(False)
         if hasattr(self, "_render_diagnostic_label"):

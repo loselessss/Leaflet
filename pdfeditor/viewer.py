@@ -162,9 +162,8 @@ class ViewerMixin(NavigationMixin):
         self.set_zoom_percent(self.zoom_percent() - 1)
 
     def _actual_size_scale(self):
-        # PDF points are 1/72 inch. Qt reports physical DPI in device-
-        # independent coordinates; DPR is applied separately by rendering.
-        return max(1.0, float(self.active_workspace_view().viewport().physicalDpiX())) / 72.0
+        from .zoom_limits import actual_size_scale
+        return actual_size_scale(self.active_workspace_view())
 
     def zoom_percent(self):
         return self.active_workspace_view().zoom / self._actual_size_scale() * 100.0

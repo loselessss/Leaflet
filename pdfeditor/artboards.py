@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsSimpleTextIt
 
 from .widgets import qimage_from_render
 from .wheel_pan import pan_wheel_event
+from .zoom_limits import ZoomLimits
 
 PREVIEW_CACHE_BYTES = 32 * 1024 * 1024
 PREVIEW_MAX_PIXELS = 500_000
@@ -49,7 +50,7 @@ class _Board(QGraphicsItem):
         painter.drawRect(self.rect)
 
 
-class ArtboardView(QGraphicsView):
+class ArtboardView(ZoomLimits, QGraphicsView):
     page_selected = pyqtSignal(int)
     page_activated = pyqtSignal(int)
     context_requested = pyqtSignal(int, object)
@@ -57,7 +58,6 @@ class ArtboardView(QGraphicsView):
     layout_changed = pyqtSignal()
     render_failed = pyqtSignal(str)
     ZOOM_MIN = .005
-    ZOOM_MAX = 8.0
 
     def __init__(self, parent=None):
         super().__init__(parent)

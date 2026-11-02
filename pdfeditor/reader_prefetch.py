@@ -5,6 +5,7 @@ import os
 import time
 
 from .render_memory import render_memory, MIB
+from .zoom_limits import MAX_PREFETCH_RASTER_SCALE
 
 _log = logging.getLogger(__name__)
 
@@ -104,7 +105,9 @@ class ReaderPrefetchMixin:
         budget = document.gpu_scene_memory_budget()
         if budget - document._gpu_vector_cache_bytes < 32 * MIB:
             return
-        scale = self._vector_raster_scale()
+        # Speculation prepares a whole page. Keep its existing density ceiling;
+        # the visible page can then refine only its bounded high-zoom viewport.
+        scale = min(self._vector_raster_scale(), MAX_PREFETCH_RASTER_SCALE)
         generation = document.render_generation
         nearby = self._nearby_prefetch_pages()
         self._prefetch_ready = {page: value for page, value in self._prefetch_ready.items()

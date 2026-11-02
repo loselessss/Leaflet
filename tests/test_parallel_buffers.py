@@ -38,6 +38,19 @@ class ParallelBufferTests(unittest.TestCase):
             with self.subTest(packet=packet),self.assertRaises(ValueError):
                 decompress_buffer(packet)
 
+    def test_concurrent_decoders_share_only_immutable_input(self):
+        from concurrent.futures import ThreadPoolExecutor
+        source = bytes(range(256)) * (16 * 1024)
+        packet = compress_buffers([source], 2)[0]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            decoded = list(pool.map(decompress_buffer, [packet] * 8))
+        self.assertTrue(all(value == source for value in decoded))
+        # Detached work borrows only immutable Python bytes, never a writable
+        # exporter whose contents another Python thread could change.
+        for mutable in (bytearray(packet), memoryview(bytearray(packet)).toreadonly()):
+            with self.assertRaises(TypeError):
+                decompress_buffer(mutable)
+
     def test_scene_roundtrip_preserves_images_aliases_and_small_job_bypass(self):
         from pdfeditor import scene_transfer as wire
         from pdfeditor.gpu_raster import VectorPage,VectorImage

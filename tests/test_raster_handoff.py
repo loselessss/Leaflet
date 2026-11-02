@@ -94,6 +94,37 @@ class RasterHandoffTests(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_region_pixels_origins_and_lifetime_match_without_python_samples(self):
+        for index in range(4):
+            for scale in (1., 1.375, 8.):
+                with self.subTest(page=index, scale=scale):
+                    doc = Document(str(self.path), read_only=True)
+                    rect = (3.25, 6.75, 62.3, 73.2)
+                    expected = doc.render_region(index, scale, rect)
+                    with patch.object(pymupdf.Pixmap, 'samples', new_callable=PropertyMock,
+                                      side_effect=AssertionError('unexpected Python tile copy')):
+                        actual = doc.render_region(index, scale, rect, copy_pixels=False)
+                        self.assertEqual(actual[:5], expected[:5])
+                        self.assertIsInstance(actual[5], RasterBuffer)
+                        doc.close()
+                        image = widgets.qimage_from_render(*actual[2:])
+                    # Releasing the SDK owner must leave a complete Qt-owned tile.
+                    del actual
+                    gc.collect()
+                    reference = widgets.qimage_from_render(*expected[2:])
+                    self.assertEqual(rgb(image), rgb(reference))
+
+    def test_region_borrow_keeps_existing_validation_and_legacy_bytes(self):
+        doc = Document(str(self.path), read_only=True)
+        try:
+            self.assertIsInstance(doc.render_region(0, 1., (1, 1, 21, 21))[-1], bytes)
+            for scale, rect in ((0., (1, 1, 21, 21)), (1., (4, 4, 4, 4)),
+                                (100., (0, 0, 100, 120))):
+                with self.assertRaises(ValueError):
+                    doc.render_region(0, scale, rect, copy_pixels=False)
+        finally:
+            doc.close()
+
     def test_missing_or_older_extension_uses_owned_qt_copy(self):
         doc = Document(str(self.path), read_only=True)
         try:

@@ -23,6 +23,7 @@ from . import settings
 from .d2d_backend import D2DSurface, probe_d2d_backend
 from .reader_prefetch import ReaderPrefetchMixin
 from .wheel_pan import pan_wheel_event, wheel_scroll_delta
+from .zoom_limits import ZoomLimits, MAX_RASTER_SCALE
 from .widgets import (EDIT_BOX_COLOR, SEARCH_COLOR, SEARCH_CUR_COLOR, SEL_COLOR,
                       PageCanvas, qimage_from_render)
 
@@ -102,13 +103,13 @@ class _ReaderCanvas(PageCanvas):
         return None
 
 
-class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
+class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     zoom_changed = pyqtSignal(float)
     page_flip = pyqtSignal(int)
     viewport_changed = pyqtSignal()
     render_failed = pyqtSignal(str)
     render_device_changed = pyqtSignal(str)
-    ZOOM_MIN, ZOOM_MAX = 0.1, 8.0
+    ZOOM_MIN = 0.1
     FLIP_THRESHOLD = 120
 
     def __init__(self, parent=None, *, use_opengl=None):
@@ -259,7 +260,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
     def _vector_raster_scale(self):
         scale = max(1.0, self.zoom * self.viewport().devicePixelRatioF())
         bucket = 1.0
-        while bucket < scale and bucket < self.ZOOM_MAX:
+        while bucket < scale and bucket < MAX_RASTER_SCALE:
             bucket *= 2.0
         return bucket
 
@@ -516,7 +517,7 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             "started": started,
             "deadline": time.monotonic() + GPU_SCENE_WORKER_TIMEOUT_SECONDS,
         }
-        self._vector_refine_poll_timer.start()
+        self._vector_refine_poll_timer.start(30)
 
     def _poll_vector_refine_worker(self):
         process = self._vector_refine_process
@@ -544,27 +545,30 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             else:
                 process.kill()
             return
-        self._vector_refine_poll_timer.stop()
-        self._vector_refine_process = None
-        self._vector_refine_job = None
-        scene = None
-        failure_reason = None
-        try:
+        reader = job.get("result_reader")
+        if reader is None:
+            failure_reason = None
             if job.get("terminating"):
                 failure_reason = "GPU scene worker timed out"
             elif process.returncode != 0:
                 failure_reason = "GPU scene worker exited (%s)" % process.returncode
-            elif os.path.isfile(job["result"]):
-                with open(job["result"], "rb") as stream:
-                    from .scene_worker_result import load
-                    scene = load(stream)
-            else:
-                failure_reason = "GPU scene worker returned no result"
-        except Exception as error:
-            failure_reason = "GPU scene result could not be read: " + str(error)
-            scene = None
-        finally:
-            shutil.rmtree(job["directory"], ignore_errors=True)
+            try:
+                from .scene_worker_result import SceneResultRead
+                job["result_reader"] = SceneResultRead(
+                    job["result"], job["directory"], failure_reason)
+                self._vector_refine_poll_timer.start(5)
+                return
+            except RuntimeError as error:
+                scene = None
+                failure_reason = "GPU scene result reader could not start: " + str(error)
+                shutil.rmtree(job["directory"], ignore_errors=True)
+        else:
+            if not reader.done():
+                return
+            scene, failure_reason = reader.take()
+        self._vector_refine_poll_timer.stop()
+        self._vector_refine_process = None
+        self._vector_refine_job = None
         document = job["document"]
         if "started" in job:
             self._prefetch_metrics["scene_prepare_ms"] = (
@@ -651,6 +655,10 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
             self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
         self._vector_refine_process = None
         self._vector_refine_job = None
+        if job is not None and job.get("result_reader") is not None:
+            # The background reader owns its files until decoding finishes.
+            job["result_reader"].cancel()
+            return
         if process is not None and process.poll() is None:
             process.terminate()
             try:
@@ -1504,7 +1512,8 @@ class ReaderPageView(ReaderPrefetchMixin, QGraphicsView):
                 ((x + 1) * TILE_PIXELS + 1) / scale,
                 ((y + 1) * TILE_PIXELS + 1) / scale)
         try:
-            px, py, w, h, stride, samples = self._document.render_region(page, scale, clip)
+            px, py, w, h, stride, samples = self._document.render_region(
+                page, scale, clip, copy_pixels=False)
             pixmap = QPixmap.fromImage(qimage_from_render(w, h, stride, samples))
         except Exception as error:
             self._pending.clear()

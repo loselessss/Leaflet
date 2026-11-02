@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 from .i18n import tr
 from .raster_buffer import RasterBuffer
 from .wheel_pan import pan_wheel_event, wheel_scroll_delta
+from .zoom_limits import ZoomLimits
 
 try:
     from ._path_packer import copy_rgb_rows as _copy_rgb_rows
@@ -529,7 +530,7 @@ class PageCanvas(QWidget):
                 self.context_requested.emit(point, ev.globalPos())
 
 
-class PageView(QScrollArea):
+class PageView(ZoomLimits, QScrollArea):
     """PageCanvas를 감싸는 스크롤 영역. 줌은 Ctrl+휠.
 
     setWidgetResizable(False)여야 한다 — True면 스크롤 영역이 캔버스
@@ -541,7 +542,7 @@ class PageView(QScrollArea):
     page_flip = pyqtSignal(int)  # +1 다음 장, -1 이전 장
     viewport_changed = pyqtSignal()
 
-    ZOOM_MIN, ZOOM_MAX = 0.1, 8.0
+    ZOOM_MIN = 0.1
     # 마우스 휠 한 칸 = 120. 트랙패드는 잘게 쪼개 보내므로 누적해서 이 값을
     # 넘을 때만 페이지를 넘긴다(안 그러면 트랙패드에서 몇 장씩 훌쩍 넘어감).
     FLIP_THRESHOLD = 120

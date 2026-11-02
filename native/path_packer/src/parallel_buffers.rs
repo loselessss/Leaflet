@@ -79,19 +79,26 @@ pub fn decompress_buffer<'py>(py: Python<'py>, packet: &[u8]) -> PyResult<Bound<
     let length=u64::from_le_bytes(packet[4..12].try_into().unwrap());
     if length==0 || length>LIMIT as u64 {return Err(invalid());}
     PyBytes::new_with(py,length as usize,|output| {
+        // The immutable input remains pinned by the Python argument. The new
+        // output is exclusively owned and unpublished until this constructor
+        // returns. Detached work touches only these slices, never Python/Qt/SDK.
+        py.detach(|| decompress_into(packet,output)).map_err(|_|invalid())
+    })
+}
+
+fn decompress_into(packet:&[u8],output:&mut [u8])->Result<(),()> {
         let (mut input,mut target)=(12,0);
         while input<packet.len() {
-            if packet.len()-input<8 {return Err(invalid());}
+            if packet.len()-input<8 {return Err(());}
             let raw=u32::from_le_bytes(packet[input..input+4].try_into().unwrap()) as usize;
             let size=u32::from_le_bytes(packet[input+4..input+8].try_into().unwrap()) as usize;
             input+=8;
-            if raw==0 || raw>BLOCK || raw>output.len()-target || size>packet.len()-input {return Err(invalid());}
+            if raw==0 || raw>BLOCK || raw>output.len()-target || size>packet.len()-input {return Err(());}
             let written=lz4_flex::block::decompress_into(&packet[input..input+size],&mut output[target..target+raw])
-                .map_err(|_|invalid())?;
-            if written!=raw {return Err(invalid());}
+                .map_err(|_|())?;
+            if written!=raw {return Err(());}
             input+=size;target+=raw;
         }
-        if target!=output.len() {return Err(invalid());}
+        if target!=output.len() {return Err(());}
         Ok(())
-    })
 }

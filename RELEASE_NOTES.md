@@ -2,6 +2,8 @@
 
 ## Unreleased (1.37.4)
 
+- Zoom documents up to 3200% while keeping high-zoom memory use bounded.
+- Improve responsiveness while GPU pages become ready and reduce temporary memory use in CPU display mode.
 - Improve two-finger touchpad scrolling so documents move diagonally and do not turn pages unexpectedly during diagonal movement.
 
 ## 1.37.3 - 2026-11-01

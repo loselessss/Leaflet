@@ -25,7 +25,7 @@ Press **F1** for the full usage guide.
 
 ## Features
 
-- **Reading:** GPU rendering, zoom up to 800%, search, bookmarks, draggable tabs that detach and merge,
+- **Reading:** GPU rendering, zoom up to 3200%, search, bookmarks, draggable tabs that detach and merge,
   two-page view, and presentation mode.
   GPU scenes compile from native MuPDF events in Rust. Background reader jobs open the private PDF and prepare scenes in an independent Rust process; Python manages the window and page jobs. Text and stroked/text-clipping outlines stay vector. CPU mode remains the fidelity reference.
   Exact GPU updates plan temporary surface lifetimes and batch allocations within each tile; temporary storage has a fixed slot limit.

@@ -196,7 +196,7 @@ EN = {
     "현재 PDF를 즐겨찾기에서 제거합니다": "Remove the current PDF from favorites",
     "현재 PDF를 즐겨찾기에 추가합니다": "Add the current PDF to favorites",
     "PDF를 연 뒤 즐겨찾기에 추가할 수 있습니다": "Open a PDF before adding it to favorites",
-    "10~800% 범위를 1% 단위로 입력": "Enter a value from 10% to 800% in 1% steps",
+    "최대 3200%까지 1% 단위로 입력": "Enter up to 3200% in 1% steps",
     "검색어 입력 후 Enter (F3 다음 / Shift+F3 이전)":
         "Enter search text (F3 next / Shift+F3 previous)",
     "이전 검색 결과 (Shift+F3)": "Previous result (Shift+F3)",

@@ -37,7 +37,7 @@ def main(*,allow_residency=True):
     output=Path(os.environ['LEAFLET_STARTUP_TEST_OUTPUT'])
     temporary=output.with_suffix('.tmp')
     temporary.write_text(json.dumps({
-        'prefix':sys.prefix,'executable':sys.executable,'args':sys.argv[1:],
+        'prefix':sys.prefix,'executable':sys.executable,'args':sys.argv[1:],'pid':os.getpid(),
         'allow_residency':allow_residency,'ignore_environment':sys.flags.ignore_environment,
         'no_user_site':sys.flags.no_user_site,'pythonpath':os.environ.get('PYTHONPATH'),
         'native_imported':any(n.startswith(('pymupdf','PyQt5')) for n in sys.modules)
@@ -74,6 +74,24 @@ def main(*,allow_residency=True):
             time.sleep(.01)
         self.assertTrue(output.exists(), 'project interpreter did not reach the entry point')
         value = json.loads(output.read_text(encoding='utf-8'))
+        # Publishing the result precedes interpreter shutdown. Wait for the
+        # actual child to exit before removing its Windows-locked executable.
+        import ctypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel.OpenProcess(0x100000, False, value['pid'])  # SYNCHRONIZE, no mutation.
+        if handle:
+            try:
+                self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0,
+                                 'fixture interpreter did not exit')
+            finally:
+                kernel.CloseHandle(handle)
+        else:
+            self.assertEqual(ctypes.get_last_error(), 87)  # The child already exited.
         self.assertTrue(Path(value['prefix']).samefile(self.root / '.venv'))
         self.assertEqual(value['args'], args)
         self.assertFalse(value['native_imported'])

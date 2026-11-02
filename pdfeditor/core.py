@@ -234,11 +234,13 @@ class Document:
             self._display_cache[index] = display
         return display
 
-    def render_region(self, index, zoom, rect):
+    def render_region(self, index, zoom, rect, *, copy_pixels=True):
         """Rasterize a bounded PDF-coordinate clip; include pixel origin.
 
         Returning MuPDF's rounded pixel origin avoids seams at fractional zoom
         and keeps rotated/cropped pages aligned with their low-resolution image.
+        With copy_pixels=False, a RasterBuffer keeps the RGB pixmap alive until
+        the display consumer copies it; the default retains the bytes API.
         """
         import math
         if not math.isfinite(zoom) or zoom <= 0:
@@ -253,7 +255,12 @@ class Document:
             raise ValueError("Render region exceeds the tile pixel budget")
         pix = self._display_list(index).get_pixmap(
             matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
-        return pix.x, pix.y, pix.width, pix.height, pix.stride, pix.samples
+        if copy_pixels:
+            samples = pix.samples
+        else:
+            from .raster_buffer import RasterBuffer
+            samples = RasterBuffer(pix)
+        return pix.x, pix.y, pix.width, pix.height, pix.stride, samples
 
     def invalidate_render(self, index=None):
         hash_job = getattr(self, "_disk_cache_hash_job", None)

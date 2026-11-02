@@ -2,6 +2,14 @@
 
 ## Unreleased (1.37.4)
 
+### 개선
+
+- Raise the document zoom limit to 3200%, including percentage input and saved reading positions, while keeping high-zoom rendering memory bounded.
+
+### 성능 개선
+
+- Keep the document view responsive while receiving prepared GPU pages, and reduce temporary pixel memory when displaying CPU-rendered tiles.
+
 ### 버그 수정
 
 - Fix two-finger touchpad scrolling losing diagonal movement in document and artboard views, and prevent diagonal movement at page edges from turning pages unexpectedly.

@@ -5,6 +5,7 @@ import math
 import tempfile
 import os
 import time
+from .zoom_limits import MAX_SAVED_ZOOM
 
 PATH = os.path.expanduser("~/.spdf.json")
 _OLD_PATH = os.path.expanduser("~/.pdfeditor.json")  # 개명 전 설정 파일
@@ -306,7 +307,7 @@ def _clean_reading_position(value):
         if not all(math.isfinite(state[k]) for k in
                    ("zoom", "horizontal", "vertical")):
             return None
-        state["zoom"] = max(0.1, min(8.0, state["zoom"]))
+        state["zoom"] = max(0.1, min(MAX_SAVED_ZOOM, state["zoom"]))
         for key in ("horizontal", "vertical"):
             state[key] = max(0.0, min(1.0, state[key]))
         return state
