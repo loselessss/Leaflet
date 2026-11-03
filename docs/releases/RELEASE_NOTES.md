@@ -1,6 +1,6 @@
 # Leaflet Release Notes
 
-## Unreleased (1.37.5)
+## 1.37.5 - 2026-11-03
 
 - Show CPU and GPU responsibilities more clearly in the rendering status tooltip.
 
