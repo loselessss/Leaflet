@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.37.5)
+
+- Show CPU and GPU responsibilities more clearly in the rendering status tooltip.
+
 ## 1.37.4 - 2026-11-02
 
 - Zoom documents up to 3200% while keeping high-zoom memory use bounded.

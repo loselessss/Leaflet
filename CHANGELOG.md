@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.37.5)
+
+### 개선
+
+- Simplify the rendering status tooltip to show only the work handled by the CPU and GPU.
+
 ## 1.37.4 - 2026-11-02
 
 ### 개선

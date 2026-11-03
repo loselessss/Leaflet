@@ -110,46 +110,6 @@ def _render_diagnostic_summary(info):
         text = localize("CPU+GPU rendering", "CPU+GPU 렌더링")
     if mode == "fallback" and short_reason:
         text += " · " + short_reason
-    feature_names = {
-        "vector": localize("vector", "벡터"),
-        "vector-clip": localize("vector clip", "벡터 클리핑"),
-        "text": localize("text", "글자"),
-        "text-clip": localize("text clip", "글자 클리핑"),
-        "image": localize("decoded image", "디코딩 이미지"),
-        "stencil": localize("stencil image", "스텐실 이미지"),
-        "shading": localize("shading", "그라데이션"),
-        "vector-shading": localize("GPU gradient drawing", "GPU 그라데이션 그리기"),
-        "gradient-primitive": localize("native gradient brush", "네이티브 그라데이션 브러시"),
-        "raster-shading": localize("CPU-prepared gradient bitmap", "CPU에서 준비한 그라데이션 비트맵"),
-        "raster-pattern": localize("CPU-prepared pattern bitmap", "CPU에서 준비한 패턴 비트맵"),
-        "text-raster-fallback": localize("CPU-prepared glyph bitmap", "CPU에서 준비한 글자 비트맵"),
-        "cpu-island": localize("CPU-prepared composite region", "CPU에서 준비한 합성 영역"),
-        "transparency-group": localize(
-            "transparency group", "투명도 그룹"),
-        "soft-mask": localize("soft mask", "소프트 마스크"),
-        "clip-mask": localize("clip mask", "클리핑 마스크"),
-        "alpha-image-fusion": localize("combined image alpha", "이미지 알파 결합"),
-        "stroke-style": localize("stroke style", "선 스타일"),
-        "blend-mode": localize("blend mode", "혼합 모드"),
-        "stroked-text": localize("stroked text", "윤곽선 글자"),
-        "stroked-text-clip": localize(
-            "stroked text clip", "윤곽선 글자 클리핑"),
-        "stroked-vector-clip": localize(
-            "stroked vector clip", "선 클리핑"),
-        "deferred-scene": localize(
-            "background GPU preparation", "백그라운드 GPU 준비"),
-    }
-    detail = reason
-    if reason == "GPU scene deferred by complexity probe":
-        detail = localize(
-            "This complex page is displayed by the CPU while its GPU scene is prepared in the background.",
-            "복잡한 쪽을 CPU로 먼저 표시하면서 GPU 장면을 백그라운드에서 준비하고 있습니다.")
-    elif reason == "GPU scene time budget exceeded":
-        detail = localize(
-            "The page did not finish GPU preparation within the interactive budget, so CPU display remains visible while background preparation continues.",
-            "대화형 준비 시간 안에 GPU 장면이 끝나지 않아 CPU 화면을 유지하면서 백그라운드 준비를 계속합니다.")
-    tooltip = localize(
-        "Current page rendering: ", "현재 페이지 렌더링: ") + text
     # Describe responsibilities of this display path, not instantaneous CPU
     # activity: scene extraction/decoding may already be cached.
     cpu_tasks = [localize("PDF interpretation", "PDF 해석")]
@@ -184,20 +144,24 @@ def _render_diagnostic_summary(info):
                                       "혼합·투명도 영역 래스터화"))
     if mode == "pending":
         cpu_tasks.append(localize("GPU scene preparation", "GPU 장면 준비"))
-    tooltip += "\n" + localize("CPU responsibilities: ", "CPU 담당 작업: ") + ", ".join(cpu_tasks)
-    tooltip += "\n" + localize(
-        "Tasks describe the rendering path; cached work may not run every frame.",
-        "렌더링 경로별 담당 작업이며 캐시된 작업은 매 프레임 반복하지 않습니다.")
-    if features:
-        tooltip += "\n" + localize(
-            "GPU scene contents: ", "GPU 장면 구성: ") + ", ".join(
-            feature_names.get(feature, feature) for feature in features)
-    if detail:
-        tooltip += "\n" + localize("Status: ", "상태: ") + detail
-    if info.get("backend_failure"):
-        tooltip += "\n" + localize(
-            "Direct2D unavailable: ", "Direct2D 사용 불가: ") + str(
-                info["backend_failure"])
+    if reason == "Direct2D WARP" or mode == "cpu":
+        gpu_tasks = [localize("not used", "사용 안 함")]
+    elif raster_path:
+        gpu_tasks = [localize("tile display and composition", "타일 표시·합성")]
+    else:
+        gpu_tasks = []
+        if {"vector", "vector-clip", "stroke-style", "stroked-vector-clip"}.intersection(features):
+            gpu_tasks.append(localize("vector drawing", "벡터 그리기"))
+        if {"text", "text-clip", "stroked-text", "stroked-text-clip"}.intersection(features):
+            gpu_tasks.append(localize("text drawing", "글자 그리기"))
+        if {"vector-shading", "gradient-primitive"}.intersection(features):
+            gpu_tasks.append(localize("gradient drawing", "그라데이션 그리기"))
+        if {"image", "stencil", "raster-shading", "raster-pattern",
+                "text-raster-fallback", "cpu-island"}.intersection(features):
+            gpu_tasks.append(localize("bitmap display", "비트맵 표시"))
+        gpu_tasks.append(localize("clipping and composition", "클리핑·합성"))
+    tooltip = localize("CPU responsibilities: ", "CPU 담당 작업: ") + ", ".join(cpu_tasks)
+    tooltip += "\n" + localize("GPU responsibilities: ", "GPU 담당 작업: ") + ", ".join(gpu_tasks)
     return text, tooltip
 
 

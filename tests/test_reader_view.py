@@ -432,6 +432,10 @@ class ReaderViewTests(unittest.TestCase):
             self.assertEqual(text, "GPU rendering")
             self.assertNotIn("shading bitmap preparation", tip)
             self.assertIn("gradient colors and geometry preparation", tip)
+            self.assertEqual(len(tip.splitlines()), 2)
+            self.assertTrue(tip.splitlines()[0].startswith("CPU responsibilities: "))
+            self.assertTrue(tip.splitlines()[1].startswith("GPU responsibilities: "))
+            self.assertIn("gradient drawing", tip.splitlines()[1])
             text, tip = _render_diagnostic_summary({
                 "mode": "composite", "features": ("shading", "raster-shading", "cpu-island")})
             self.assertEqual(text, "CPU+GPU rendering")
@@ -455,7 +459,10 @@ class ReaderViewTests(unittest.TestCase):
             "backend_failure": "native renderer is not built"})
         self.assertIn("CPU", text)
         self.assertIn("OpenGL", text)
-        self.assertIn("native renderer is not built", tooltip)
+        self.assertEqual(len(tooltip.splitlines()), 2)
+        self.assertIn("CPU", tooltip.splitlines()[0])
+        self.assertIn("GPU", tooltip.splitlines()[1])
+        self.assertNotIn("native renderer is not built", tooltip)
 
     def test_zoom_immediately_reuses_images_and_preserves_pointer(self):
         from PyQt5.QtCore import QPoint
