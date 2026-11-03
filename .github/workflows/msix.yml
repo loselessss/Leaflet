@@ -47,16 +47,16 @@ jobs:
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python ci_test_runner.py
+        run: python -m tools.ci.run_tests
       - name: Build application and unsigned MSIX
         env:
           MSIX_IDENTITY: ${{ inputs.identity_name }}
           MSIX_PUBLISHER: ${{ inputs.publisher }}
           MSIX_PUBLISHER_DISPLAY: ${{ inputs.publisher_display_name }}
         run: |
-          cmd /c build_exe.bat
+          cmd /c tools\build\build_exe.bat
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python build_msix.py --identity-name $env:MSIX_IDENTITY --publisher $env:MSIX_PUBLISHER --publisher-display-name $env:MSIX_PUBLISHER_DISPLAY
+          python -m tools.build.build_msix --identity-name $env:MSIX_IDENTITY --publisher $env:MSIX_PUBLISHER --publisher-display-name $env:MSIX_PUBLISHER_DISPLAY
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preserve unsigned package for signing and installation tests
         uses: actions/upload-artifact@v6

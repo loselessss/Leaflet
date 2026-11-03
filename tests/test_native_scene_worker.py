@@ -160,7 +160,7 @@ class NativeSceneWorkerTests(unittest.TestCase):
         executable.close()
 
     def test_bundled_worker_layout_with_no_python_on_path(self):
-        from build_payload import native_worker_runtime_binaries
+        from tools.build.build_payload import native_worker_runtime_binaries
         from PyQt5.QtCore import QLibraryInfo
         self.input.write_bytes(fixtures.soft_mask_pdf_bytes())
         command=native_command()

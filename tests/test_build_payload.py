@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from build_payload import keep_payload, trim_payload, native_worker_runtime_binaries
+from tools.build.build_payload import keep_payload, trim_payload, native_worker_runtime_binaries
 
 
 class BuildPayloadTests(unittest.TestCase):

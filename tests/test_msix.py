@@ -9,13 +9,13 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
 
-from build_msix import manifest, package_version, stage_package, find_makeappx, NS
+from tools.build.build_msix import manifest, package_version, stage_package, find_makeappx, NS
 from pdfeditor.meta import APP_VERSION
 
 
 class MsixTests(unittest.TestCase):
     def test_file_types_have_distinct_logos(self):
-        from build_msix import UAP
+        from tools.build.build_msix import UAP
         root = ET.fromstring(manifest(APP_VERSION, 'Example.sPDF', 'CN=Example', 'Example'))
         associations = root.findall('.//{' + UAP + '}FileTypeAssociation')
         found = {}

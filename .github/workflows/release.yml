@@ -42,23 +42,23 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python ci_test_runner.py
+        run: python -m tools.ci.run_tests
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress
 
       - name: Build Windows installer
         run: |
-          cmd /c build_exe.bat
+          cmd /c tools\build\build_exe.bat
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmd /c build_installer.bat
+          cmd /c tools\build\build_installer.bat
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare matching source and dependency directions
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          python create_source_bundle.py --version $version
+          python -m tools.release.create_source_bundle --version $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Create checksums and latest alias
@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          python create_release_bundle.py --version $version
+          python -m tools.release.create_release_bundle --version $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Preserve release files as workflow artifact
@@ -103,7 +103,7 @@ jobs:
           $installer = "Output\Leaflet_Setup_$version.exe"
           $latestInstaller = "Output\Leaflet_Setup_latest.exe"
           $releaseFiles = "Output\Leaflet_Release_Files_$version.zip"
-          python release_notes.py --version $version --release-notes RELEASE_NOTES.md --release-notes-ko RELEASE_NOTES.ko.md --output release-notes.md
+          python -m tools.release.release_notes --version $version --release-notes docs/releases/RELEASE_NOTES.md --release-notes-ko docs/releases/RELEASE_NOTES.ko.md --output release-notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
           "`nDownload Leaflet_Setup_$version.exe. / Leaflet_Setup_$version.exe를 받으세요.`n`nSHA-256: ``$hash``" |

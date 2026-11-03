@@ -35,10 +35,10 @@ input returns CPU fallback, not the old Python compiler.
 
 Build the Rust extension and standalone worker with `python native/build_path_packer.py`, the MuPDF
 adapter with `python native/build_mupdf_path.py`, and the renderer with the batch
-file above. `build_exe.bat` performs all three. MuPDF headers and runtime must
+file above. `tools/build/build_exe.bat` performs all three. MuPDF headers and runtime must
 match exactly. Only the caller's thread accesses SDK objects; Rust scoped
 threads process independent owned transfer blocks. See
-`docs/RUST_SCENE_COMPILER_REWRITE.md` for verification and measured limits.
+`docs/architecture/RUST_SCENE_COMPILER_REWRITE.md` for verification and measured limits.
 
 Render diagnostics come from actual native preparation provenance. Image flags
 carry separate shading, composite-region, mask, alpha-fusion, glyph-fallback,
@@ -59,11 +59,11 @@ parent process still cancels stale jobs and keeps the CPU preview visible.
 
 The build uses separate target directories for the Python extension (default
 `python` feature) and executable (`--no-default-features --features worker`),
-preventing a Python-free DLL from overwriting the extension. `spdf.spec` requires
+preventing a Python-free DLL from overwriting the extension. `packaging/spdf.spec` requires
 and bundles the worker under `native/`. Development without the executable keeps
 the Python control worker; `SPDF_GPU_SCENE_WORKER=python` selects that reference
 path for comparisons. See
-[the standalone worker comparison](../docs/NATIVE_READER_WORKER_BENCHMARK_2026-11-01.md).
+[the standalone worker comparison](../docs/benchmarks/NATIVE_READER_WORKER_BENCHMARK_2026-11-01.md).
 
 Packaging also copies the worker/bridge/MuPDF MSVC runtime dependencies beside
 the worker executable. It must start before Python or Qt can configure DLL search
@@ -89,7 +89,7 @@ them alive. The SDK pixmap is then released instead of entering a new cache.
 The public default `Document.render()` still returns `(w,h,stride,bytes)`.
 CPU fallback tiles and editing/printing consumers retain their existing paths.
 Development with an older/missing extension uses an owned Qt copy of the borrowed
-view. See the [preview/thumbnail handoff benchmark](../docs/RGB_PREVIEW_HANDOFF_BENCHMARK_2026-11-01.md)
+view. See the [preview/thumbnail handoff benchmark](../docs/benchmarks/RGB_PREVIEW_HANDOFF_BENCHMARK_2026-11-01.md)
 for timings and memory limits.
 
 ## Earlier packing helpers (reference extractor only)
@@ -100,7 +100,7 @@ Install Rust with the MSVC x64 toolchain and run
 Cargo must be on PATH. The build uses the committed Cargo.lock (`--locked`),
 records compiler/dependency versions and notices under `native/bin`, and copies
 the ABI3 Python 3.12+ extension to `pdfeditor/_path_packer.pyd`. Generated binaries
-are ignored. `build_exe.bat` builds all rendering components; release builds require
+are ignored. `tools/build/build_exe.bat` builds all rendering components; release builds require
 the extension. Without native compiler support the application displays CPU pages.
 
 The packer writes one 28-byte little-endian record per command, with float64 to
@@ -108,7 +108,7 @@ float32 rounding matching the existing ctypes path. It does not simplify paths,
 change the renderer ABI, release the GIL while reading Python objects, or retain
 page data. The bytearray is owned through the synchronous Direct2D call.
 The renderer still creates and owns its geometries. See
-`docs/RUST_PATH_PACKER_BENCHMARK_2026-10-31.md` for comparisons.
+`docs/benchmarks/RUST_PATH_PACKER_BENCHMARK_2026-10-31.md` for comparisons.
 
 The extension also supplies float64 path bounds, transforms and merged-command
 assembly during extraction. Bounds use a single traversal without point/X/Y
@@ -117,18 +117,18 @@ still selects merge groups and preserves styles/opacity. Non-finite arithmetic
 falls back to Python to retain NaN propagation; missing/older extensions also
 retain the original extraction helpers. These operations do not use float32
 packing or change the scene cache format. See
-`docs/RUST_GEOMETRY_COMPILER_BENCHMARK_2026-10-31.md`.
+`docs/benchmarks/RUST_GEOMETRY_COMPILER_BENCHMARK_2026-10-31.md`.
 
 Worker transport can retain paths as packed float64 records. `pack_wire_path`
 validates and converts these bytes directly to the unchanged renderer ABI;
 the GUI does not reconstruct path tuples for upload. CPU-side compatibility
 iteration is available for refinement and disk-cache serialization. See
-`docs/PACKED_SCENE_CONSUMER_BENCHMARK_2026-10-31.md` for UI versus total timings.
+`docs/benchmarks/PACKED_SCENE_CONSUMER_BENCHMARK_2026-10-31.md` for UI versus total timings.
 
 Background extraction also enables `packed_paths=True`: merged paths are written
 directly as float64 buffers and their bounds are computed without decoding.
 Unmerged MuPDF callbacks still produce Python tuples. See
-`docs/DIRECT_PACKED_EXTRACTION_BENCHMARK_2026-10-31.md` for timing and worker
+`docs/benchmarks/DIRECT_PACKED_EXTRACTION_BENCHMARK_2026-10-31.md` for timing and worker
 scene-budget observations; whole-process memory savings were not measured.
 
 ## Current ABI
@@ -142,7 +142,7 @@ Analysis/serialization run without Python callbacks. The production importer
 consumes native events; `compile_scene` retains the normalized importer only
 for reference comparisons. `d2d_renderer/rust_scene_import.h` is the checked
 native upload adapter used by normal application rendering.
-See `docs/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
+See `docs/architecture/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
 
 Compiled scenes persist through `pdfeditor.scene_cache_packet` as a bounded
 binary envelope around unchanged LFSC v2 bytes. SHA-256 covers metadata and the
@@ -150,7 +150,7 @@ uncompressed packet. Up to four independent 64MiB chunks use the existing Rust
 LZ4 codec; incompressible chunks remain raw. Restoration validates lengths and
 budgets before decoding, without JSON/Base64 or executable-object loading.
 Cache key format 16 invalidates earlier stored scenes once. See
-`docs/BINARY_SCENE_STORAGE_BENCHMARK_2026-11-01.md` for storage and restore timings.
+`docs/benchmarks/BINARY_SCENE_STORAGE_BENCHMARK_2026-11-01.md` for storage and restore timings.
 
 ### Post-extraction parallel buffers
 
@@ -159,7 +159,7 @@ bytes only, with the GIL released. Worker transfer defaults to two execution
 lanes for batches of at least 8MiB, partitions into 1MiB LZ4 blocks, and retains
 raw buffers when compression is poor. MuPDF objects and GPU resources stay on
 their original execution paths. Input/decoded size is bounded by 64MiB.
-See `docs/RUST_PARALLEL_TRANSFER_BENCHMARK_2026-10-31.md` for phase timings,
+See `docs/benchmarks/RUST_PARALLEL_TRANSFER_BENCHMARK_2026-10-31.md` for phase timings,
 small-job bypass, decode cost and worker peak-RSS observations.
 
 ### MuPDF path extraction
@@ -177,14 +177,14 @@ production compilation returns CPU fallback if the native adapter is unavailable
 The PDF-level native device is implemented in `mupdf_scene.h`; pattern and
 region selection now belong to Rust. The older Python extractor remains a
 comparison oracle and is not called by either application compilation entry.
-`build_exe.bat` builds and packages the bridge; the renderer ABI stays 24.
+`tools/build/build_exe.bat` builds and packages the bridge; the renderer ABI stays 24.
 
 The bridge now also scans glyph metadata/placement in native code and supplies
 packed outlines for uncached glyphs. Negative glyph-ID recovery and missing
 outlines use the original fallback in the reference extractor. Production input
 resolves glyph recovery and unavailable outlines natively. Rust packs channels into
 BGRA with the original integer premultiplication. See
-`docs/NATIVE_TEXT_PIXEL_BENCHMARK_2026-10-31.md` for isolated comparisons and limits.
+`docs/benchmarks/NATIVE_TEXT_PIXEL_BENCHMARK_2026-10-31.md` for isolated comparisons and limits.
 
 ABI version 24 can:
 
@@ -248,19 +248,19 @@ rules. Clip/mask transitions, COPY, knockout and nonisolated dependencies stay
 live. Only harmless empty isolated Normal captures may disappear. Plans are
 temporary, limited to 1,048,576 input commands and depth 4096. Limit or allocation
 failures use the complete replay/binding path. No rendered-page cache is added.
-These are the first stages of the [scene compiler project](../docs/GPU_SCENE_COMPILER_PLAN.md);
+These are the first stages of the [scene compiler project](../docs/plans/GPU_SCENE_COMPILER_PLAN.md);
 compact command encoding and a dedicated compositor remain future work.
-See the [tile plan comparison](../docs/GPU_TILE_PLAN_BENCHMARK_2026-10-21.md)
+See the [tile plan comparison](../docs/benchmarks/GPU_TILE_PLAN_BENCHMARK_2026-10-21.md)
 for completion timings, resource preparation counts and pixel differences.
-The [mask precision experiment](../docs/GPU_MASK_PRECISION_BENCHMARK_2026-10-22.md)
+The [mask precision experiment](../docs/benchmarks/GPU_MASK_PRECISION_BENCHMARK_2026-10-22.md)
 compares integer fixed point, minimum-precision float and compiler settings.
 The existing strict float shader remains the default after mixed timing results;
 integer conversion did not reduce intermediate bitmap storage.
-The [nested mask experiment](../docs/GPU_NESTED_MASK_BENCHMARK_2026-10-23.md)
+The [nested mask experiment](../docs/benchmarks/GPU_NESTED_MASK_BENCHMARK_2026-10-23.md)
 combined compatible closing operations while preserving both rounding stages.
 It reduced copied pixels on ACB 2015, but completion-time gains did not repeat;
 the experiment was kept outside the default native renderer.
-The [stage profile](../docs/GPU_STAGE_PROFILE_2026-10-23.md) separates CPU
+The [stage profile](../docs/benchmarks/GPU_STAGE_PROFILE_2026-10-23.md) separates CPU
 submission, copy calls, scratch preparation and drawing API recording. On ACB
 2015, explicit Flush and scratch preparation account for roughly 78–80% of the
 instrumented worker elapsed time; copy calls themselves account for roughly
@@ -275,18 +275,18 @@ existing scratch byte budget. Exact-size/option/free-state checks and the
 original allocator handle missing or unsupported requests. Direct isolated-clip
 sources retain their original allocation path. No image-result cache, size
 approximation or Flush removal is added. See the
-[surface lifetime comparison](../docs/GPU_SURFACE_LIFETIME_BENCHMARK_2026-10-23.md)
+[surface lifetime comparison](../docs/benchmarks/GPU_SURFACE_LIFETIME_BENCHMARK_2026-10-23.md)
 for the selected memory/speed tradeoff, unchanged pixels and fallback checks.
-The [direct D3D11 composition experiment](../docs/GPU_DIRECT_D3D11_BENCHMARK_2026-10-23.md)
+The [direct D3D11 composition experiment](../docs/benchmarks/GPU_DIRECT_D3D11_BENCHMARK_2026-10-23.md)
 replaced final clip/mask effects with explicit draws, including shared device
 objects, protected context-state restoration and two copy strategies. It kept
 the sampled output exact and reduced observed process memory, but completion
 gains did not repeat and some cases slowed substantially. Those prototypes
 remain outside the default renderer; the bounded lifetime plan stays enabled.
-See the [arena/worker preparation comparison](../docs/GPU_SCENE_ARENA_BENCHMARK_2026-10-21.md)
+See the [arena/worker preparation comparison](../docs/benchmarks/GPU_SCENE_ARENA_BENCHMARK_2026-10-21.md)
 for request latency, initial construction cost, storage tradeoffs and exact pixel checks.
-See the [scope index comparison](../docs/GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)
-and [classification storage comparison](../docs/GPU_CLASSIFICATION_BENCHMARK_2026-10-21.md).
+See the [scope index comparison](../docs/benchmarks/GPU_SCOPE_INDEX_BENCHMARK_2026-10-20.md)
+and [classification storage comparison](../docs/benchmarks/GPU_CLASSIFICATION_BENCHMARK_2026-10-21.md).
 Clip/mask closing can replace the three Composite effect nodes with one custom
 pixel shader. It quantizes the inside and outside terms separately to preserve
 the original UNORM8 intermediate rounding, then adds them. Backdrop copying,
@@ -302,7 +302,7 @@ differ slightly from the old UNORM8 mask route. The opening Flush remains before
 pooled source writes. COPY parents, mask-building ancestors, non-isolated/knockout/
 blended groups, noninvertible transforms and full-target rectangle bypasses retain
 their general routes. The same bitmap budget, final tile grid and ABI 24 remain in
-use. See the [direct clip comparison](../docs/GPU_DIRECT_CLIP_BENCHMARK_2026-10-21.md).
+use. See the [direct clip comparison](../docs/benchmarks/GPU_DIRECT_CLIP_BENCHMARK_2026-10-21.md).
 Scene creation also removes balanced native path/rectangle clip and opacity layers
 that contain no commands, including recursively empty layers. Captured composite
 and mask scopes remain intact. Invalid layer parameters keep their original error

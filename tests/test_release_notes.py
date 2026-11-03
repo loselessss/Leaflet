@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_notes import (
+from tools.release.release_notes import (
     STABLE_CHANNEL_NOTICES, STORE_URL,
     compose_localized_documents, compose_localized_release_notes,
     extract_release_notes, main)

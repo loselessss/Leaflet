@@ -24,25 +24,25 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertNotIn("AA_DontUseNativeDialogs", entry)
 
     def test_application_and_installer_versions_match(self):
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
         match = re.search(
             r'^#define MyAppVersion "([^"]+)"$', installer, re.MULTILINE)
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), APP_VERSION)
 
     def test_installer_offers_english_and_korean(self):
-        installer = Path("installer.iss").read_text(encoding="utf-8-sig")
+        installer = Path("packaging/installer.iss").read_text(encoding="utf-8-sig")
         self.assertIn('Name: "english"', installer)
         self.assertIn('Name: "korean"', installer)
         self.assertIn("ShowLanguageDialog=yes", installer)
         self.assertIn('ValueName: "UILanguage"', installer)
 
     def test_registered_document_type_is_simply_pdf(self):
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
         self.assertIn(
             'Subkey: "Software\\Classes\\{#MyProgId}"; '
             'ValueType: string; ValueData: "PDF";', installer)
-        registration = (ROOT / "register_filetype.py").read_text(
+        registration = (ROOT / "tools/windows/register_filetype.py").read_text(
             encoding="utf-8")
         self.assertIn('(".pdf", PROG_ID, "PDF", "spdf_doc.ico")', registration)
         self.assertNotIn("PDF / Illustrator Document", installer)
@@ -50,9 +50,9 @@ class ReleasePackagingTests(unittest.TestCase):
 
     def test_localized_release_documents_include_current_version(self):
         for name in (
-                "README.md", "README.ko.md", "CHANGELOG.md",
-                "CHANGELOG.ko.md", "RELEASE_NOTES.md",
-                "RELEASE_NOTES.ko.md"):
+                "README.md", "README.ko.md", "docs/releases/CHANGELOG.md",
+                "docs/releases/CHANGELOG.ko.md", "docs/releases/RELEASE_NOTES.md",
+                "docs/releases/RELEASE_NOTES.ko.md"):
             content = (ROOT / name).read_text(encoding="utf-8")
             self.assertIn(APP_VERSION, content, name)
 
@@ -68,17 +68,17 @@ class ReleasePackagingTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "release.yml"
         ).read_text(encoding="utf-8")
         self.assertIn('      - "v*.*.*"', workflow)
-        self.assertIn("cmd /c build_exe.bat", workflow)
-        self.assertIn("cmd /c build_installer.bat", workflow)
-        self.assertIn("python ci_test_runner.py", workflow)
+        self.assertIn("cmd /c tools\\build\\build_exe.bat", workflow)
+        self.assertIn("cmd /c tools\\build\\build_installer.bat", workflow)
+        self.assertIn("python -m tools.ci.run_tests", workflow)
         self.assertIn("Get-FileHash -Algorithm SHA256", workflow)
         self.assertIn("Leaflet_Setup_latest.exe", workflow)
         self.assertNotIn('$compatInstaller', workflow)
         self.assertNotIn('sPDF_Setup_', workflow)
         self.assertIn("gh release create", workflow)
-        self.assertIn("python release_notes.py", workflow)
-        self.assertIn("--release-notes RELEASE_NOTES.md", workflow)
-        self.assertIn("--release-notes-ko RELEASE_NOTES.ko.md", workflow)
+        self.assertIn("python -m tools.release.release_notes", workflow)
+        self.assertIn("--release-notes docs/releases/RELEASE_NOTES.md", workflow)
+        self.assertIn("--release-notes-ko docs/releases/RELEASE_NOTES.ko.md", workflow)
         self.assertIn("--notes-file release-notes.md", workflow)
         self.assertNotIn("--generate-notes", workflow)
         self.assertIn("gh release edit", workflow)
@@ -87,13 +87,13 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("contents: write", workflow)
 
     def test_both_executables_have_windows_version_resources(self):
-        spec = (ROOT / "spdf.spec").read_text(encoding="utf-8")
+        spec = (ROOT / "packaging/spdf.spec").read_text(encoding="utf-8")
         self.assertIn("version=gui_version_info", spec)
         self.assertIn("version=ocr_version_info", spec)
-        self.assertGreaterEqual(spec.count('icon="assets/spdf.ico"'), 2)
+        self.assertGreaterEqual(spec.count('icon=str(spec_root / "assets/spdf.ico")'), 2)
 
     def test_installer_shortcuts_use_same_app_id_as_runtime(self):
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
         integration = (
             ROOT / "pdfeditor" / "windows_integration.py"
         ).read_text(encoding="utf-8")
@@ -109,7 +109,7 @@ class ReleasePackagingTests(unittest.TestCase):
         self.assertIn("set_current_process_app_id()", worker)
 
     def test_installer_creates_leaflet_and_editor_shortcuts(self):
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
         for target in ("{group}", "{autodesktop}"):
             self.assertIn(
                 'Name: "%s\\{cm:ReaderShortcut}"' % target, installer)
@@ -135,7 +135,7 @@ class ReleasePackagingTests(unittest.TestCase):
                     'Type: files; Name: "%s\\%s"' % (target, name), installer)
 
     def test_installer_registers_pdf_illustrator_and_eps_open_with(self):
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
         self.assertIn(
             'Subkey: "Software\\Classes\\.pdf\\OpenWithProgids"',
             installer)

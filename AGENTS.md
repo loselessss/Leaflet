@@ -5,6 +5,7 @@
 - sPDF is a Windows desktop PDF editor built with Python, PyQt5, and PyMuPDF.
 - The user interface is Korean-first. Preserve the existing Korean UI unless localization is explicitly requested.
 - `run.py` is the console development entry point; `run.pyw` launches without a console.
+- Repository entry points and public/legal documents stay at the root. Build and release tools live in `tools/`, installer/spec files in `packaging/`, and detailed documents in `docs/`; keep the root focused.
 - Application code lives in `pdfeditor/`. Keep `app.py` focused on `MainWindow` composition and place feature behavior in the existing mixin/module that owns it.
 - OCR runs out of process. Preserve the separation between the GUI process, `ocr_worker_main.py`, and `pdfeditor/ocr_subprocess.py`.
 - sPDF is an independent project. Keep its feature plans, documentation and implementation focused on its own reader and editor; do not describe other applications as companion components of sPDF.
@@ -32,13 +33,13 @@
 ## Versioning
 
 - The application version is defined by `APP_VERSION` in `pdfeditor/meta.py`.
-- The installer version is defined by `MyAppVersion` in `installer.iss`.
+- The installer version is defined by `MyAppVersion` in `packaging/installer.iss`.
 - After a published release, immediately advance the application and installer to the next development version when the first development change is made, so local QA can distinguish it from the released build. Reuse that pending version for subsequent work; do not increment it for every task. Keep pending changes under `Unreleased (VERSION)` / `미배포 (VERSION)` until the user requests a release.
 - Choose the pending version using semantic versioning: use a patch for fixes and improvements to an existing feature, a minor for a distinct backward-compatible feature, and a major only for an intentional compatibility break. If development adds a feature requiring a higher version level, adjust the pending version accordingly. At release time, use the prepared version rather than incrementing it again without reason.
-- For every user-visible change, update `CHANGELOG.md` in the same change. Keep pending changes above the newest release and use Korean section labels such as `새 기능`, `개선`, `성능 개선`, `버그 수정`, and `기타`, omitting empty sections.
-- Whenever the development or release version changes, update `pdfeditor/meta.py` (`APP_VERSION`), `installer.iss` (`MyAppVersion`), both README status entries, and the pending headings in both changelogs and release notes together. Change `RELEASE_DATE` and move the pending entries to dated release headings only when the user requests a release. Preserve historical release entries. Search the repository for the previous version before committing and verify that every remaining reference is intentional.
+- For every user-visible change, update `docs/releases/CHANGELOG.md` in the same change. Keep pending changes above the newest release and use Korean section labels such as `새 기능`, `개선`, `성능 개선`, `버그 수정`, and `기타`, omitting empty sections.
+- Whenever the development or release version changes, update `pdfeditor/meta.py` (`APP_VERSION`), `packaging/installer.iss` (`MyAppVersion`), both README status entries, and the pending headings in both changelogs and release notes together. Change `RELEASE_DATE` and move the pending entries to dated release headings only when the user requests a release. Preserve historical release entries. Search the repository for the previous version before committing and verify that every remaining reference is intentional.
 - Verify that the application and installer versions match exactly.
-- Every GitHub release note must include English and Korean guidance linking to Microsoft Store for the stable version. `release_notes.py` appends this standard guidance inside each language section; keep the corresponding rule in `RELEASE_NOTE_RULES.md`.
+- Every GitHub release note must include English and Korean guidance linking to Microsoft Store for the stable version. `tools/release/release_notes.py` appends this standard guidance inside each language section; keep the corresponding rule in `docs/releases/RELEASE_NOTE_RULES.md`.
 - Installer output names use `Leaflet_Setup_{#MyAppVersion}`. Do not create or publish `sPDF_Setup_VERSION.exe` compatibility aliases for new releases.
 - New installers must not create an extra `sPDF.exe` copy. Keep existing internal module names, native ABI identifiers and settings/association identities for compatibility; this naming rule applies to distributed application/installer aliases.
 - Publish Leaflet installers separately. Bundle matching app source, dependency-source directions and checksum files into `Leaflet_Release_Files_VERSION.zip`; do not upload those supporting files individually. Preserve existing historical release assets unless the user asks to change them.
@@ -46,7 +47,7 @@
 ## Development and verification
 
 - Prefer focused changes that follow the current module boundaries.
-- Treat `README.md` as the current feature/status reference and `PLAN.md` as design history plus enduring constraints. When they conflict, verify against the current code and favor the newer implemented behavior.
+- Treat `README.md` as the current feature/status reference and `docs/plans/PLAN.md` as design history plus enduring constraints. When they conflict, verify against the current code and favor the newer implemented behavior.
 - Run syntax/import checks or the most relevant available tests for changed Python modules.
 - For a version-only change, verify both version constants and run `git diff --check`.
 - Launch the development build with `python run.py` when GUI verification is needed and dependencies are installed.
@@ -54,8 +55,8 @@
 
 ## Windows builds
 
-- Run `build_exe.bat` first. It generates icons and builds the application with PyInstaller.
-- Run `build_installer.bat` only after the executable and OCR worker outputs exist.
+- Run `tools/build/build_exe.bat` first. It generates icons and builds the application with PyInstaller.
+- Run `tools/build/build_installer.bat` only after the executable and OCR worker outputs exist.
 - Installer generation requires Inno Setup 6 at `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`.
 - Do not delete or overwrite existing build outputs unless the requested build workflow requires it.
 

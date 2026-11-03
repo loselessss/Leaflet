@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from build_legal import collect_distributions, is_notice
-from create_source_bundle import (
+from tools.build.build_legal import collect_distributions, is_notice
+from tools.release.create_source_bundle import (
     clean_source_status, include_source, open_with_retry, prepare_source_release,
     read_json,
     source_record, write_archive,
@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class LicensingTests(unittest.TestCase):
     def test_source_requests_retry_transient_timeouts(self):
         response = io.BytesIO(b'{"ok": true}')
-        with patch("create_source_bundle.urlopen", side_effect=[TimeoutError(), response]) as request, \
-                patch("create_source_bundle.time.sleep") as pause:
+        with patch("tools.release.create_source_bundle.urlopen", side_effect=[TimeoutError(), response]) as request, \
+                patch("tools.release.create_source_bundle.time.sleep") as pause:
             self.assertEqual(read_json("https://example.org/metadata"), {"ok": True})
             self.assertEqual(request.call_count, 2)
             pause.assert_called_once_with(2)
@@ -33,8 +33,8 @@ class LicensingTests(unittest.TestCase):
     def test_source_requests_fail_fast_for_permanent_http_errors(self):
         from urllib.error import HTTPError
         error = HTTPError("https://example.org/source", 404, "not found", {}, None)
-        with patch("create_source_bundle.urlopen", side_effect=error) as request, \
-                patch("create_source_bundle.time.sleep") as pause:
+        with patch("tools.release.create_source_bundle.urlopen", side_effect=error) as request, \
+                patch("tools.release.create_source_bundle.time.sleep") as pause:
             with self.assertRaises(HTTPError):
                 open_with_retry("https://example.org/source")
             request.assert_called_once()
@@ -131,7 +131,7 @@ class LicensingTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), before)
 
     def test_release_refuses_dirty_checkout_or_wrong_version(self):
-        with patch("create_source_bundle.subprocess.check_output", return_value=b" M LICENSE\n"):
+        with patch("tools.release.create_source_bundle.subprocess.check_output", return_value=b" M LICENSE\n"):
             with self.assertRaisesRegex(ValueError, "clean working tree"):
                 prepare_source_release(ROOT, APP_VERSION)
         with self.assertRaisesRegex(ValueError, "version"):
@@ -164,9 +164,9 @@ class LicensingTests(unittest.TestCase):
                 return b"abc123\n"
             def record(package):
                 return dict(package, url="https://example.org/source.tar.gz", sha256="a" * 64)
-            with patch("create_source_bundle.subprocess.check_output", side_effect=git), \
-                    patch("create_source_bundle.source_record", side_effect=record), \
-                    patch("create_source_bundle.check_source_access") as check:
+            with patch("tools.release.create_source_bundle.subprocess.check_output", side_effect=git), \
+                    patch("tools.release.create_source_bundle.source_record", side_effect=record), \
+                    patch("tools.release.create_source_bundle.check_source_access") as check:
                 result = prepare_source_release(root, APP_VERSION)
                 self.assertEqual(check.call_count, 5)  # Python packages, Python and Rust crate.
                 with zipfile.ZipFile(result) as archive:
@@ -204,17 +204,17 @@ class LicensingTests(unittest.TestCase):
 
     def test_workflow_packages_sources_before_publication(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        self.assertLess(workflow.index("python create_source_bundle.py"), workflow.index("gh release create"))
-        self.assertLess(workflow.index("python create_release_bundle.py"), workflow.index("gh release create"))
+        self.assertLess(workflow.index("python -m tools.release.create_source_bundle"), workflow.index("gh release create"))
+        self.assertLess(workflow.index("python -m tools.release.create_release_bundle"), workflow.index("gh release create"))
         self.assertIn('$releaseFiles --clobber', workflow)
         self.assertIn("Output/Leaflet_Release_Files_*.zip", workflow)
         self.assertNotIn('sPDF_Setup_', workflow)
         self.assertNotIn('Output/Leaflet_Dependency_Sources_*.md', workflow)
-        spec = (ROOT / "spdf.spec").read_text(encoding="utf-8")
+        spec = (ROOT / "packaging/spdf.spec").read_text(encoding="utf-8")
         self.assertIn("write_legal_bundle", spec)
         self.assertIn("datas=ocr_datas + legal_datas", spec)
-        installer = (ROOT / "installer.iss").read_text(encoding="utf-8")
-        self.assertIn("LicenseFile=LICENSE", installer)
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
+        self.assertIn("LicenseFile=..\\LICENSE", installer)
         self.assertIn('DestDir: "{app}\\third-party"', installer)
 
 

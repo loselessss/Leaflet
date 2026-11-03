@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import zipfile
 
-from create_release_bundle import prepare_release_bundle
+from tools.release.create_release_bundle import prepare_release_bundle
 
 
 class ReleaseBundleTests(unittest.TestCase):

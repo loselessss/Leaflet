@@ -43,15 +43,15 @@ Leaflet ZIP만으로 외부 라이브러리 소스 전체가 제공되는 것은
    requested by RapidOCR's metadata; both variants provide the same `cv2` import.
 3. Install Rust (MSVC x64, Cargo on PATH) and Visual Studio C++ Build Tools.
    Run `python native/build_path_packer.py` to build the Python extension and the
-   independent Rust reader worker, then `python ci_test_runner.py`.
+   independent Rust reader worker, then `python -m tools.ci.run_tests`.
    Build the MuPDF bridge with `python native/build_mupdf_path.py` before tests
    to include its native tests. It uses the headers and import library from the
    installed PyMuPDF wheel; do not substitute a different MuPDF DLL at runtime.
    The Rust build uses `native/path_packer/Cargo.lock`; exact crate source links,
    checksums, compiler version and notices are in `third-party/rust/`.
    Install Inno Setup 6 at the location documented
-   by `build_installer.bat`.
-4. Run `build_exe.bat`, then `build_installer.bat`. Run with the virtual
+   by `tools/build/build_installer.bat`.
+4. Run `tools/build/build_exe.bat`, then `tools/build/build_installer.bat`. Run with the virtual
    environment's Python on PATH. Outputs appear in `dist/` and `Output/`.
 5. To change a dependency, obtain its source from the dependency document,
    follow its included build instructions, install your rebuilt wheel, and
@@ -67,7 +67,7 @@ Rust(MSVC x64)와 C++ 빌드 도구를 설치하고 Cargo를 PATH에 추가한 �
 Cargo.lock에 고정되며 실제 컴파일러·원본 고지·소스 링크는 `third-party/rust/`에 기록됩니다.
 `python native/build_mupdf_path.py`도 실행해 설치된 PyMuPDF와 동일한 SDK로
 좌표 추출 브리지를 빌드합니다. 실행 시 다른 버전의 MuPDF DLL로 교체하지 마세요.
-테스트 후 `build_exe.bat` → `build_installer.bat` 순서로 실행하세요.
+테스트 후 `tools/build/build_exe.bat` → `tools/build/build_installer.bat` 순서로 실행하세요.
 라이브러리 자체를 수정하려면 해당 소스의 빌드 설명을 따라 새 패키지를 만든 뒤
 Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요할 수 있습니다.
 이 안내는 빌드 절차를 제공하며, 서명·타임스탬프까지 동일한 실행 파일 생성을
@@ -75,14 +75,14 @@ Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요�
 
 ## Maintainer release checklist / 배포자 확인 사항
 
-- Build in a clean environment. `build_legal.py` records distribution metadata,
+- Build in a clean environment. `tools/build/build_legal.py` records distribution metadata,
   notices and exact package versions without importing OCR or Qt into the GUI.
-- `create_source_bundle.py` uses a clean Git tag matching `APP_VERSION`, never
+- `tools/release/create_source_bundle.py` uses a clean Git tag matching `APP_VERSION`, never
   a recursive copy of the working folder. It resolves exact-version source
   archives for PyMuPDF and PyQt5 and the matching Qt source distribution.
   Generated icons and the rebuilt native DLL may differ; their tagged
   generators and native source/build script are included. Other local source changes stop publication.
-- Run `create_release_bundle.py --version VERSION` after creating installer checksums.
+- Run `python -m tools.release.create_release_bundle --version VERSION` after creating installer checksums.
   Publish its supporting-files ZIP in the same public release as the Leaflet installers.
   Do not publish individual source/checksum/guide files or create sPDF installer aliases.
   Source preparation or publication
@@ -90,7 +90,7 @@ Leaflet을 다시 빌드합니다. 소스 ZIP 밖의 의존성 소스도 필요�
   without Actions artifact access or an expiry date.
 - The installer SHA-256 is included in the release body; GitHub asset digests
   continue to protect updater downloads. Existing historic releases are not rewritten.
-- MSIX preparation and signing directions are in [MSIX.md](MSIX.md).
+- MSIX preparation and signing directions are in [MSIX.md](docs/development/MSIX.md).
 - Check upstream source links remain accessible for as long as required. If
   an upstream source disappears, host an exact copy yourself; a dead URL is
   not a source offer. Retain dependency archives and any local patches.

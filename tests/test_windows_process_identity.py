@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from build_version_info import version_info_text, write_version_info_files
+from tools.build.build_version_info import version_info_text, write_version_info_files
 from pdfeditor import windows_integration
 from pdfeditor.meta import APP_VERSION
 
