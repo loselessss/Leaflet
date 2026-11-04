@@ -130,3 +130,31 @@ QtNetwork 타입을 창 생성 전에 초기화하도록 보완한 뒤 외부 �
 미검증: 실제 GPU 장치/드라이버에서의 화면 품질·GPU 장애, 물리 프린터 출력, OCR 모델을 사용한
 실제 인식 전체 흐름, PyInstaller 설치 EXE 및 설치 프로그램 재빌드, 네트워크 드라이브·전원 상실.
 별도 프로세스 주소 공간은 검증했지만 시스템 전체 자원 고갈이나 GPU 드라이버 장애의 완전한 격리는 보장하지 않는다.
+
+
+## OCR page raster transport (1.38.0, unreleased)
+
+The OCR engine process receives one RGB page at a time from a separate headless
+`Leaflet.exe --ocr-render-worker` process. That helper uses the main application's
+MuPDF runtime without importing Qt or OCR engines. The OCR executable excludes
+PyMuPDF and retains its independent Python/OCR DLL directory. Stdin/stdout carry
+bounded pixel frames; the PDF password travels through stdin, never command-line
+arguments. The helper renders only on request and exits on pipe EOF or failure.
+Pages retain their original render zoom so recognized coordinates map back to PDF
+points. The GUI-facing OCR job and result JSON protocol is unchanged.
+
+
+## 읽기 순서 분석 (1.38.0 미배포)
+
+- 편집 메뉴의 **읽기 순서로 복사**(Ctrl+Shift+C)에서만 모델을 사용한다.
+  선택이 있으면 선택한 단어만, 없으면 현재 페이지를 복사한다.
+- `--pdf-layout-worker`는 Qt 초기화 전에 분기하는 단발 작업이다.
+  GUI에서는 모델/ONNX Runtime을 불러오지 않으며 작업 종료로 메모리를 반납한다.
+- ORT 추론 스레드는 2개, 작업 간 병렬도는 1이며 유휴 스핀을 끈다.
+  작업은 60초 또는 RSS 1.5 GiB 상한을 넘으면 중단한다.
+- 입력은 기존 불변 스냅샷 또는 단일 페이지 사본이다. 암호화 PDF의 복사
+  권한을 원본에서 먼저 확인하며 원본 파일을 수정하지 않는다.
+- 취소, 페이지 이동, 문서 닫기 시 프로세스와 임시 자료를 정리한다.
+  분석 중 문서가 바뀐 결과는 클립보드에 반영하지 않는다.
+- 설치본의 워커는 OCR 하위 폴더의 ORT를 재사용한다. GUI와 OCR 양쪽에
+  호환되는 VC 런타임을 배치하며 Qt와 ORT는 같은 프로세스에 올리지 않는다.

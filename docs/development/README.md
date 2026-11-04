@@ -19,3 +19,5 @@ Build executables before the installer. Outputs remain in `dist/` and `Output/`.
 - [개발 런처와 트레이 동작](RUNTIME.ko.md) / [Development runtime](RUNTIME.md)
 - [도구 목록 / Tool reference](../../tools/README.md)
 - [기여 시 저장소 규칙 / Repository rules](../../AGENTS.md)
+
+- [라이브러리 업데이트 / Dependency updates](DEPENDENCIES.md)

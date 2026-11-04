@@ -10,6 +10,15 @@ EPS opening requires [Ghostscript](https://www.ghostscript.com/releases/gsdnld.h
 
 Modified AI files are saved as PDF. The Illustrator-compatible save checkbox is on by default and removes private editing data so Illustrator uses the current PDF content. Unchecking preserves existing data but may reopen old content. This does not create AI files or retain their layer/effect editing structure.
 
+## Copy in reading order
+
+Choose **Edit → Copy in reading order** or press **Ctrl+Shift+C**. If text is
+selected, only that selection is copied; otherwise the current page is copied.
+The local AI analyzes columns and paragraphs to arrange the original text.
+It does not rewrite the text. Complex layouts may still need manual checking.
+Scanned pages need OCR first. You can cancel analysis; model memory is released
+after each job. Ordinary Ctrl+C keeps its existing behavior.
+
 ## Download
 
 [Privacy policy / 개인정보 처리방침](../../PRIVACY.md)

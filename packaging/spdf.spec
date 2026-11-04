@@ -16,7 +16,7 @@ OCR 모델(korean_PP-OCRv5 등)은 번들 안 함 — 첫 OCR 때 사용자 폴�
 from pathlib import Path
 import sys
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 # PyInstaller는 spec 파일 폴더를 자동으로 import 경로에 넣지 않는다.
 spec_root = Path(SPEC).resolve().parents[1]
@@ -25,7 +25,7 @@ sys.path.insert(0, str(spec_root))
 from tools.build.build_version_info import write_version_info_files
 from tools.build.build_legal import write_legal_bundle
 from pdfeditor.meta import APP_VERSION
-from tools.build.build_payload import trim_payload, native_worker_runtime_binaries
+from tools.build.build_payload import trim_payload, native_worker_runtime_binaries, prefer_ocr_runtimes, runtime_ssl_datas
 
 
 # 작업 관리자가 GUI와 OCR 자식 프로세스를 의미 있는 제품명으로 표시하도록
@@ -35,7 +35,7 @@ gui_version_info, ocr_version_info = write_version_info_files(
     build_root / "version-info", APP_VERSION)
 legal_bundle = write_legal_bundle(build_root / "legal")
 legal_datas = [(str(spec_root / "LICENSE"), "."), (str(spec_root / "LICENSES.md"), "."), (str(spec_root / "SOURCE_CODE.md"), "."),
-               (str(spec_root / "licenses"), "licenses"), (str(legal_bundle), "third-party")]
+               (str(spec_root / "licenses"), "licenses"), (str(legal_bundle), "third-party")] + runtime_ssl_datas()
 d2d_renderer = spec_root / "native" / "bin" / "spdf_d2d_renderer.dll"
 if not d2d_renderer.is_file():
     raise FileNotFoundError(
@@ -62,7 +62,7 @@ for pkg in ("rapidocr", "onnxruntime"):
     ocr_datas += d
     ocr_bins += b
     ocr_hidden += h
-ocr_hidden += ["cv2", "numpy", "fitz", "pdfeditor.ocr_subprocess"]
+ocr_hidden += ["cv2", "numpy", "pdfeditor.ocr_subprocess"]
 
 # 실제 쓰는 OCR 모델(det + cls + 한국어 rec)만 번들에 남긴다. collect_all이
 # rapidocr/models의 .onnx를 전부 쓸어담는데, 기본 중국어 rec 모델
@@ -91,10 +91,11 @@ a_ocr = Analysis(
     binaries=ocr_bins,
     datas=ocr_datas + legal_datas,
     hiddenimports=ocr_hidden,
-    excludes=["PyQt5", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle",
+    excludes=["PyQt5", "pymupdf", "fitz", "tkinter", "matplotlib", "onnx", "tensorrt", "paddle",
               "PIL.AvifImagePlugin"],
 )
 a_ocr.binaries, a_ocr.datas = trim_payload(a_ocr.binaries, a_ocr.datas, gui=False)
+a_ocr.binaries = prefer_ocr_runtimes(a_ocr.binaries)
 pyz_ocr = PYZ(a_ocr.pure)
 exe_ocr = EXE(
     pyz_ocr, a_ocr.scripts, [],
@@ -109,17 +110,24 @@ exe_ocr = EXE(
 a_gui = Analysis(
     [str(spec_root / "run.py")],
     pathex=[str(spec_root)],
+    runtime_hooks=[str(spec_root / "tools/build/rth_headless_workers.py")],
     binaries=[(str(d2d_renderer), "native"), (str(mupdf_path_bridge), "native"),
               (str(scene_worker), "native")] + worker_runtimes,
     datas=[(str(spec_root / "assets/spdf.ico"), "assets"),
            (str(spec_root / "assets/spdf_doc.ico"), "assets"),
            (str(spec_root / "assets/leaflet_ai.ico"), "assets"),
-           (str(spec_root / "assets/leaflet_eps.ico"), "assets")] + legal_datas,
-    hiddenimports=["pdfeditor", "fitz", "pdfeditor.gpu_scene_worker", "pdfeditor._path_packer"],
-    excludes=["rapidocr", "onnxruntime", "cv2", "onnx", "tensorrt", "paddle",
+           (str(spec_root / "assets/leaflet_eps.ico"), "assets")] + legal_datas
+          + collect_data_files("pymupdf", include_py_files=True, includes=["layout/**"]),
+    hiddenimports=["pdfeditor", "fitz", "pdfeditor.gpu_scene_worker", "pdfeditor.ocr_render_worker",
+                   "pdfeditor.layout_worker", "pdfeditor._path_packer", "pymupdf.features",
+                   "packaging.version", "yaml"],
+    excludes=["pymupdf.layout", "rapidocr", "onnxruntime", "cv2", "onnx", "tensorrt", "paddle",
               "tkinter", "matplotlib", "PIL.AvifImagePlugin"],
 )
 a_gui.binaries, a_gui.datas = trim_payload(a_gui.binaries, a_gui.datas, gui=True)
+# Headless layout jobs reuse ORT from the OCR directory. Both executables need
+# its supported VC runtime; loading Qt's older copy first breaks ORT imports.
+a_gui.binaries = prefer_ocr_runtimes(a_gui.binaries)
 pyz_gui = PYZ(a_gui.pure)
 exe_gui = EXE(
     pyz_gui, a_gui.scripts, [],

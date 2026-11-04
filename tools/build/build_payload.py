@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 _UNUSED_QT_LIBRARIES = {
     "qt5quick.dll", "qt5qml.dll", "qt5qmlmodels.dll",
     "qt5websockets.dll", "qt5dbus.dll",
+    "opengl32sw.dll",  # Qt software OpenGL; CPU tiles and Direct2D WARP remain available.
 }
 
 
@@ -31,6 +32,11 @@ def native_worker_runtime_binaries(*modules, search_paths=None):
 def keep_payload(destination, *, gui):
     path = PurePosixPath(destination.replace("\\", "/"))
     name = path.name.lower()
+    if gui and "pymupdf/layout/resources/onnx/" in str(path).lower():
+        # PyMuPDF 2.1 defaults: imf+rf layout, image features, V4-EP tables.
+        # Alternative model versions are never requested by Leaflet.
+        return name in {"layout_rf2.4.1+imf1.onnx", "layout_rf2.4.1+imf1.yaml",
+                        "feature_imf1.onnx", "table_grid_model_v4_ep.onnx"}
     if name.startswith("opencv_videoio_ffmpeg") and name.endswith(".dll"):
         # OCR uses still-image processing, never VideoCapture/VideoWriter.
         return False
@@ -75,3 +81,34 @@ def trim_payload(binaries, datas, *, gui):
     print(f"Trimmed {'GUI' if gui else 'OCR'} payload: {len(all_removed)} files, "
           f"{cost / (1024 * 1024):.1f} MiB before compression")
     return kept_binaries, kept_datas
+
+
+def prefer_ocr_runtimes(binaries, runtime_directory=None):
+    """Use the installed VC++ redistributable, rather than an older Qt-wheel copy.
+
+    ONNX Runtime can fail DLL initialization with the legacy wheel runtime.
+    C++ build machines must provide a complete, current redistributable set.
+    """
+    import os
+    directory = Path(runtime_directory) if runtime_directory else Path(os.environ["SystemRoot"]) / "System32"
+    names = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+    for name in names:
+        if not (directory / name).is_file():
+            raise FileNotFoundError("Install the current Visual C++ runtime: " + name)
+    retained = [item for item in binaries if item[0].lower() not in names]
+    return retained + [(name, str(directory / name), "BINARY") for name in names]
+
+
+def runtime_ssl_datas(ssl_module=None):
+    """Preserve trust-policy sidecars required by a customized Python runtime."""
+    if ssl_module is None:
+        import ssl as ssl_module
+    source = Path(ssl_module.__file__).resolve()
+    filename = "codex-rejected-cas.pem"
+    # Standard CPython does not require this sidecar. Do not alter SSL policy.
+    if filename not in source.read_text(encoding="utf-8"):
+        return []
+    certificate = source.with_name(filename)
+    if not certificate.is_file():
+        raise FileNotFoundError("Python SSL runtime data is missing: " + str(certificate))
+    return [(str(certificate), ".")]

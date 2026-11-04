@@ -2,10 +2,19 @@
 # Upgrade deliberately after running the application and GPU/OCR checks.
 # This is not a lock file for transitive dependencies.
 PyQt5==5.15.11
-PyMuPDF==1.28.2
-Pillow==12.3.0
-PyInstaller==6.21.0
-rapidocr==3.9.1
-onnxruntime==1.27.0
+PyMuPDF==2.1
+pymupdf_layout==2.1
+pymupdf4llm==2.1
+psutil==7.2.2
+Pillow==13.0.0
+PyInstaller==6.22.3
+rapidocr==3.10.0
+onnxruntime==1.31.1
 opencv-python-headless==5.0.0.93
-numpy==2.5.2
+numpy==2.5.4
+
+# Native Qt binding and build hooks verified with the versions above.
+PyQt5-sip==12.20.0
+pyinstaller-hooks-contrib==2026.9
+certifi==2026.10.23
+setuptools==84.2.1

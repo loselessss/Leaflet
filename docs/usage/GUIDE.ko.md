@@ -14,6 +14,15 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 
 수정한 AI 파일은 PDF로 저장합니다. Illustrator 호환 저장은 기본으로 켜져 재편집 정보를 제거하고 현재 PDF 내용으로 엽니다. 해제하면 기존 정보를 보존하지만 이전 내용이 다시 나타날 수 있습니다. AI 파일 생성이나 원본 레이어·효과 편집 구조 보존 기능은 아닙니다.
 
+## 읽기 순서로 복사
+
+**편집 → 읽기 순서로 복사** 또는 **Ctrl+Shift+C**를 사용합니다. 선택한 글이
+있으면 그 부분만, 선택이 없으면 현재 페이지 전체를 복사합니다. PC 안의 AI가
+단과 문단을 분석해 원래 글의 순서를 정돈합니다. 글의 내용은 고쳐 쓰지 않으며,
+복잡한 배치에서는 복사 결과를 확인해야 할 수 있습니다. 스캔 페이지는 먼저 OCR을
+실행해 주세요. 분석은 취소할 수 있고 작업 후 모델 메모리는 정리됩니다.
+일반 Ctrl+C는 기존대로 동작합니다.
+
 ## 다운로드
 
 **안정 버전은 [Microsoft Store](https://apps.microsoft.com/detail/9PCB1BH4WBDT?hl=ko-kr&gl=KR&ocid=pdpshare)에서 설치하세요.**

@@ -527,6 +527,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self._redo_act.setEnabled(False)
         e.addSeparator()
         self._act(e, "복사", "Ctrl+C", self.copy_selection, "copy")
+        self._act(e, localize("Copy in reading order", "읽기 순서로 복사"),
+                  "Ctrl+Shift+C", self.copy_in_reading_order, "copy")
         self._act(e, "현재 페이지 모두 선택", "Ctrl+A", self.select_all,
                   "select_all")
         e.addSeparator()
@@ -1063,6 +1065,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if getattr(self, "_closing_doc", False):
             return
         self._closing_doc = True
+        self._cancel_layout_copy()
         if self._artboard_view is not None:
             self._artboard_view.set_document(None)
         if self._page_grid is not None:

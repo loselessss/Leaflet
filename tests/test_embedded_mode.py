@@ -267,7 +267,7 @@ class EmbeddedModeTests(unittest.TestCase):
             self.assertTrue(tab._search_act.isEnabled())
             shortcuts = {action.shortcut().toString(): action
                          for action in tab.findChildren(QAction)}
-            for shortcut in ("Ctrl+C", "Ctrl+A", "Ctrl+F", "Ctrl+P"):
+            for shortcut in ("Ctrl+C", "Ctrl+Shift+C", "Ctrl+A", "Ctrl+F", "Ctrl+P"):
                 self.assertTrue(shortcuts[shortcut].isEnabled())
             tab.select_all()
             tab.copy_selection()

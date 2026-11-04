@@ -27,9 +27,11 @@ struct Record {
         mupdf::ll_fz_drop_default_colorspaces(defaults);mupdf::ll_fz_drop_function(function);
     }
 };
+struct GlyphOutline {Result path;bool even_odd=false;};
 struct Job {std::vector<std::unique_ptr<Record>> records;Result metadata;bool failed=false;fz_rect page;
     fz_document* owned_document=nullptr;fz_page* owned_page=nullptr;
-    std::map<std::pair<fz_font*,int>,Result> glyphs;size_t glyph_bytes=0;
+    std::map<std::pair<fz_font*,int>,GlyphOutline> glyphs;size_t glyph_bytes=0;
+    size_t record_limit=1048576;
     fz_cookie cookie={};bool count_only=false;uint64_t score=0,operations=0;
     std::chrono::steady_clock::time_point deadline=std::chrono::steady_clock::time_point::max();
     ~Job(){records.clear();mupdf::ll_fz_drop_page(owned_page);mupdf::ll_fz_drop_document(owned_document);}};
@@ -55,7 +57,7 @@ template<class F> void capture(fz_device* d,uint32_t k,F f) noexcept {
     if(job.count_only){if(k<=18){++job.operations;job.score+=(k>=4&&k<=8)||k==13||k==15||k==17?8:k>=9&&k<=11?4:1;}return;}
     try {
         if((job.records.size()&63)==0&&std::chrono::steady_clock::now()>=job.deadline)throw std::runtime_error("GPU scene time budget exceeded");
-        if(job.records.size()>=1048576||job.records.size()>128*1024*1024/sizeof(Record))throw std::runtime_error("native command budget exceeded");
+        if(job.records.size()>=job.record_limit||job.records.size()>128*1024*1024/sizeof(Record))throw std::runtime_error("native command budget exceeded");
         auto r=std::make_unique<Record>();r->kind=k;f(*r);
         job.records.push_back(std::move(r));
     }catch(const std::exception& e){error=e.what();job.failed=true;job.cookie.abort=1;}catch(...){error="native capture failure";job.failed=true;job.cookie.abort=1;}
@@ -222,6 +224,7 @@ void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,
     put(p,uint32_t(image->image->interpolate)|(image->kind==9&&image->image->bpc>1?2u:0u)|preparation);
     for(int y=0;y<h;++y)blob(p,pix->samples+y*pix->stride,size_t(w)*4);event(out,9,p);
 }
+GlyphOutline type3_outline(Job& job,fz_font* font,int gid);
 void materialize(Job& job,Result& out,const Record& r,fz_rect area) {
     if(r.kind==8&&gradient(r.shade)) {
         const auto& s=*r.shade;Result p;put(p,uint32_t(s.type));matrix(p,mupdf::ll_fz_concat(s.matrix,r.matrix));rect(p,area);
@@ -236,28 +239,34 @@ void materialize(Job& job,Result& out,const Record& r,fz_rect area) {
     if(r.kind<=3){path_event(out,r,path_bytes(r.path),r.matrix);return;}
     if(r.kind>=4&&r.kind<=7) {
         // Clip outlines are merged in page space; fills retain reusable glyph space.
-        struct Glyph {const Result* bytes;fz_matrix m;};std::vector<Glyph> glyphs;
+        struct Glyph {const GlyphOutline* outline;fz_matrix m;};std::vector<Glyph> glyphs;
         for(auto* s=r.text->head;s;s=s->next)for(int i=0;i<s->len;++i) {
             auto item=s->items[i];if(item.gid==-1)continue;
             int gid=item.gid<0?mupdf::ll_fz_encode_character(s->font,item.ucs):item.gid;
+            // Type3 stroke/clip text has different coverage semantics. Keep its
+            // existing capture path, including when a filled glyph is cached.
+            if(s->font->t3procs&&r.kind!=4)throw std::runtime_error("font has no vector outline");
             auto key=std::make_pair(s->font,gid);auto found=job.glyphs.find(key);
             if(found==job.glyphs.end()) {
                 std::unique_ptr<fz_path,void(*)(const fz_path*)> p(mupdf::ll_fz_outline_glyph(s->font,gid,identity),mupdf::ll_fz_drop_path);
-                if(!p)throw std::runtime_error("font has no vector outline");
-                auto bytes=path_bytes(p.get());job.glyph_bytes+=bytes.bytes.size();
+                GlyphOutline outline;
+                if(p)outline.path=path_bytes(p.get());
+                else outline=type3_outline(job,s->font,gid);
+                job.glyph_bytes+=outline.path.bytes.size();
                 if(job.glyph_bytes>128*1024*1024)throw std::runtime_error("native glyph budget exceeded");
-                found=job.glyphs.emplace(key,std::move(bytes)).first;
+                found=job.glyphs.emplace(key,std::move(outline)).first;
             }
             auto m=s->trm;m.e=item.x;m.f=item.y;glyphs.push_back({&found->second,r.kind==4?mupdf::ll_fz_concat(m,r.matrix):m});
         }
         if(r.kind==4)for(const auto& glyph:glyphs) {
             // A borrowed temporary record must not drop the original resources.
-            Record paint;paint.kind=0;paint.alpha=r.alpha;paint.params=r.params;paint.cs=mupdf::ll_fz_keep_colorspace(r.cs);
-            std::copy(r.color,r.color+FZ_MAX_COLORS,paint.color);path_event(out,paint,*glyph.bytes,glyph.m,true);
+            Record paint;paint.kind=0;paint.flags=uint32_t(glyph.outline->even_odd);
+            paint.alpha=r.alpha;paint.params=r.params;paint.cs=mupdf::ll_fz_keep_colorspace(r.cs);
+            std::copy(r.color,r.color+FZ_MAX_COLORS,paint.color);path_event(out,paint,glyph.outline->path,glyph.m,true);
         } else {
             Result merged;
             for(const auto& glyph:glyphs) {
-                const auto& b=glyph.bytes->bytes;size_t at=0;
+                const auto& b=glyph.outline->path.bytes;size_t at=0;
                 while(at<b.size()) {auto tag=b[at++];merged.bytes.push_back(tag);const int n=tag==3?6:tag==4?0:2;
                     for(int j=0;j<n;j+=2){double x,y;std::memcpy(&x,b.data()+at,8);std::memcpy(&y,b.data()+at+8,8);at+=16;
                         const auto& m=glyph.m;put(merged,double(x*m.a+y*m.c+m.e));put(merged,double(x*m.b+y*m.d+m.f));}
@@ -290,6 +299,51 @@ static fz_device* leaflet_scene_device(leaflet_scene::Job& job) {
     dev->super.begin_tile=begin_tile;dev->super.end_tile=end_tile;dev->super.render_flags=render_flags;dev->super.set_default_colorspaces=set_defaults;
     return &dev->super;
 }
+
+namespace leaflet_scene {
+GlyphOutline type3_outline(Job& job,fz_font* font,int gid) {
+    if(!font->t3procs||gid<0||gid>=256)throw std::runtime_error("font has no vector outline");
+    mupdf::ll_fz_prepare_t3_glyph(font,gid);
+    const auto flags=font->t3flags[gid];
+    // A masked glyph inherits the enclosing text color. Colored glyphs and
+    // graphics-state-dependent programs must retain MuPDF's raster handling.
+    if(!(flags&FZ_DEVFLAG_MASK)||(flags&(FZ_DEVFLAG_COLOR|FZ_DEVFLAG_UNCACHEABLE)))
+        throw std::runtime_error("font has no vector outline");
+    Job captured;captured.deadline=job.deadline;captured.record_limit=32;
+    std::unique_ptr<fz_device,DevDrop> device(leaflet_scene_device(captured));
+    mupdf::ll_fz_run_t3_glyph(font,gid,identity,device.get());
+    mupdf::ll_fz_close_device(device.get());
+    if(captured.failed) {
+        if(error=="GPU scene time budget exceeded")throw std::runtime_error(error);
+        throw std::runtime_error("font has no vector outline");
+    }
+    const Record* fill=nullptr;
+    for(const auto& record:captured.records) {
+        if(record->kind==19||record->kind==20)continue;
+        // One complete fill preserves its holes and winding rule. Do not merge
+        // independently painted paths: overlaps and opacity could change.
+        if(record->kind!=0||record->alpha!=1.f||fill)
+            throw std::runtime_error("font has no vector outline");
+        fill=record.get();
+    }
+    GlyphOutline result;
+    if(fill) {
+        // Walk packed display-list paths directly; never mutate/clone their
+        // internal storage. Apply the Type3 font matrix to our owned bytes.
+        result.path=path_bytes(fill->path);result.even_odd=fill->flags!=0;
+        auto& bytes=result.path.bytes;size_t at=0;
+        while(at<bytes.size()) {
+            const auto tag=bytes[at++];const int n=tag==3?6:tag==4?0:2;
+            for(int j=0;j<n;j+=2) {
+                double x,y;std::memcpy(&x,bytes.data()+at,8);std::memcpy(&y,bytes.data()+at+8,8);
+                const auto& m=fill->matrix;const double tx=x*m.a+y*m.c+m.e,ty=x*m.b+y*m.d+m.f;
+                std::memcpy(bytes.data()+at,&tx,8);std::memcpy(bytes.data()+at+8,&ty,8);at+=16;
+            }
+        }
+    }
+    return result;
+}
+} // namespace leaflet_scene
 
 extern "C" __declspec(dllexport) int leaflet_scene_probe(fz_page* page,uint64_t* score,uint64_t* operations) noexcept {
     using namespace leaflet_scene;

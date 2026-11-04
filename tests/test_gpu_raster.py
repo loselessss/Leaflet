@@ -671,11 +671,15 @@ class GpuRasterSceneTests(unittest.TestCase):
         with fitz.open() as pdf:
             page = pdf.new_page(width=100, height=100)
             page.draw_rect((10, 10, 40, 40), fill=(1, 0, 0))
+            expected = g.vector_page_from_pymupdf(page)
+            pixels = page.get_pixmap().samples
             content = page.get_contents()[0]
             pdf.update_stream(content, b"0 0 m f\n" + pdf.xref_stream(content))
             scene = g.vector_page_from_pymupdf(page)
+            self.assertEqual(page.get_pixmap().samples, pixels)
         self.assertTrue(scene.supported, scene.reason)
-        self.assertEqual(len(scene.items), 2)
+        self.assertTrue(scene.items)
+        self.assertEqual(scene.items, expected.items)
 
     def test_mask_derived_clip_is_not_absorbed_by_gradient_compaction(self):
         from pdfeditor import gpu_raster as g

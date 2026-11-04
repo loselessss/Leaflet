@@ -4,10 +4,10 @@
 get_text를 부르면 큰 페이지에서 버벅인다.
 """
 
-from PyQt5.QtCore import QRectF
+from PyQt5.QtCore import QRectF, Qt
 
-from .i18n import tr
-from PyQt5.QtWidgets import QApplication
+from .i18n import tr, localize
+from PyQt5.QtWidgets import QApplication, QProgressDialog
 
 from .selection import payload_from_words
 
@@ -99,6 +99,7 @@ class TextSelectMixin:
         self._selection_document_id = ""
 
     def _reset_textsel(self):
+        self._cancel_layout_copy()
         self._words_cache.clear()
         self._selected = []
         self._search_query = ""
@@ -110,6 +111,8 @@ class TextSelectMixin:
     def show_page(self, index):
         # MRO상 ViewerMixin.show_page가 실제 표시를 한 뒤, 이 페이지에
         # 해당하는 오버레이(선택은 초기화, 검색은 재적용)를 얹는다.
+        if index != getattr(self, "page_index", None):
+            self._cancel_layout_copy()
         super().show_page(index)
         self._clear_selection()
         self._apply_search_overlay()
@@ -190,6 +193,69 @@ class TextSelectMixin:
         text = words_to_text(self._selected)
         QApplication.clipboard().setText(text)
         self.statusBar().showMessage("복사됨 (%d자)" % len(text), 3000)
+
+    def _cancel_layout_copy(self):
+        job = getattr(self, "_layout_copy_job", None)
+        self._layout_copy_job = None
+        if job is not None:
+            job.cancel()
+        dialog = getattr(self, "_layout_copy_dialog", None)
+        self._layout_copy_dialog = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+
+    def copy_in_reading_order(self):
+        if self.doc is None or getattr(self, "_closing_doc", False):
+            return
+        import pymupdf
+        if not self.doc._doc.permissions & pymupdf.PDF_PERM_COPY:
+            self.statusBar().showMessage(localize(
+                "This PDF does not allow copying text.", "이 PDF는 텍스트 복사를 허용하지 않습니다."), 6000)
+            return
+        self._cancel_layout_copy()
+        from .layout_copy import LayoutCopyJob
+        document, page = self.doc, self.page_index
+        generation = document.render_generation
+        selected = list(self._selected) or None
+        if not selected and not self._page_words(page):
+            self.statusBar().showMessage(localize(
+                "No text on this page. Run OCR first.", "텍스트가 없는 페이지입니다. 먼저 OCR을 실행해 주세요."), 6000)
+            return
+        try:
+            job = LayoutCopyJob(document, page, selected, self)
+        except Exception as error:
+            self.statusBar().showMessage(str(error), 6000)
+            return
+        self._layout_copy_job = job
+        dialog = QProgressDialog(localize("Analyzing reading order…", "읽기 순서 분석 중…"),
+                                 tr("취소"), 0, 0, self)
+        self._layout_copy_dialog = dialog
+        dialog.setWindowTitle(localize("Copy in reading order", "읽기 순서로 복사"))
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.canceled.connect(self._cancel_layout_copy)
+
+        def finished(text, error):
+            if self._layout_copy_job is not job:
+                return
+            self._layout_copy_job = None
+            self._layout_copy_dialog = None
+            dialog.close()
+            dialog.deleteLater()
+            if (self.doc is not document or self.page_index != page or
+                    document.render_generation != generation or getattr(self, "_closing_doc", False)):
+                return
+            if error:
+                self.statusBar().showMessage(localize(
+                    "Reading-order analysis failed: ", "읽기 순서 분석 실패: ") + error, 6000)
+            elif text:
+                QApplication.clipboard().setText(text)
+                self.statusBar().showMessage(localize(
+                    "Copied (%d characters)", "복사됨 (%d자)") % len(text), 3000)
+
+        job.completed.connect(finished)
+        dialog.show()
+        job.start()
 
     # --- 검색 ----------------------------------------------------------
 

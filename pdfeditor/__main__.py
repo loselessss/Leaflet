@@ -2,6 +2,15 @@ import sys
 
 
 def main(*, allow_residency=True):
+    if "--pdf-layout-worker" in sys.argv:
+        from .layout_worker import main as layout_main
+        index = sys.argv.index("--pdf-layout-worker")
+        sys.exit(layout_main(sys.argv[index + 1:]))
+
+    if "--ocr-render-worker" in sys.argv:
+        from .ocr_render_worker import main as raster_main
+        sys.exit(raster_main())
+
     if "--gpu-scene-worker" in sys.argv:
         from .gpu_scene_worker import main as gpu_scene_main
         index = sys.argv.index("--gpu-scene-worker")

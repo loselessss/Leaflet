@@ -1,5 +1,13 @@
 # Leaflet Release Notes
 
+## Unreleased (1.38.0)
+
+- Keep more PDF text sharp while zooming, with lower memory use at high magnification.
+- Copy text in reading order with Ctrl+Shift+C, including multi-column pages. Analysis stays on your PC.
+- Reduce installation size.
+
+- Improve OCR reliability, including model downloads.
+
 ## 1.37.5 - 2026-11-03
 
 - Show CPU and GPU responsibilities more clearly in the rendering status tooltip.

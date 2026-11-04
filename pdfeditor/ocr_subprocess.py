@@ -452,6 +452,23 @@ def _recognize(engine, img_rgb, zoom, tiled=False):
             for it in raw]
 
 
+def _error_message(error):
+    """Keep the underlying network/loader reason in OCR failure reports."""
+    import traceback
+    traceback.print_exception(error, file=sys.stderr)
+    parts = [str(error)]
+    seen = {id(error)}
+    for _ in range(3):
+        error = error.__cause__ or error.__context__
+        if error is None or id(error) in seen:
+            break
+        seen.add(id(error))
+        detail = str(error)
+        if detail and detail not in parts:
+            parts.append(detail)
+    return "\n".join(parts)[:3000]
+
+
 def main():
     _force_utf8_io()  # 반드시 첫 입출력 전에 (프로즌 EXE의 cp949 폴백 방지)
 
@@ -461,45 +478,29 @@ def main():
         _emit({"type": "error", "message": "잘못된 작업 입력: %s" % e})
         return 1
 
-    path = job["path"]
-    password = job.get("password")
     pages = job["pages"]
-    fixed_zoom = job.get("zoom")  # 없으면 페이지별 자동 배율
     engine = job.get("engine", "rapidocr")
-
     try:
-        import numpy as np
-        import pymupdf as fitz
         ocr = _build_engine(engine)
     except Exception as e:
-        _emit({"type": "error", "message": "OCR 초기화 실패: %s" % e})
+        _emit({"type": "error", "message": "OCR 초기화 실패: %s" % _error_message(e)})
         return 1
-
     try:
-        doc = fitz.open(path)
-        if doc.needs_pass:
-            doc.authenticate(password or "")
-        try:
-            target = VL_TARGET_LONG_PX if engine == "vl" else TARGET_LONG_PX
+        from .ocr_page_source import PageSource
+        target = VL_TARGET_LONG_PX if engine == "vl" else TARGET_LONG_PX
+        with PageSource(job, target) as source:
             for i, pno in enumerate(pages):
-                zoom = fixed_zoom or _page_zoom(doc[pno].rect, target)
-                pix = doc[pno].get_pixmap(
-                    matrix=fitz.Matrix(zoom, zoom), alpha=False)
-                img = np.frombuffer(pix.samples, dtype=np.uint8) \
-                    .reshape(pix.height, pix.width, 3)
+                img, zoom = source.read(pno)
                 if job.get("preprocess", True):
                     img = _preprocess(img)
-                items = _recognize(
-                    ocr, img, zoom, tiled=(engine == "rapidocr"))
-                del pix, img
+                items = _recognize(ocr, img, zoom, tiled=(engine == "rapidocr"))
+                del img
                 _emit({"type": "page", "page": pno, "items": items})
                 _emit({"type": "progress", "done": i + 1, "total": len(pages)})
-        finally:
-            doc.close()
         _emit({"type": "done"})
         return 0
     except Exception as e:
-        _emit({"type": "error", "message": str(e)})
+        _emit({"type": "error", "message": _error_message(e)})
         return 1
 
 

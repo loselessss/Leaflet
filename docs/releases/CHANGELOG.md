@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (1.38.0)
+
+### 새 기능
+
+- Copy selected text or the current page in AI-assisted reading order (Ctrl+Shift+C). Analysis runs locally and releases its model memory when finished.
+
+### 개선
+
+- Render simple Type3 vector fonts directly on the GPU, keeping text sharper while zooming and reducing high-zoom memory use.
+
+- Reduce installation size by excluding an unused software graphics library.
+
+- Reduce OCR package size by rendering PDF pages in an isolated helper using the main application runtime.
+
+- Update the PDF engine, image processing, OCR and packaging libraries.
+
+### 버그 수정
+
+- Fix installed OCR failing to initialize because of an outdated bundled runtime.
+- Preserve required Python SSL runtime data so installed OCR can download its models.
+
 ## 1.37.5 - 2026-11-03
 
 ### 개선
