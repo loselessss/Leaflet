@@ -1,7 +1,7 @@
 //! Interoperable LFDC storage and LFSW private worker transport.
 use super::windows::sha256;
 pub const MAGIC:&[u8;8]=b"LFDC\x01\0\0\0";
-pub const LIMIT:usize=256*1024*1024;
+pub const LIMIT:usize=512*1024*1024;
 const CHUNK:usize=64*1024*1024;const BLOCK:usize=1024*1024;
 pub struct Scene {pub scale:f64,pub commands:u32,pub features:Vec<String>,pub packet:Vec<u8>}
 pub fn encode(scene:&Scene,workers:usize)->Result<Vec<u8>,String>{

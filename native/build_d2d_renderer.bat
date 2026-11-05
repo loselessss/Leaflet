@@ -24,6 +24,11 @@ if not exist "%FXC%" (
   /Fh "%~dp0bin\spdf_mask_lerp_shader.h" /Vn spdf_mask_lerp_shader ^
   "%~dp0d2d_renderer\mask_lerp.hlsl"
 if errorlevel 1 exit /b %errorlevel%
+"%FXC%" /nologo /T ps_4_0 /E main /D D2D_FULL_SHADER /D D2D_ENTRY=main /Gis /O3 ^
+  /I "%WindowsSdkDir%Include\%WindowsSDKVersion%um" ^
+  /Fh "%~dp0bin\leaflet_backdrop_source_shader.h" /Vn leaflet_backdrop_source_shader ^
+  "%~dp0d2d_renderer\backdrop_source.hlsl"
+if errorlevel 1 exit /b %errorlevel%
 cl /nologo /std:c++17 /EHsc /W4 /WX /O2 /LD /DUNICODE /D_UNICODE ^
   /Fo"%~dp0bin\spdf_d2d.obj" /Fd"%~dp0bin\spdf_d2d.pdb" ^
   /I"%~dp0bin" /I"%~dp0d2d_renderer" "%~dp0d2d_renderer\spdf_d2d.cpp" ^

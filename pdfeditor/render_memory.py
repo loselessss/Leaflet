@@ -14,12 +14,23 @@ class RenderMemory:
     prefetch_pages: int
 
 
-def policy(total, available):
+def policy(total, available, limit_mb=0):
     available = max(0, min(total, available))
-    budget = max(16 * MIB, min(1024 * MIB, total // 32, available // 8))
+    budget = max(16 * MIB, min(2048 * MIB, total // 16, available // 4))
+    if limit_mb:
+        budget = min(budget, limit_mb * MIB)
     # Leave ample room for the worker's temporary image/geometry buffers.
-    count = 0 if available < 1024 * MIB else min(4, max(1, budget // (128 * MIB)))
+    count = 0 if available < 1024 * MIB else min(8, max(2, budget // (128 * MIB)))
     return RenderMemory(budget, count)
+
+
+def vector_gpu_budget(ram_budget, video):
+    """Retain drawing resources while reserving room for active composition."""
+    limit = ram_budget // 2
+    if video is not None:
+        budget, usage = video
+        limit = min(limit, budget // 4, max(0, budget - usage) // 2)
+    return limit
 
 
 class _MemoryStatus(ctypes.Structure):
@@ -33,6 +44,11 @@ _last_sample = 0.0
 _cached = RenderMemory(128 * MIB, 1)
 
 
+def invalidate_render_memory():
+    global _last_sample
+    _last_sample = 0.0
+
+
 def render_memory():
     global _last_sample, _cached
     now = time.monotonic()
@@ -44,7 +60,8 @@ def render_memory():
         status.length = ctypes.sizeof(status)
         try:
             if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                _cached = policy(status.total, status.available)
+                from .settings import render_cache_mb
+                _cached = policy(status.total, status.available, render_cache_mb())
         except (OSError, AttributeError):
             pass
     return _cached

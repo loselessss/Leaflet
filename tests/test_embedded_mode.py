@@ -953,8 +953,63 @@ class EmbeddedModeTests(unittest.TestCase):
         self.assertIsNotNone(window._update_service)
         self.assertIn("Check for Updates...", menu_texts)
         self.assertIn("Preferences…", menu_texts)
-        self.assertNotIn("Display Renderer", menu_texts)
+        self.assertIn("Display Renderer", menu_texts)
         window.close()
+
+    def test_view_menu_has_renderer_and_live_cache_settings_for_document(self):
+        from PyQt5.QtWidgets import QMenu
+        from pdfeditor import settings
+        with self.document_windows() as (module, source), \
+                patch('pdfeditor.app.settings.automatic_update_check_due', return_value=False):
+            window = module.new_window(str(source), updates_enabled=True, workspace_mode='reader')
+            self.app.processEvents()
+            tab = window._tabs.currentWidget()
+            menu = next(action.menu() for action in tab._menubar.actions()
+                        if '(&V)' in action.text())
+            renderer = next(action.menu() for action in menu.actions()
+                            if action.text() == 'Display Renderer')
+            actions = {action.text(): action for action in renderer.actions()}
+            self.assertIn('GPU (Direct2D)', actions)
+            cache = next(m for m in renderer.findChildren(QMenu) if m.title() == 'Vector page cache')
+            with patch.object(tab.view, 'apply_render_cache_settings') as apply:
+                next(action for action in cache.actions() if action.text() == '2048 MB').trigger()
+                self.assertEqual(settings.render_cache_mb(), 2048)
+                apply.assert_called_once()
+
+    def test_start_page_identifies_reader_and_editor_and_store_keeps_renderer_menu(self):
+        from PyQt5.QtWidgets import QAction
+        from pdfeditor.i18n import localize
+        with self.document_windows() as (module, _source), \
+                patch.object(self.app, '_spdf_standalone_reader', True, create=True):
+            for mode, expected in (('reader', localize('Reader mode', '읽기 모드')),
+                                   ('editor', localize('Editor mode', '편집 모드'))):
+                window = module.new_window(force_new=True, workspace_mode=mode, updates_enabled=False)
+                self.assertEqual(window._start_page.mode_label.text(), expected)
+                self.assertIn('Display Renderer', [a.text() for a in window.findChildren(QAction)])
+                self.assertIsNone(window._update_service)
+
+    def test_renderer_choice_applies_to_existing_windows_without_restarting_or_losing_edits(self):
+        from pdfeditor import settings
+        with self.document_windows() as (module, source), \
+                patch('pdfeditor.app.settings.automatic_update_check_due', return_value=False):
+            first = module.new_window(str(source), updates_enabled=True, workspace_mode='reader')
+            second = module.new_window(str(source), force_new=True, updates_enabled=True, workspace_mode='editor')
+            self.settle()
+            tabs = [window._tabs.currentWidget() for window in (first, second)]
+            original = [tab.doc for tab in tabs]
+            tabs[1].doc.add_note(0, 80, 100, 'Unsaved note')
+            dirty = tabs[1].doc._doc.is_dirty
+            with patch.object(module.QMessageBox, 'information') as restart_dialog:
+                first._select_render_backend('cpu')
+                restart_dialog.assert_not_called()
+            self.assertEqual(settings.render_backend(), 'cpu')
+            for tab, document in zip(tabs, original):
+                self.assertIs(tab.doc, document)
+                self.assertEqual(tab.view._render_mode, 'cpu')
+                self.assertFalse(tab.view._d2d_requested)
+            self.assertEqual(tabs[1].doc._doc.is_dirty, dirty)
+            settings.set_render_backend('auto')  # Another process can update the startup preference.
+            self.assertEqual(first._current_render_backend(), 'cpu')
 
     def test_unavailable_direct2d_cannot_be_selected(self):
         from PyQt5.QtWidgets import QAction

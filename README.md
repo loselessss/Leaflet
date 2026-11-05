@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 annotations, page organization, text editing, and offline Korean/English OCR.
 
-**Version: 1.38.0 (Unreleased)** · Windows · English and Korean
+**Version: 1.38.0 (2026-11-05)** · Windows · English and Korean
 
 ## Download
 
@@ -17,6 +17,7 @@ See [release notes](docs/releases/RELEASE_NOTES.md) for recent improvements.
 ## What you can do
 
 - **Read:** Zoom up to 3200%, pan smoothly, search, use bookmarks and two-page view, and detach tabs into separate windows.
+- **Appearance:** Follow Windows light or dark mode while preserving the PDF's original colors.
 - **Copy in reading order:** Press Ctrl+Shift+C to analyze the selected text or current page locally. Model memory is released after each job.
 - **Annotate:** Highlight text, add notes, and manage annotations in one window.
 - **Edit:** Change text and add or adjust images and shapes.
@@ -25,7 +26,7 @@ See [release notes](docs/releases/RELEASE_NOTES.md) for recent improvements.
 - **Export:** Print, compress PDFs, and convert between PDFs and images.
 
 Launch **Leaflet** or **Leaflet Editor** from the Start menu. Switch with
-**Edit mode** or **Back to reader**, and press **F1** for help.
+**Edit → Open in editor** (Ctrl+E) or **Back to reader**, and press **F1** for help.
 
 Text editing works within the selected line or box; replacement fonts may look different.
 Some complex illustrations may look slightly different in GPU mode. Use CPU mode for an exact appearance check.

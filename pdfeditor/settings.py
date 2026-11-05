@@ -206,6 +206,20 @@ def render_diagnostics():
 
 
 DISK_CACHE_SIZES = (0, 50, 100, 250, 500)
+RENDER_CACHE_SIZES = (0, 256, 512, 1024, 2048)
+
+
+def render_cache_mb():
+    value = _load().get("render_cache_mb", 0)
+    return value if type(value) is int and value in RENDER_CACHE_SIZES else 0
+
+
+def set_render_cache_mb(value):
+    if type(value) is not int or value not in RENDER_CACHE_SIZES:
+        raise ValueError("Unsupported render cache size")
+    data = _load()
+    data["render_cache_mb"] = value
+    _save(data)
 
 
 def disk_cache_mb():

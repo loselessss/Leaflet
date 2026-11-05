@@ -14,13 +14,13 @@ pub mod native_input;
 type Matrix=[f64;6];
 type Rect=[f64;4];
 const IDENTITY:Matrix=[1.,0.,0.,1.,0.,0.];
-const LIMIT:usize=128*1024*1024;
-const IMAGE_LIMIT:usize=64*1024*1024;
+const LIMIT:usize=256*1024*1024;
+const IMAGE_LIMIT:usize=128*1024*1024;
 const COMMAND_LIMIT:usize=1_048_576;
 const DEPTH_LIMIT:usize=4096;
 
 #[derive(Serialize,Clone)]
-enum Resource { Path(Vec<u8>), Image{pixels:Vec<u8>,width:u32,height:u32,stride:u32} }
+enum Resource { Path(Vec<u8>), Image{pixels:Vec<u8>,width:u32,height:u32,stride:u32}, Mesh(Vec<u8>) }
 
 #[derive(Serialize,Clone)]
 struct Stroke {start:u32,dash:u32,end:u32,join:u32,miter:f64,phase:f64,dashes:Vec<f64>}
@@ -36,6 +36,10 @@ enum Operation {
     Group{opacity:f64,blend:u32,isolated:bool,knockout:bool},
     GroupEnd,Mask{area:Rect,luminosity:bool,background:u32},MaskEnd{transfer:Vec<f64>},ClipEnd,
     GeometryGroup{sources:Vec<(u32,Matrix)>,fill:u32,even_odd:bool},
+    BackdropImage{resource:u32,interpolate:bool},
+    Mesh{resource:u32},
+    CoverageBegin,
+    CoverageEnd,
 }
 
 #[derive(Serialize,Clone)]
@@ -131,6 +135,7 @@ impl Scene {
         let (kind,bytes,dimensions)=match &resource {
             Resource::Path(data)=>(1u8,data.as_slice(),[0,0,0]),
             Resource::Image{pixels,width,height,stride}=>(2,pixels.as_slice(),[*width,*height,*stride]),
+            Resource::Mesh(data)=>(3,data.as_slice(),[0,0,0]),
         };
         let mut hash=std::collections::hash_map::DefaultHasher::new();kind.hash(&mut hash);dimensions.hash(&mut hash);bytes.hash(&mut hash);
         let hash=hash.finish();
@@ -138,6 +143,7 @@ impl Scene {
             for id in ids {
                 let equal=match (&self.resources[*id as usize],&resource) {
                     (Resource::Path(a),Resource::Path(b))=>a==b,
+                    (Resource::Mesh(a),Resource::Mesh(b))=>a==b,
                     (Resource::Image{pixels:a,width:aw,height:ah,stride:ast},Resource::Image{pixels:b,width:bw,height:bh,stride:bst})=>a==b&&aw==bw&&ah==bh&&ast==bst,
                     _=>false,
                 };
@@ -150,6 +156,48 @@ impl Scene {
         let id=self.resources.len() as u32;self.resources.push(resource);index.entry(hash).or_default().push(id);Ok(id)
     }
     fn analyse(mut self)->CompileResult<Self> {
+        // Source-over ink is affine in the initial backdrop. Its isolated
+        // result is already the exact source recovered by two passes. Mask
+        // construction uses its own target, independent of the outer backdrop.
+        fn independent_source(input:&[Command])->bool{
+            let mut masks=0usize;
+            for command in input {
+                match command.op {
+                    Operation::Mask{..}=>{masks+=1;continue;},
+                    Operation::MaskEnd{..}=>{masks=masks.saturating_sub(1);continue;},
+                    _=>{},
+                }
+                if masks!=0{continue;}
+                if matches!(command.op,Operation::Group{blend:1..,..}|
+                    Operation::Group{knockout:true,..}|Operation::BackdropImage{..}|
+                    Operation::CoverageBegin){return false;}
+            }
+            true
+        }
+        fn coverage_program(input:&[Command],depth:usize)->CompileResult<Vec<Command>>{
+            let mut out=Vec::new();let mut i=0;
+            while i<input.len(){
+                if matches!(input[i].op,Operation::Group{blend:1..,isolated:false,knockout:false,..}){
+                    if depth>=3{return Err(invalid("backdrop nesting budget"));}
+                    let mut end=i+1;let mut nested=1;
+                    while end<input.len(){match input[end].op{Operation::Group{..}=>nested+=1,Operation::GroupEnd=>{nested-=1;if nested==0{break;}},_=>{}}end+=1;}
+                    if end==input.len(){return Err(invalid("unclosed backdrop group"));}
+                    let body=coverage_program(&input[i+1..end],depth+1)?;
+                    if independent_source(&body){
+                        let mut open=input[i].clone();
+                        if let Operation::Group{isolated,..}=&mut open.op{*isolated=true;}
+                        out.push(open);out.extend(body);out.push(input[end].clone());i=end+1;continue;
+                    }
+                    let mut open=input[i].clone();open.op=Operation::CoverageBegin;out.push(open);
+                    out.extend(body.iter().cloned());let mut close=input[end].clone();close.op=Operation::CoverageEnd;out.push(close);
+                    out.push(input[i].clone());out.extend(body);out.push(input[end].clone());i=end+1;
+                }else{out.push(input[i].clone());i+=1;}
+                if out.len()>COMMAND_LIMIT{return Err(invalid("backdrop command budget"));}
+            }Ok(out)
+        }
+        if self.commands.iter().any(|c|matches!(c.op,Operation::Group{blend:1..,isolated:false,knockout:false,..})){
+            self.commands=coverage_program(&self.commands,0)?;
+        }
         if self.commands.len()>COMMAND_LIMIT{return Err(invalid("compiler command count exceeded"));}
         // Match the existing reader's text geometry-group semantics, including
         // a single transformed glyph. Compilation policy stays in Rust.
@@ -171,7 +219,7 @@ impl Scene {
             compacted.push(command);
         }
         self.commands=compacted;
-        let composite=self.commands.iter().any(|command|matches!(command.op,Operation::Mask{..}|
+        let composite=self.commands.iter().any(|command|matches!(command.op,Operation::CoverageBegin|Operation::Mask{..}|
             Operation::Group{blend:1.., ..}|Operation::Group{isolated:false,..}|Operation::Group{knockout:true,..}));
         let mut scopes:Vec<(u8,usize,bool)>=Vec::new();let mut complex=0u32;
         for i in 0..self.commands.len() {
@@ -192,6 +240,7 @@ impl Scene {
             match &self.commands[i].op {
                 Operation::Clip{..}|Operation::StrokeClip{..}=>scopes.push((1,i,false)),
                 Operation::Mask{..}=>{scopes.push((2,i,true));complex+=1;},
+                Operation::CoverageBegin=>{scopes.push((4,i,true));complex+=1;},
                 Operation::Group{blend,isolated,knockout,..}=>{
                     let barrier=*blend!=0||!*isolated||*knockout;
                     scopes.push((3,i,barrier));if barrier{complex+=1;}
@@ -202,8 +251,8 @@ impl Scene {
                     self.commands[last.1].capture_end=Some(i as u32);last.0=1;
                     // The mask remains a composition barrier until ClipEnd.
                 },
-                Operation::ClipEnd|Operation::GroupEnd=>{
-                    let expected=if matches!(self.commands[i].op,Operation::ClipEnd){1}else{3};
+                Operation::ClipEnd|Operation::GroupEnd|Operation::CoverageEnd=>{
+                    let expected=if matches!(self.commands[i].op,Operation::ClipEnd){1}else if matches!(self.commands[i].op,Operation::CoverageEnd){4}else{3};
                     let (kind,start,barrier)=scopes.pop().ok_or_else(||invalid("scope underflow"))?;
                     if kind!=expected{return Err(invalid("crossed compiler scope"));}
                     self.commands[start].scope_end=Some(i as u32);
@@ -221,7 +270,63 @@ impl Scene {
                 if let Some(end)=self.commands[i].scope_end {self.commands[end as usize].native_opcode=20;}
             }
         }
+        self.fold_gradient_opacity();
         Ok(self)
+    }
+
+    fn fold_gradient_opacity(&mut self) {
+        // A Normal group containing one gradient only scales that source's
+        // alpha. Keep the already planned clip captures: they may separate it
+        // from a COPY/knockout target even after this group is removed.
+        let n=self.commands.len();let mut remove=vec![false;n];
+        let mut depth_delta=vec![0i32;n+1];let mut scopes:Vec<usize>=Vec::new();
+        for i in 0..n {
+            while scopes.last().is_some_and(|j|(self.commands[*j].scope_end.unwrap() as usize)<i){scopes.pop();}
+            let group=match self.commands[i].op {
+                Operation::Group{opacity,blend:0,isolated,knockout:false} if opacity<1.=>Some((opacity,isolated)),
+                _=>None,
+            };
+            if let Some((opacity,isolated))=group {
+                let end=self.commands[i].scope_end.unwrap() as usize;
+                let masked=scopes.iter().any(|j|matches!(self.commands[*j].op,Operation::Mask{..}|Operation::CoverageBegin));
+                let copy=scopes.iter().rev().find_map(|j|{
+                    let c=&self.commands[*j];
+                    if let Operation::Group{knockout,..}=c.op{Some(knockout)}
+                    else if c.native_opcode==8{Some(false)}else{None}
+                }).unwrap_or(false);
+                if !masked&&!copy&&end-i<=64 {
+                    let mut paint=None;let mut valid=true;
+                    for j in i+1..end {match self.commands[j].op {
+                        Operation::Linear{..}|Operation::Radial{..}=>{if paint.replace(j).is_some(){valid=false;break;}},
+                        Operation::Clip{..}|Operation::StrokeClip{..}|Operation::ClipEnd=>{},
+                        _=>{valid=false;break;},
+                    }}
+                    if valid {if let Some(j)=paint {
+                        let stops=match &mut self.commands[j].op {
+                            Operation::Linear{stops,..}|Operation::Radial{stops,..}=>stops,_=>unreachable!(),
+                        };
+                        for (_,color) in stops {
+                            let alpha=(((*color>>24) as f64)*opacity).round_ties_even() as u32;
+                            *color=(*color&0xffffff)|(alpha<<24);
+                        }
+                        remove[i]=true;remove[end]=true;
+                        if !isolated {depth_delta[i+1]+=1;depth_delta[end]-=1;}
+                    }}
+                }
+            }
+            if self.commands[i].scope_end.is_some(){scopes.push(i);}
+        }
+        if !remove.iter().any(|v|*v){return;}
+        let mut remap=vec![0u32;n];let mut next=0;
+        for i in 0..n {remap[i]=next;if !remove[i]{next+=1;}}
+        let mut depth=0i32;let mut index=0;
+        self.commands.retain_mut(|c|{
+            let i=index;index+=1;depth+=depth_delta[i];
+            if remove[i]{return false;}
+            c.scope_end=c.scope_end.map(|j|remap[j as usize]);
+            c.capture_end=c.capture_end.map(|j|remap[j as usize]);
+            c.complex_depth-=depth as u32;true
+        });
     }
 }
 
@@ -312,7 +417,7 @@ impl RustCompiledScene {
         self.scene.commands.iter().any(|command|matches!(command.op,Operation::Mask{luminosity:true,..}))
     }
     fn to_bytes<'py>(&self,py:Python<'py>)->CompileResult<Bound<'py,PyBytes>> {
-        let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(256*1024*1024);
+        let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(512*1024*1024);
         let size=py.detach(||options.serialized_size(&self.scene))
             .map_err(|error|invalid(&error.to_string()))?;
         let size=usize::try_from(size).map_err(|_|invalid("compiler packet size overflow"))?;
@@ -353,6 +458,11 @@ impl RustCompiledScene {
     pub fn feature_names(&self)->Vec<String>{
         let mut features=vec!["rust-compiler".to_string()];
         if self.scene.image_bytes>0{features.extend(["image".into(),"image-downsample".into()]);}
+        if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mesh{..})){features.push("vector-mesh".into());}
+        if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mask{..})){features.push("gpu-mask".into());}
+        if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mask{luminosity:true,..})){features.push("gpu-luminosity".into());}
+        if self.scene.commands.iter().any(|c|matches!(c.op,Operation::CoverageBegin)){features.push("gpu-backdrop".into());}
+        if self.scene.preparation&0x8000!=0{features.push("rgb-transparency-approximation".into());}
         if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Linear{..}|Operation::Radial{..})){
             features.extend(["shading".into(),"vector-shading".into(),"gradient-primitive".into()]);
         }
@@ -366,9 +476,9 @@ impl RustCompiledScene {
     pub fn commands_len(&self)->usize{self.scene.commands.len()}
     pub fn images_bytes(&self)->usize{self.scene.image_bytes}
     pub fn packet(&self)->CompileResult<Vec<u8>>{
-        let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(256*1024*1024);
+        let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(512*1024*1024);
         let size=options.serialized_size(&self.scene).map_err(|e|invalid(&e.to_string()))? as usize;
-        if size>256*1024*1024-8{return Err(invalid("compiler packet byte budget exceeded"));}
+        if size>512*1024*1024-8{return Err(invalid("compiler packet byte budget exceeded"));}
         let mut bytes=Vec::with_capacity(size+8);bytes.extend_from_slice(b"LFSC\x02\0\0\0");
         options.serialize_into(&mut bytes,&self.scene).map_err(|e|invalid(&e.to_string()))?;Ok(bytes)
     }

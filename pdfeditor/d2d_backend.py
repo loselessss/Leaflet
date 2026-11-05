@@ -6,14 +6,14 @@ must never be required for the existing CPU/OpenGL display path.
 
 import ctypes
 from ctypes import (CDLL, POINTER, Structure, byref, c_float, c_int32,
-                    c_size_t, c_uint32, c_ubyte, c_void_p, c_wchar)
+                    c_size_t, c_uint32, c_uint64, c_ubyte, c_void_p, c_wchar)
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import sys
 
 
-ABI_VERSION = 24
+ABI_VERSION = 26
 DRIVER_NAMES = {0: "none", 1: "hardware", 2: "warp"}
 
 
@@ -265,6 +265,7 @@ class D2DSurface:
     """Own one native swap chain without owning the target HWND."""
 
     supports_retained_scenes = True
+    supports_video_memory_query = True
 
     def __init__(self, hwnd, width, height, dpi=96.0, path=None):
         library_path = Path(path) if path is not None else _library_path()
@@ -297,6 +298,18 @@ class D2DSurface:
         result = self._library.spdf_d2d_resize_surface(
             self._handle, max(1, int(width)), max(1, int(height)), float(dpi))
         _check_hresult(result, "Direct2D surface resize")
+
+    def video_memory(self):
+        """Return this process's DXGI budget/usage, or None on older drivers."""
+        function = getattr(self._library, 'spdf_d2d_video_memory', None)
+        if function is None or self.closed:
+            return None
+        function.argtypes = [c_void_p, POINTER(c_uint64), POINTER(c_uint64)]
+        function.restype = c_int32
+        budget, usage = c_uint64(), c_uint64()
+        if function(self._handle, byref(budget), byref(usage)) < 0:
+            return None
+        return budget.value, usage.value
 
     def clear(self, argb):
         if self.closed:

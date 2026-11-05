@@ -46,7 +46,7 @@ def pdf_component_blend(mode, backdrop, source):
 
 class D2DBackendTests(unittest.TestCase):
     def test_native_structure_has_stable_abi_layout(self):
-        self.assertEqual(ABI_VERSION, 24)
+        self.assertEqual(ABI_VERSION, 26)
         self.assertEqual(_NativeInfo.adapter_name.offset, 20)
         if os.name == "nt":
             self.assertEqual(ctypes.sizeof(_NativeInfo), 276)
@@ -92,6 +92,10 @@ class D2DBackendTests(unittest.TestCase):
         self.assertTrue(hwnd, ctypes.get_last_error())
         try:
             with D2DSurface(hwnd, 64, 64, path=library) as surface:
+                memory = surface.video_memory()
+                if memory is not None:
+                    self.assertGreater(memory[0], 0)
+                    self.assertGreaterEqual(memory[1], 0)
                 path = surface.create_path([
                     ("move", 8.2, 8.2), ("line", 55.7, 17.4),
                     ("line", 13.1, 55.6), ("close",)])

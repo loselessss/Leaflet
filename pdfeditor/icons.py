@@ -117,10 +117,50 @@ def _star_points(QPointF):
     return points
 
 
-def fluent_icon(name, color="#424242", size=20):
+def _palette_icon(name, size):
+    from PyQt5.QtGui import QIcon, QIconEngine, QPalette
+    from PyQt5.QtWidgets import QApplication
+
+    class PaletteIcon(QIconEngine):
+        def __init__(self):
+            super().__init__()
+            self.cached = {}
+
+        def clone(self):
+            return PaletteIcon()
+
+        def paint(self, painter, rect, mode, state):
+            app = QApplication.instance()
+            palette = app.palette() if app else QPalette()
+            group = QPalette.Disabled if mode == QIcon.Disabled else QPalette.Active
+            color = palette.color(group, QPalette.ButtonText).name()
+            extent = max(rect.width(), rect.height(), size)
+            key = color, extent
+            if key not in self.cached:
+                if len(self.cached) >= 8:
+                    self.cached.clear()
+                self.cached[key] = fluent_icon(name, color, extent)
+            painter.drawPixmap(rect, self.cached[key].pixmap(rect.size()))
+
+        def pixmap(self, requested, mode, state):
+            from PyQt5.QtCore import Qt, QRect
+            from PyQt5.QtGui import QPainter, QPixmap
+            pixmap = QPixmap(requested)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            self.paint(painter, QRect(pixmap.rect()), mode, state)
+            painter.end()
+            return pixmap
+
+    return QIcon(PaletteIcon())
+
+
+def fluent_icon(name, color=None, size=20):
     """지정한 이름의 Fluent 선형 QIcon을 고해상도로 그린다."""
     if name not in AVAILABLE_ICONS:
         raise ValueError("알 수 없는 Fluent 아이콘: %s" % name)
+    if color is None:
+        return _palette_icon(name, size)
 
     font_family = _system_icon_font()
     codepoint = FLUENT_GLYPHS.get(name)

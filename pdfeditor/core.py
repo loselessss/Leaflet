@@ -19,7 +19,7 @@ from .rust_scene_compiler import compile_vector_page
 
 
 ANTIALIAS_LEVEL = 8
-GPU_VECTOR_CACHE_BYTES = 1024 * 1024 * 1024
+GPU_VECTOR_CACHE_BYTES = 2048 * 1024 * 1024
 
 
 def _aggressive_gpu_band_merge_enabled():

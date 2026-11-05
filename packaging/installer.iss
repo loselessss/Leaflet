@@ -12,6 +12,7 @@
 #define MyAiProgId "Leaflet.Illustrator"
 #define MyEpsProgId "Leaflet.EPS"
 #define MyAppUserModelId "sPDF.Desktop"
+#define MyEditorAppUserModelId "sPDF.Desktop.Editor"
 
 [Setup]
 AppId={{7C2F9A4E-3B71-4E0C-9D2A-5F6B1A8C0E11}
@@ -49,10 +50,11 @@ english.EditorDesktopShortcut=Create a Leaflet Editor desktop shortcut
 korean.EditorDesktopShortcut=Leaflet 편집기 바탕 화면 바로 가기 만들기
 english.AdditionalShortcuts=Additional shortcuts:
 korean.AdditionalShortcuts=추가 바로 가기:
+english.DesktopShortcuts=Create Leaflet and Leaflet Editor desktop shortcuts
+korean.DesktopShortcuts=Leaflet과 Leaflet 편집기 바탕 화면 바로 가기 만들기
 
 [Tasks]
-Name: "desktopreader"; Description: "{cm:ReaderDesktopShortcut}"; GroupDescription: "{cm:AdditionalShortcuts}"; Flags: unchecked
-Name: "desktopeditor"; Description: "{cm:EditorDesktopShortcut}"; GroupDescription: "{cm:AdditionalShortcuts}"; Flags: unchecked
+Name: "desktopicons"; Description: "{cm:DesktopShortcuts}"; GroupDescription: "{cm:AdditionalShortcuts}"
 ; PDF/Illustrator 연결은 '연결 프로그램 후보'로만 등록(기본값을 강제로 뺏지 않음).
 ; 사용자가 나중에 Windows '기본 앱'에서 sPDF를 직접 고를 수 있다.
 Name: "associate"; Description: "Add Leaflet to the Open with list for PDF, Illustrator and EPS files"; GroupDescription: "File associations:"; Languages: english
@@ -78,9 +80,9 @@ Source: "..\build\legal\*"; DestDir: "{app}\third-party"; Flags: ignoreversion r
 
 [Icons]
 Name: "{group}\{cm:ReaderShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace reader"; AppUserModelID: "{#MyAppUserModelId}"
-Name: "{group}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace editor"; AppUserModelID: "{#MyAppUserModelId}"
-Name: "{autodesktop}\{cm:ReaderShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace reader"; AppUserModelID: "{#MyAppUserModelId}"; Tasks: desktopreader
-Name: "{autodesktop}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace editor"; AppUserModelID: "{#MyAppUserModelId}"; Tasks: desktopeditor
+Name: "{group}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace editor"; AppUserModelID: "{#MyEditorAppUserModelId}"
+Name: "{autodesktop}\{cm:ReaderShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace reader"; AppUserModelID: "{#MyAppUserModelId}"; Tasks: desktopicons
+Name: "{autodesktop}\{cm:EditorShortcut}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace editor"; AppUserModelID: "{#MyEditorAppUserModelId}"; Tasks: desktopicons
 
 [InstallDelete]
 Type: files; Name: "{app}\ocr\spdf-ocr.exe"
@@ -137,8 +139,8 @@ Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueNa
 [Run]
 Filename: "ms-settings:defaultapps"; Description: "Choose Leaflet as the default PDF app"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: english
 Filename: "ms-settings:defaultapps"; Description: "Leaflet을 기본 PDF 앱으로 선택"; Flags: shellexec nowait skipifsilent runasoriginaluser; Tasks: associate\defaultpdf; Languages: korean
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Leaflet"; Flags: nowait postinstall skipifsilent; Languages: english
-Filename: "{app}\{#MyAppExeName}"; Description: "Leaflet 실행"; Flags: nowait postinstall skipifsilent; Languages: korean
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace reader"; Description: "Launch Leaflet"; Flags: nowait postinstall skipifsilent; Languages: english
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--workspace reader"; Description: "Leaflet 실행"; Flags: nowait postinstall skipifsilent; Languages: korean
 
 [Code]
 function GetUiLanguage(Param: String): String;

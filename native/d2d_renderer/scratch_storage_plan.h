@@ -4,6 +4,9 @@
 // Replay still determines all actual sizes, and unmatched requests fall back.
 bool prepare_storage_plan(Surface *surface, Scene *scene, const SpdfD2DTransform &page,
                           const TilePlan &plan) noexcept {
+    // Coverage is kept alive between two sibling scopes, rather than following
+    // a lexical mask lifetime. Use the bounded dynamic pool for these scenes.
+    if(scene->needs_backdrop_recovery)return false;
     struct Frame {
         UINT32 width, height;
         D2D1_MATRIX_3X2_F previous;

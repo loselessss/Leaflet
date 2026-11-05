@@ -1,12 +1,16 @@
 # Leaflet Release Notes
 
-## Unreleased (1.38.0)
+## 1.38.0 - 2026-11-05
 
-- Keep more PDF text sharp while zooming, with lower memory use at high magnification.
-- Copy text in reading order with Ctrl+Shift+C, including multi-column pages. Analysis stays on your PC.
-- Reduce installation size.
+- Switch CPU/GPU display from the View menu without restarting or losing your place.
+- Zoom, pan and return to recent pages more smoothly. Adjust the vector page cache from the View menu.
+- Keep more text and complex illustrations sharp with GPU acceleration, including large images and transparent artwork.
+- Follow Windows light/dark mode and simplify the reader toolbar. Open editing tools from the Edit menu or Ctrl+E.
+- Open Reader and Editor from separate shortcuts and see the current mode on the home screen.
+- Copy multi-column text in reading order with Ctrl+Shift+C. Analysis runs locally and releases model memory when finished.
+- Reduce installation size and improve OCR startup and model downloads.
 
-- Improve OCR reliability, including model downloads.
+Some illustration colors or highlights may differ slightly. Use CPU mode when checking the exact appearance.
 
 ## 1.37.5 - 2026-11-03
 

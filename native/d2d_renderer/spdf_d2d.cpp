@@ -123,6 +123,19 @@ void set_adapter_name(ID3D11Device* device, SpdfD2DInfo* info) noexcept {
 class Surface {
 public:
     ~Surface();
+    HRESULT video_memory(std::uint64_t* budget, std::uint64_t* usage) noexcept {
+        if (!budget || !usage) return E_INVALIDARG;
+        *budget = 0; *usage = 0;
+        ComPtr<IDXGIAdapter> adapter;
+        ComPtr<IDXGIAdapter3> adapter3;
+        auto result = dxgi_device_->GetAdapter(&adapter);
+        if (SUCCEEDED(result)) result = adapter.As(&adapter3);
+        DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+        if (SUCCEEDED(result)) result = adapter3->QueryVideoMemoryInfo(
+            0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
+        if (SUCCEEDED(result)) { *budget = info.Budget; *usage = info.CurrentUsage; }
+        return result;
+    }
     D2D1_SIZE_U storage_target_size() const noexcept { return target_->GetPixelSize(); }
     float storage_dpi() const noexcept { return dpi_; }
     bool prepare_storage(const std::vector<ScratchStorageNeed> &needs) noexcept {
@@ -206,6 +219,41 @@ public:
         Surface* owner;
         ComPtr<ID2D1StrokeStyle1> resource;
     };
+    struct Mesh {Surface* owner;ComPtr<ID2D1GradientMesh> resource;};
+
+    HRESULT create_mesh(const std::vector<float>& values,std::unique_ptr<Mesh>& mesh) noexcept {
+        if(values.empty()||values.size()%18||values.size()>65536*18)return E_INVALIDARG;
+        ComPtr<ID2D1DeviceContext2> context;auto result=d2d_context_.As(&context);if(FAILED(result))return result;
+        try {std::vector<D2D1_GRADIENT_MESH_PATCH> patches;patches.reserve(values.size()/18);
+            for(size_t i=0;i<values.size();i+=18){const auto* a=values.data()+i;const auto* b=a+6;const auto* c=b+6;
+                D2D1_GRADIENT_MESH_PATCH patch{};D2D1_POINT_2F points[16];
+                for(int y=0;y<4;++y)for(int x=0;x<4;++x){const float u=float(x)/3,v=float(y)/3;
+                    points[y*4+x]=D2D1::Point2F((1-v)*((1-u)*a[0]+u*b[0])+v*c[0],(1-v)*((1-u)*a[1]+u*b[1])+v*c[1]);}
+                std::memcpy(&patch.point00,points,sizeof(points));
+                patch.color00=D2D1::ColorF(a[2],a[3],a[4],a[5]);patch.color03=D2D1::ColorF(b[2],b[3],b[4],b[5]);
+                patch.color30=patch.color33=D2D1::ColorF(c[2],c[3],c[4],c[5]);
+                patch.topEdgeMode=patch.leftEdgeMode=patch.bottomEdgeMode=patch.rightEdgeMode=D2D1_PATCH_EDGE_MODE_ALIASED;
+                patches.push_back(patch);}
+            auto created=std::make_unique<Mesh>();created->owner=this;
+            result=context->CreateGradientMesh(patches.data(),static_cast<UINT32>(patches.size()),&created->resource);
+            if(SUCCEEDED(result))mesh=std::move(created);return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+    HRESULT draw_mesh(Mesh* mesh) noexcept {
+        if(!drawing_||!mesh||mesh->owner!=this)return E_INVALIDARG;
+        ComPtr<ID2D1DeviceContext2> context;const auto result=d2d_context_.As(&context);
+        if(SUCCEEDED(result))context->DrawGradientMesh(mesh->resource.Get());return result;
+    }
+    HRESULT draw_backdrop_bitmap(Bitmap* bitmap,bool interpolate) noexcept {
+        if(!drawing_||!bitmap||bitmap->owner!=this)return E_INVALIDARG;
+        const auto size=bitmap->resource->GetSize();
+        D2D1_MATRIX_3X2_F current;d2d_context_->GetTransform(&current);
+        const auto transform=D2D1::Matrix3x2F::Scale(1/size.width,1/size.height)* *D2D1::Matrix3x2F::ReinterpretBaseType(&current);
+        const auto origin=D2D1::Point2F(0,0);
+        d2d_context_->SetTransform(transform);d2d_context_->DrawImage(bitmap->resource.Get(),&origin,nullptr,
+            interpolate?D2D1_INTERPOLATION_MODE_LINEAR:D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,D2D1_COMPOSITE_MODE_SOURCE_COPY);
+        d2d_context_->SetTransform(current);return S_OK;
+    }
 
     HRESULT initialize(
         HWND hwnd,
@@ -251,6 +299,8 @@ public:
             return result;
         }
         mask_lerp_available_ = SUCCEEDED(MaskLerpEffect::Register(d2d_factory_.Get()));
+        const auto backdrop_effect=BackdropSourceEffect::Register(d2d_factory_.Get());
+        if(FAILED(backdrop_effect))return backdrop_effect;
         result = d2d_factory_->CreateDevice(dxgi_device_.Get(), &d2d_device_);
         if (FAILED(result)) {
             return result;
@@ -588,6 +638,7 @@ public:
         D2D1_CAP_STYLE start{};
         D2D1_CAP_STYLE dash{};
         D2D1_CAP_STYLE end{};
+        const bool hairline=(start_cap&0x80000000u)!=0;start_cap&=0x7fffffffu;
         if (!cap(start_cap, &start) || !cap(dash_cap, &dash) ||
                 !cap(end_cap, &end)) {
             return E_INVALIDARG;
@@ -618,7 +669,7 @@ public:
         properties.dashStyle = dash_count == 0
             ? D2D1_DASH_STYLE_SOLID : D2D1_DASH_STYLE_CUSTOM;
         properties.dashOffset = dash_offset;
-        properties.transformType = D2D1_STROKE_TRANSFORM_TYPE_NORMAL;
+        properties.transformType = hairline?D2D1_STROKE_TRANSFORM_TYPE_HAIRLINE:D2D1_STROKE_TRANSFORM_TYPE_NORMAL;
         const auto result = d2d_factory_->CreateStrokeStyle(
             properties, dashes, dash_count, &created->resource);
         if (FAILED(result)) {
@@ -890,7 +941,7 @@ public:
                 !mask_captures_.empty() ||
                 mode > 15 || !std::isfinite(opacity) || opacity < 0 || opacity > 1 ||
                 (isolated_clip && (clip == nullptr || mode != 0 || mask_build || knockout || nonisolated)) ||
-                (nonisolated && (mode != 0 || knockout || mask_build || clip != nullptr)) ||
+                (nonisolated && (knockout || mask_build || clip != nullptr || (mode!=0&&pending_coverage_.empty()))) ||
                 (clip != nullptr && (clip->owner != this || !clip->resource))) {
             return E_INVALIDARG;
         }
@@ -992,6 +1043,9 @@ public:
         // temporary backdrop and explicit coverage/mask inputs as before.
         capture.bytes = static_cast<std::uint64_t>(size.width) * size.height * 4 *
             (mask_build ? 4 : (isolated_clip ? 1 : (clip == nullptr ? 2 : 3)));
+        if(nonisolated&&mode!=0){capture.mask_input=pending_coverage_.back();pending_coverage_.pop_back();
+            const auto pixels=capture.mask_input->GetPixelSize();const auto bytes=std::uint64_t(pixels.width)*pixels.height*4;
+            composite_bytes_-=bytes;capture.bytes+=bytes;}
         const auto budget = (std::max)(256ULL * 1024 * 1024, scene_cache_budget());
         if (composite_bytes_ + capture.bytes + storage_bytes_ > budget) {
             // Optional resident storage must not turn a frame that fits the
@@ -1233,7 +1287,7 @@ public:
             if (SUCCEEDED(result)) recycle_capture(capture, nullptr);
             return result;
         }
-        if (capture.nonisolated && (capture.opacity == 0 || capture.opacity == 1)) {
+        if (capture.nonisolated && capture.mode==0 && (capture.opacity == 0 || capture.opacity == 1)) {
             // Endpoint interpolation needs neither a backdrop snapshot nor an
             // ArithmeticComposite effect. The source already has the backdrop.
             if (capture.opacity == 1) {
@@ -1256,7 +1310,7 @@ public:
                 result = copy_composite_pixels(backdrop.Get(), capture.previous.Get(),
                                                capture.source_origin);
             }
-            if (capture.nonisolated) {
+            if (capture.nonisolated&&capture.mode==0) {
                 // Normal non-isolated group: its source already contains the
                 // backdrop. Apply group opacity once to the premultiplied
                 // difference, not source-over (which would count it twice).
@@ -1345,11 +1399,16 @@ public:
             ComPtr<ID2D1Effect> alpha;
             ComPtr<ID2D1Effect> blend;
             ComPtr<ID2D1Image> source = capture.source;
+            ComPtr<ID2D1Effect> recovered;
+            if(SUCCEEDED(result)&&capture.nonisolated&&capture.mode!=0){
+                result=d2d_context_->CreateEffect(CLSID_LeafletBackdropSource,&recovered);
+                if(SUCCEEDED(result)){recovered->SetInput(0,backdrop.Get());recovered->SetInput(1,capture.source.Get());
+                    recovered->SetInput(2,capture.mask_input.Get());recovered->GetOutput(&source);}}
             if (SUCCEEDED(result) && capture.opacity != 1) {
                 result = d2d_context_->CreateEffect(CLSID_D2D1ColorMatrix, &alpha);
             }
             if (SUCCEEDED(result) && alpha) {
-                alpha->SetInput(0, capture.source.Get());
+                alpha->SetInput(0, source.Get());
                 const auto matrix = D2D1::Matrix5x4F(
                     1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,capture.opacity, 0,0,0,0);
                 result = alpha->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, matrix);
@@ -1380,6 +1439,16 @@ public:
         }
         d2d_context_->SetTransform(capture.previous_transform);
         return result;
+    }
+
+    HRESULT begin_coverage_capture() noexcept {return begin_composite_group(0,1.f,nullptr,true);}
+    HRESULT end_coverage_capture() noexcept {
+        if(composite_captures_.empty()||!composite_captures_.back().building_mask||layer_depth_||!mask_captures_.empty())return E_UNEXPECTED;
+        const auto capture=composite_captures_.back();composite_captures_.pop_back();
+        const auto pixels=capture.source->GetPixelSize();const auto bytes=std::uint64_t(pixels.width)*pixels.height*4;
+        composite_bytes_-=capture.bytes;composite_bytes_+=bytes;pending_coverage_.push_back(capture.source);
+        d2d_context_->SetTarget(capture.previous.Get());d2d_context_->SetTransform(capture.previous_transform);
+        d2d_context_->SetPrimitiveBlend(capture.previous_blend);return S_OK;
     }
 
     HRESULT read_pixels(void* pixels, std::size_t size) noexcept {
@@ -1639,7 +1708,7 @@ public:
         if (!d2d_context_ || !drawing_) {
             return E_UNEXPECTED;
         }
-        if (!composite_captures_.empty()) {
+        if (!composite_captures_.empty()||!pending_coverage_.empty()) {
             while (layer_depth_ != 0) {
                 d2d_context_->PopLayer();
                 --layer_depth_;
@@ -1648,6 +1717,7 @@ public:
             mask_captures_.clear();
             d2d_context_->SetTarget(target_.Get());
             composite_captures_.clear();
+            pending_coverage_.clear();
             composite_bytes_ = 0;
             drawing_ = false;
             d2d_context_->EndDraw();
@@ -2188,6 +2258,7 @@ private:
     std::vector<ComPtr<ID2D1Brush>> layer_brushes_;
     std::vector<MaskCapture> mask_captures_;
     std::vector<CompositeCapture> composite_captures_;
+    std::vector<ComPtr<ID2D1Bitmap1>> pending_coverage_;
     std::uint64_t composite_bytes_ = 0;
     ComPtr<ID2D1LookupTable3D> luminosity_lut_;
     std::uint32_t layer_depth_ = 0;
@@ -2205,6 +2276,7 @@ struct SceneCommand {
     ComPtr<ID2D1StrokeStyle1> stroke_style;
     std::vector<SpdfD2DGradientStop> stops;
     std::vector<float> transfer;
+    std::vector<float> mesh_vertices;
     std::uint32_t binding_index = UINT32_MAX;
     bool rectangle = false;
 };
@@ -2221,7 +2293,8 @@ struct SceneBinding {
     std::unique_ptr<Surface::StrokeStyle> stroke_style;
     ComPtr<ID2D1LinearGradientBrush> linear_brush;
     ComPtr<ID2D1RadialGradientBrush> radial_brush;
-    bool ready() const noexcept { return bitmap || path || stroke_style; }
+    std::unique_ptr<Surface::Mesh> mesh;
+    bool ready() const noexcept { return bitmap || path || stroke_style || mesh; }
 };
 
 struct Scene {
@@ -2231,6 +2304,7 @@ struct Scene {
     std::vector<SceneBinding> bindings;
     ComPtr<ID2D1CommandList> display_list;
     bool recordable = true;
+    bool needs_backdrop_recovery = false;
     struct RasterGroup {
         std::size_t end = 0;
         D2D1_RECT_F bounds{};
@@ -2274,6 +2348,7 @@ HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nu
             Surface::StrokeStyle{scene->owner, stored.stroke_style});
         const auto& c = stored.command;
         HRESULT result = S_OK;
+        if(c.type==SPDF_D2D_SCENE_MESH)result=scene->owner->create_mesh(stored.mesh_vertices,binding.mesh);
         if (c.type == SPDF_D2D_SCENE_LINEAR_GRADIENT)
             result = scene->owner->create_linear_gradient_brush(
                 c.values[0], c.values[1], c.values[2], c.values[3], stored.stops.data(),
@@ -2380,12 +2455,21 @@ void prepare_raster_groups(Scene* scene, Scene::ReplayIndex& replay) {
         const auto& stored = scene->data->commands[index];
         const auto& command = stored.command;
         const auto type = command.type;
+        if(type==SPDF_D2D_SCENE_COVERAGE_BEGIN||type==SPDF_D2D_SCENE_COVERAGE_END){
+            // The alpha pass and its following group must stay together.
+            // Still collect individual draw bounds inside both passes.
+            if(!stack.empty()){stack.back().valid=false;stack.back().simple=false;}
+            continue;
+        }
         const bool complex = type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
             type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
             type == SPDF_D2D_SCENE_MASK_BEGIN || type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN;
         if (complex || type == SPDF_D2D_SCENE_CLIP_PUSH ||
                 type == SPDF_D2D_SCENE_RECT_CLIP_PUSH || type == SPDF_D2D_SCENE_OPACITY_PUSH) {
             auto scope = Scope{index, complex};
+            if(type==SPDF_D2D_SCENE_COMPOSITE_PUSH&&index&&
+                    scene->data->commands[index-1].command.type==SPDF_D2D_SCENE_COVERAGE_END)
+                scope.valid=false;
             scope.simple = type != SPDF_D2D_SCENE_MASK_BEGIN &&
                 type != SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN &&
                 (type != SPDF_D2D_SCENE_COMPOSITE_PUSH ||
@@ -2466,7 +2550,7 @@ void prepare_raster_groups(Scene* scene, Scene::ReplayIndex& replay) {
                 ? stored.geometry->GetWidenedBounds(command.values[0], stored.stroke_style.Get(),
                     &matrix, .25f, &bounds)
                 : stored.geometry->GetBounds(&matrix, &bounds);
-        } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_FILL_RECT) {
+        } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP || type == SPDF_D2D_SCENE_MESH || type == SPDF_D2D_SCENE_FILL_RECT) {
             bounds = transformed_rect(D2D1::RectF(command.values[0], command.values[1],
                 command.values[2], command.values[3]), matrix);
         } else { if (!stack.empty()) stack.back().valid = false; continue; }
@@ -2489,6 +2573,10 @@ void prepare_raster_groups(Scene* scene, Scene::ReplayIndex& replay) {
 }
 
 void prepare_cull_blocks(const Scene* scene, Scene::ReplayIndex& replay) {
+    if(scene->needs_backdrop_recovery){
+        replay.cull_block_at.assign(scene->data->commands.size(),UINT32_MAX);
+        return;
+    }
     struct Batch {
         std::size_t first = 0, last = 0, count = 0;
         D2D1_RECT_F bounds{};
@@ -2608,6 +2696,7 @@ bool compile_tile_plan(Surface* surface, const Scene& scene,
             const auto& c = commands[index].command;
             std::uint32_t close = 0;
             switch (c.type) {
+            case SPDF_D2D_SCENE_COVERAGE_BEGIN: close = SPDF_D2D_SCENE_COVERAGE_END; break;
             case SPDF_D2D_SCENE_COMPOSITE_PUSH: close = SPDF_D2D_SCENE_COMPOSITE_POP; break;
             case SPDF_D2D_SCENE_CLIP_GROUP_PUSH:
             case SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN: close = SPDF_D2D_SCENE_CLIP_GROUP_POP; break;
@@ -2621,6 +2710,7 @@ bool compile_tile_plan(Surface* surface, const Scene& scene,
                 const auto role = replay->replay_roles[index];
                 const bool protected_parent = !stack.empty() && stack.back().protected_scope;
                 const bool dangerous = c.type == SPDF_D2D_SCENE_MASK_BEGIN ||
+                    c.type == SPDF_D2D_SCENE_COVERAGE_BEGIN ||
                     c.type == SPDF_D2D_SCENE_COMPOSITE_MASK_BEGIN ||
                     (c.type == SPDF_D2D_SCENE_COMPOSITE_PUSH && c.uint_values[1] != 0);
                 const bool prunable = c.type == SPDF_D2D_SCENE_COMPOSITE_PUSH &&
@@ -2632,6 +2722,7 @@ bool compile_tile_plan(Surface* surface, const Scene& scene,
                 continue;
             }
             const bool closing = c.type == SPDF_D2D_SCENE_COMPOSITE_POP ||
+                c.type == SPDF_D2D_SCENE_COVERAGE_END ||
                 c.type == SPDF_D2D_SCENE_CLIP_GROUP_POP || c.type == SPDF_D2D_SCENE_CLIP_POP ||
                 c.type == SPDF_D2D_SCENE_RECT_CLIP_POP || c.type == SPDF_D2D_SCENE_LAYER_POP;
             if (closing) {
@@ -2847,6 +2938,18 @@ HRESULT replay_scene(
                     ? surface->end_mask(values, count)
                     : surface->end_composite_mask(values, count);
             }
+            break;
+        case SPDF_D2D_SCENE_COVERAGE_BEGIN:
+            result=surface->begin_coverage_capture();break;
+        case SPDF_D2D_SCENE_COVERAGE_END:
+            result=surface->end_coverage_capture();break;
+        case SPDF_D2D_SCENE_MESH:
+            result=set_item_transform(command);
+            if(SUCCEEDED(result))result=surface->draw_mesh(binding->mesh.get());
+            break;
+        case SPDF_D2D_SCENE_BACKDROP_BITMAP:
+            result=set_item_transform(command);
+            if(SUCCEEDED(result))result=surface->draw_backdrop_bitmap(binding->bitmap.get(),command.uint_values[0]!=0);
             break;
         case SPDF_D2D_SCENE_BITMAP:
             result = set_item_transform(command);
@@ -3313,6 +3416,7 @@ std::unique_ptr<Scene> make_worker_scene(Surface* owner, const Scene& source) {
     result->owner = owner;
     result->data = source.data;
     result->replay = source.replay;
+    result->needs_backdrop_recovery=source.needs_backdrop_recovery;
     return result;
 }
 
@@ -3801,6 +3905,11 @@ std::int32_t spdf_d2d_begin_frame(void* surface, std::uint32_t argb) noexcept {
         static_cast<Surface*>(surface)->begin_frame(argb));
 }
 
+std::int32_t spdf_d2d_video_memory(void* surface, std::uint64_t* budget, std::uint64_t* usage) noexcept {
+    return surface ? static_cast<std::int32_t>(static_cast<Surface*>(surface)->video_memory(budget, usage))
+                   : static_cast<std::int32_t>(E_INVALIDARG);
+}
+
 std::int32_t spdf_d2d_set_transform(
     void* surface,
     float m11,
@@ -4165,7 +4274,7 @@ std::int32_t spdf_d2d_create_scene(
             stored.command.stroke_style = nullptr;
             const auto type = commands[index].type;
             if (type < SPDF_D2D_SCENE_FILL_RECT ||
-                    type > SPDF_D2D_SCENE_RECT_CLIP_POP) {
+                    type > SPDF_D2D_SCENE_COVERAGE_END) {
                 return static_cast<std::int32_t>(E_INVALIDARG);
             }
             if (type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
@@ -4178,7 +4287,9 @@ std::int32_t spdf_d2d_create_scene(
                     type == SPDF_D2D_SCENE_COMPOSITE_MASK_END) {
                 created->recordable = false;
             }
-            if (type == SPDF_D2D_SCENE_BITMAP) {
+            if(type==SPDF_D2D_SCENE_BACKDROP_BITMAP)created->recordable=false;
+            if(type==SPDF_D2D_SCENE_COVERAGE_BEGIN||type==SPDF_D2D_SCENE_COVERAGE_END){created->recordable=false;created->needs_backdrop_recovery=true;}
+            if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP) {
                 const auto* source = static_cast<Surface::Bitmap*>(commands[index].resource);
                 if (source == nullptr || source->owner != created->owner || !source->resource) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
@@ -4227,6 +4338,11 @@ std::int32_t spdf_d2d_create_scene(
                 if (commands[index].data_count != 0) {
                     stored.transfer.assign(first, first + commands[index].data_count);
                 }
+            } else if(type==SPDF_D2D_SCENE_MESH) {
+                if(commands[index].data_count==0||commands[index].data_count%18||commands[index].data_count>65536*18)return E_INVALIDARG;
+                stored.mesh_vertices.resize(commands[index].data_count);
+                std::memcpy(stored.mesh_vertices.data(),commands[index].data,stored.mesh_vertices.size()*sizeof(float));
+                for(const auto value:stored.mesh_vertices)if(!std::isfinite(value))return E_INVALIDARG;
             } else if (commands[index].data_count != 0) {
                 return static_cast<std::int32_t>(E_INVALIDARG);
             }
@@ -4235,7 +4351,7 @@ std::int32_t spdf_d2d_create_scene(
         compact_empty_layers(*data);
         for (std::size_t index = 0; index < data->commands.size(); ++index) {
             auto& stored = data->commands[index];
-            if (!stored.bitmap && !stored.geometry && !stored.stroke_style) continue;
+            if (!stored.bitmap && !stored.geometry && !stored.stroke_style && stored.mesh_vertices.empty()) continue;
             stored.binding_index = static_cast<std::uint32_t>(data->binding_commands.size());
             data->binding_commands.push_back(static_cast<std::uint32_t>(index));
         }
@@ -4246,6 +4362,7 @@ std::int32_t spdf_d2d_create_scene(
         if (!created->recordable) {
             auto replay = std::make_shared<Scene::ReplayIndex>();
             prepare_raster_groups(created.get(), *replay);
+            if(created->needs_backdrop_recovery)created->raster_groups.clear();
             prepare_cull_blocks(created.get(), *replay);
             for (std::size_t index = 0; index < replay->scope_at.size(); ++index)
                 if (replay->scope_at[index] != UINT32_MAX) replay->replay_roles[index] |= Scene::Scope;

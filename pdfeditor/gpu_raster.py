@@ -36,7 +36,7 @@ _native_text_walk = ContextVar("spdf_native_text_walk", default=False)
 _native_pixel_pack = True
 
 
-MAX_GPU_IMAGE_BYTES = 64 * 1024 * 1024
+MAX_GPU_IMAGE_BYTES = 128 * 1024 * 1024
 MAX_GPU_SCENE_ITEMS = 50000
 SHADE_RASTER_SCALE = 2.0
 LINEAR_SHADE_STEPS = 64
@@ -173,8 +173,7 @@ class VectorPage:
 
     @property
     def requires_luminosity(self):
-        # Native input resolves luminosity/transfer into alpha coverage.
-        return False
+        return "gpu-luminosity" in self.features
 
     def to_bytes(self):
         return self.compiled_packet

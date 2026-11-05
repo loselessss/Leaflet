@@ -15,9 +15,11 @@ from pdfeditor.meta import APP_NAME, APP_VERSION
 ROOT = Path(__file__).resolve().parents[2]
 NS = 'http://schemas.microsoft.com/appx/manifest/foundation/windows10'
 UAP = 'http://schemas.microsoft.com/appx/manifest/uap/windows10'
+UAP10 = 'http://schemas.microsoft.com/appx/manifest/uap/windows10/10'
 RESCAP = NS + '/restrictedcapabilities'
 ET.register_namespace('', NS)
 ET.register_namespace('uap', UAP)
+ET.register_namespace('uap10', UAP10)
 ET.register_namespace('rescap', RESCAP)
 
 
@@ -34,7 +36,7 @@ def manifest(version, name, publisher, display_name):
         raise ValueError('Invalid MSIX identity name')
     if not publisher.startswith('CN=') or not display_name.strip():
         raise ValueError('Supply the certificate subject / Store publisher and display name')
-    root = ET.Element('{' + NS + '}Package', IgnorableNamespaces='uap rescap')
+    root = ET.Element('{' + NS + '}Package', IgnorableNamespaces='uap uap10 rescap')
     def node(parent, tag, **attrs):
         return ET.SubElement(parent, '{' + NS + '}' + tag, attrs)
     node(root, 'Identity', Name=name, Publisher=publisher,
@@ -52,6 +54,7 @@ def manifest(version, name, publisher, display_name):
     applications = node(root,'Applications')
     app = node(applications,'Application',Id='sPDF',Executable=r'app\Leaflet.exe',
                EntryPoint='Windows.FullTrustApplication')
+    app.set('{'+UAP10+'}Parameters', '--workspace reader')
     ET.SubElement(app,'{'+UAP+'}VisualElements',DisplayName=APP_NAME,Description=APP_NAME+' PDF reader and editor',
         Square150x150Logo=r'Assets\Square150x150Logo.png',
         Square44x44Logo=r'Assets\Square44x44Logo.png',BackgroundColor='transparent')
@@ -63,6 +66,12 @@ def manifest(version, name, publisher, display_name):
         ET.SubElement(association,'{'+UAP+'}Logo').text='Assets\\'+logo+'.png'
         supported = ET.SubElement(association,'{'+UAP+'}SupportedFileTypes')
         ET.SubElement(supported,'{'+UAP+'}FileType').text=suffix
+    editor = node(applications, 'Application', Id='LeafletEditor', Executable=r'app\Leaflet.exe',
+                  EntryPoint='Windows.FullTrustApplication')
+    editor.set('{'+UAP10+'}Parameters', '--workspace editor')
+    ET.SubElement(editor, '{'+UAP+'}VisualElements', DisplayName=APP_NAME+' Editor',
+        Description=APP_NAME+' PDF editor', Square150x150Logo=r'Assets\Square150x150Logo.png',
+        Square44x44Logo=r'Assets\Square44x44Logo.png', BackgroundColor='transparent')
     capabilities = node(root,'Capabilities')
     ET.SubElement(capabilities,'{'+RESCAP+'}Capability',Name='runFullTrust')
     return ET.tostring(root,encoding='utf-8',xml_declaration=True)

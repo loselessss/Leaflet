@@ -9,9 +9,9 @@ from pathlib import Path
 import sqlite3
 import zlib
 
-MAX_DECODED = 256 * 1024 * 1024
+MAX_DECODED = 512 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 18
+SCENE_FORMAT_VERSION = 23
 
 
 def _limit():

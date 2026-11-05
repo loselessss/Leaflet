@@ -53,6 +53,63 @@ class ReaderViewTests(unittest.TestCase):
         self.app.processEvents()
         self.directory.cleanup()
 
+    def test_live_renderer_switch_preserves_pdf_zoom_rotation_position_and_selection(self):
+        from PyQt5.QtCore import QRectF
+        from pdfeditor import reader_view
+        from pdfeditor.gpu_raster import VectorPage
+        self.view.preview_zoom(3.)
+        self.view._zoom_animation_timer.stop()
+        self.view._apply_preview_zoom(3.)
+        self.view.rotate_page_view(0, 90)
+        self.view.centerOn(900, 700)
+        self.view.canvas.set_selection([QRectF(60, 70, 80, 20)])
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        scene = VectorPage(True)
+        self.doc.install_gpu_vector_page(0, scene, persist=False)
+        with patch.object(reader_view, 'opengl_allowed', return_value=True), \
+                patch.object(reader_view, 'probe_d2d_backend',
+                             return_value=Mock(available=True, driver='hardware')):
+            self.view.set_render_backend('gpu')
+        self.assertTrue(self.view._d2d_requested)
+        self.assertIs(self.view._document, self.doc)
+        self.assertIs(self.view._vector_pages[0], scene)
+        for mode in ('cpu', 'gpu', 'cpu'):
+            with patch.object(reader_view, 'opengl_allowed', return_value=False):
+                self.view.set_render_backend(mode)
+            self.assertIs(self.view._document, self.doc)
+            self.assertEqual(self.view.zoom, 3.)
+            self.assertEqual(self.view.page_rotation(0), 90)
+            self.assertEqual(self.view.canvas._sel_rects, [QRectF(60, 70, 80, 20)])
+            after = self.view.mapToScene(self.view.viewport().rect().center())
+            self.assertLessEqual(abs(after.x()-center.x()), 1.)
+            self.assertLessEqual(abs(after.y()-center.y()), 1.)
+        self.assertEqual(self.view.render_diagnostic(0)['mode'], 'cpu')
+
+    def test_live_renderer_switch_releases_gpu_resources_and_retries_scene_jobs(self):
+        surface = Mock()
+        self.view._d2d_surface = surface
+        retained, resource = Mock(), Mock()
+        self.view._d2d_vector_paths[0] = (None, (), (resource,), retained)
+        self.view._vector_refine_attempted.add(('failed',))
+        self.view._prefetch_attempted.add(('cancelled',))
+        self.view.set_render_backend('cpu')
+        retained.close.assert_called_once()
+        resource.close.assert_called_once()
+        surface.close.assert_called_once()
+        self.assertIsNone(self.view._d2d_surface)
+        self.assertFalse(self.view._d2d_requested)
+        self.assertFalse(self.view._vector_refine_attempted)
+        self.assertFalse(self.view._prefetch_attempted)
+
+    def test_live_renderer_switch_with_unavailable_hardware_keeps_cpu_view(self):
+        from pdfeditor import reader_view
+        with patch.object(reader_view, 'opengl_allowed', return_value=True), \
+                patch.object(reader_view, 'probe_d2d_backend',
+                             return_value=Mock(available=True, driver='warp')):
+            self.view.set_render_backend('gpu')
+        self.assertFalse(self.view._d2d_requested)
+        self.assertEqual(self.view.render_diagnostic(0)['mode'], 'cpu')
+
     def finish_worker_result(self):
         import time
         deadline = time.monotonic() + 5
@@ -337,19 +394,103 @@ class ReaderViewTests(unittest.TestCase):
             retained.close.assert_called_once()
             resource.close.assert_called_once()
 
-    def test_scroll_cancels_only_speculative_worker(self):
+    def test_scroll_keeps_next_page_preparation_running(self):
         job = {"speculative": True, "generation": 0, "page": 1, "scale": 1.0}
         self.view._vector_refine_job = job
         self.view._prefetch_attempted.add((0, 1, 1.0))
         with patch.object(self.view, "_stop_vector_refine_worker") as stop:
             self.view._pause_page_prefetch()
-            stop.assert_called_once()
-            self.assertNotIn((0, 1, 1.0), self.view._prefetch_attempted)
+            stop.assert_not_called()
+            self.assertIn((0, 1, 1.0), self.view._prefetch_attempted)
             stop.reset_mock()
             job["speculative"] = False
             self.view._pause_page_prefetch()
             stop.assert_not_called()
         self.view._vector_refine_job = None
+
+    def test_recent_native_page_survives_distant_page_turn_without_upload(self):
+        from pdfeditor.gpu_raster import VectorPage, VectorPath
+        scene = VectorPage(True, items=(VectorPath((("move", 0, 0),)),))
+        self.doc.install_gpu_vector_page(0, scene, persist=False)
+        retained = Mock(closed=False)
+        self.view._d2d_vector_paths[0] = (scene, (), (), retained)
+        self.view.render_document(self.doc, [8], 8)
+        self.assertIn(0, self.view._d2d_vector_paths)
+        retained.close.assert_not_called()
+        self.view.render_document(self.doc, [0], 0)
+        self.view._d2d_surface = Mock()
+        self.view._native_vector_draws(0, scene)
+        self.view._d2d_surface.create_rust_scene.assert_not_called()
+        self.view._d2d_surface.create_scene.assert_not_called()
+        self.view._d2d_surface = None
+        self.assertIs(self.view._d2d_vector_paths[0][3], retained)
+
+    def test_entering_prefetched_page_promotes_the_running_worker(self):
+        job = dict(document=self.doc, generation=self.doc.render_generation,
+                   page=1, scale=1., speculative=True)
+        self.view._vector_refine_job = job
+        self.view._vector_refine_process = Mock()
+        try:
+            with patch.object(self.view, '_stop_vector_refine_worker') as stop:
+                self.view.render_document(self.doc, [1], 1)
+                stop.assert_not_called()
+                self.assertIs(self.view._vector_refine_job, job)
+                self.assertFalse(job['speculative'])
+        finally:
+            self.view._vector_refine_job = self.view._vector_refine_process = None
+
+    def test_idle_prefetch_uploads_prepared_vector_page_without_rasterizing_it(self):
+        from pdfeditor.gpu_raster import VectorPage
+        prepared = VectorPage(True, compiled_packet=b'owned-vector-packet', command_count=1)
+        self.doc.install_gpu_vector_page(1, prepared, persist=False)
+        self.view._prefetch_attempted.add((self.doc.render_generation, 1, 1.))
+        surface = Mock()
+        surface.create_rust_scene.return_value = Mock(closed=False)
+        self.view._d2d_requested = True
+        self.view._gpu_initial_frame_pending = False
+        self.view._d2d_surface = surface
+        try:
+            with patch.object(self.doc, 'render', side_effect=AssertionError('rasterized prefetch')):
+                self.view._prefetch_next_page()
+            surface.create_rust_scene.assert_called_once_with(prepared, *self.doc.page_size(1))
+            self.assertIs(self.view._d2d_vector_paths[1][0], prepared)
+        finally:
+            self.view._d2d_surface = None
+            self.view._d2d_requested = False
+
+    def test_vram_pressure_releases_inactive_gpu_resources_but_keeps_vector_data(self):
+        from pdfeditor.gpu_raster import VectorPage
+        class Surface:
+            supports_video_memory_query = True
+            def video_memory(self):
+                return 1024, 2048
+        scene = VectorPage(True)
+        self.doc.install_gpu_vector_page(1, scene, persist=False)
+        retained = Mock(closed=False)
+        self.view._d2d_vector_paths[1] = (scene, (), (), retained)
+        self.view._d2d_surface = Surface()
+        try:
+            self.view._trim_nearby_native_pages()
+            retained.close.assert_called_once()
+            self.assertIs(self.doc.cached_gpu_vector_page(1, memory_only=True), scene)
+        finally:
+            self.view._d2d_surface = None
+
+    def test_document_edit_discards_retained_previews_and_gpu_pages(self):
+        from pdfeditor.gpu_raster import VectorPage
+        retained = Mock(closed=False)
+        self.view._d2d_vector_paths[0] = (VectorPage(True), (), (), retained)
+        preview = self.view._previews[0]
+        self.doc.invalidate_render(0)
+        self.view.render_document(self.doc, [0], 0)
+        retained.close.assert_called_once()
+        self.assertIsNot(self.view._previews[0], preview)
+
+    def test_hidpi_scroll_uses_the_same_physical_pixel_phase(self):
+        with patch.object(self.view.viewport(), 'devicePixelRatioF', return_value=1.25):
+            transform = self.view._retained_page_transform(0)
+            for coordinate in transform[4:]:
+                self.assertAlmostEqual(coordinate * 1.25, round(coordinate * 1.25))
 
     def test_background_prefetch_installs_real_worker_result_without_changing_view(self):
         import time
@@ -906,6 +1047,7 @@ class ReaderViewTests(unittest.TestCase):
 
         self.finish_tiles()
         self.view.canvas.set_selection([QRectF(60, 70, 80, 20)])
+        self.view.canvas.set_search([QRectF(50, 50, 20, 15)], QRectF(80, 50, 20, 15))
         self.view.canvas.set_edit_boxes([QRectF(70, 110, 90, 24)])
         surface = Surface()
         from types import SimpleNamespace
@@ -916,7 +1058,7 @@ class ReaderViewTests(unittest.TestCase):
         self.view._paint_d2d()
         self.assertGreaterEqual(len(surface.created), 2)
         self.assertGreaterEqual(len(surface.drawn), 2)
-        self.assertEqual(len(surface.filled), 1)
+        self.assertEqual(len(surface.filled), 3)
         self.assertEqual(len(surface.stroked), 1)
         created = len(surface.created)
         self.view._paint_d2d()
@@ -1040,6 +1182,60 @@ class ReaderViewTests(unittest.TestCase):
         self.view.stop_rendering()
         surface.cancel_sharp.assert_called()
         self.assertFalse(self.view._sharp_refine_timer.isActive())
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
+    def test_poster_waits_for_exact_gpu_tiles_without_synchronous_coarse_replay(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=('gpu-mask',))
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = False
+        surface.draw_scene_preview.return_value = True
+        surface.request_sharp_scene.return_value = True
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        with patch.object(self.view, '_native_vector_draws', return_value=range(300)):
+            self.view._draw_vector_page(0, scene)
+            surface.draw_scene.assert_not_called()
+            self.assertTrue(self.view._sharp_refine_timer.isActive())
+            self.assertEqual(self.view._sharp_refine_timer.interval(), 0)
+            self.view._start_sharp_refine()
+            self.view._draw_vector_page(0, scene)
+            surface.request_sharp_scene.assert_called_once()
+            surface.draw_scene.assert_not_called()
+            surface.draw_sharp_partial.assert_called()
+            surface.draw_sharp_scene.return_value = True
+            self.view._draw_vector_page(0, scene)
+            surface.draw_scene.assert_not_called()
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
+    def test_poster_failed_refinement_leaves_preview_and_replays_vectors(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=('gpu-mask',))
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = False
+        surface.draw_scene_preview.return_value = True
+        surface.request_sharp_scene.return_value = False
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        with patch.object(self.view, '_native_vector_draws', return_value=range(300)):
+            self.view._draw_vector_page(0, scene)
+            self.view._start_sharp_refine()
+            self.view._draw_vector_page(0, scene)
+            surface.draw_scene.assert_called_once()
+            self.view._cancel_sharp_refine()
+            self.assertFalse(self.view._sharp_attempted)
+            self.view._draw_vector_page(0, scene)
+            self.assertTrue(self.view._sharp_refine_timer.isActive())
+            surface.request_sharp_scene.return_value = True
+            self.view._start_sharp_refine()
+            surface.sharp_status.return_value = 0
+            self.view._poll_sharp_refine()
+            self.view._draw_vector_page(0, scene)
+            self.assertEqual(surface.draw_scene.call_count, 2)
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
 

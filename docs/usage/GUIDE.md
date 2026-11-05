@@ -1,5 +1,10 @@
 # Leaflet usage guide
 
+The home screen shows **Reader mode / Editor mode**. The **Leaflet** Start menu entry
+opens Reader; **Leaflet Editor** opens Editor. View → Display Renderer offers automatic,
+GPU and CPU display plus a vector page cache limit. Both apply immediately. Switching
+renderers preserves the current page, zoom, reading position and unsaved changes.
+
 English | [한국어](GUIDE.ko.md)
 
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
@@ -28,7 +33,7 @@ after each job. Ordinary Ctrl+C keeps its existing behavior.
 The latest standalone installer is also available from [GitHub Releases](https://github.com/loselessss/Leaflet/releases/latest).
 
 Launch **Leaflet** or **Leaflet Editor** from the Start menu.
-Use **Edit mode** in the reader or **Back to reader** in the editor to switch.
+Use **Edit → Open in editor** (Ctrl+E) in the reader or **Back to reader** in the editor to switch.
 Press **F1** for the full usage guide.
 
 ## Features

@@ -14,6 +14,16 @@ from pdfeditor.meta import APP_VERSION
 
 
 class MsixTests(unittest.TestCase):
+    def test_reader_and_editor_are_distinct_launch_entries_with_fixed_workspace(self):
+        from tools.build.build_msix import UAP10
+        root = ET.fromstring(manifest(APP_VERSION, 'Example.sPDF', 'CN=Example', 'Example'))
+        apps = root.findall('{'+NS+'}Applications/{'+NS+'}Application')
+        self.assertEqual([app.get('Id') for app in apps], ['sPDF', 'LeafletEditor'])
+        self.assertEqual([app.get('{'+UAP10+'}Parameters') for app in apps],
+                         ['--workspace reader', '--workspace editor'])
+        self.assertTrue(all(app.get('Executable') == r'app\Leaflet.exe' for app in apps))
+        self.assertIsNone(apps[1].find('{'+NS+'}Extensions'))
+
     def test_file_types_have_distinct_logos(self):
         from tools.build.build_msix import UAP
         root = ET.fromstring(manifest(APP_VERSION, 'Example.sPDF', 'CN=Example', 'Example'))

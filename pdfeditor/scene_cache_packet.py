@@ -5,13 +5,15 @@ import struct
 
 MAGIC = b'LFDC\x01\0\0\0'
 SCENE_MAGIC = b'LFSC\x02\0\0\0'
-MAX_PACKET = 256 * 1024 * 1024
+MAX_PACKET = 512 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024 * 1024  # Matches the independent Rust buffer codec limit.
 MAX_FEATURES = 64
 MAX_FEATURE_BYTES = 256
 HEADER = struct.Struct('<dIHQH')
 CHUNK = struct.Struct('<BII')
-MAX_BLOB = MAX_PACKET + 32 + len(MAGIC) + HEADER.size + MAX_FEATURES * (2 + MAX_FEATURE_BYTES) + 4 * CHUNK.size
+MAX_BLOB = (MAX_PACKET + 32 + len(MAGIC) + HEADER.size
+            + MAX_FEATURES * (2 + MAX_FEATURE_BYTES)
+            + ((MAX_PACKET + CHUNK_BYTES - 1) // CHUNK_BYTES) * CHUNK.size)
 
 
 def _metadata(scale, count, features):

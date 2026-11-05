@@ -15,7 +15,7 @@ impl<'a> Reader<'a>{
     fn matrix(&mut self)->CompileResult<Matrix>{Ok([self.number()?,self.number()?,self.number()?,self.number()?,self.number()?,self.number()?])}
     fn done(&self)->CompileResult<()>{if self.at!=self.data.len(){Err(invalid("trailing native input"))}else{Ok(())}}
 }
-struct Raw{kind:u32,flags:u32,area:Rect,alpha:f64,end:usize,capture:usize,density:f64}
+struct Raw{kind:u32,flags:u32,area:Rect,alpha:f64,end:usize,capture:usize,density:f64,root:usize,backdrop_depth:usize}
 fn intersect(a:Rect,b:Rect)->Rect {
     let x=a[0].max(b[0]);let y=a[1].max(b[1]);[x,y,a[2].min(b[2]).max(x),a[3].min(b[3]).max(y)]
 }
@@ -31,14 +31,16 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
     if view[2]<view[0]||view[3]<view[1]{return Err(invalid("invalid native viewport"));}
     if metadata.len()%48!=0||metadata.len()/48>COMMAND_LIMIT{return Err(invalid("invalid native metadata size"));}
     let build=||->CompileResult<Vec<u8>>{
-        let mut reader=Reader{data:metadata,at:0};let mut raw=Vec::new();let mut scopes=Vec::new();
+        let mut reader=Reader{data:metadata,at:0};let mut raw:Vec<Raw>=Vec::new();let mut scopes:Vec<(u32,usize)>=Vec::new();
         while reader.at<metadata.len(){
             let kind=reader.u32()?;let flags=reader.u32()?;let area=reader.rect()?;let alpha=reader.number()?;
             if kind>20||!(0.0..=1.0).contains(&alpha){return Err(invalid("invalid native operation"));}
             let density=if matches!(kind,9..=11){
                 ((flags&65535) as f64/(area[2]-area[0]).max(1e-9)).max((flags>>16) as f64/(area[3]-area[1]).max(1e-9))
             }else{64.};
-            let i=raw.len();raw.push(Raw{kind,flags,area,alpha,end:i,capture:i,density});
+            let i=raw.len();let root=scopes.iter().find(|(_,start)|matches!(raw[*start].kind,11|13|15|17)).map(|(_,s)|*s).unwrap_or(i);
+            let backdrop_depth=scopes.iter().filter(|(_,s)|raw[*s].kind==15&&raw[*s].flags>>8!=0&&raw[*s].flags&1==0).count();
+            raw.push(Raw{kind,flags,area,alpha,end:i,capture:i,density,root,backdrop_depth});
             match kind {
                 2|3|6|7|11=>scopes.push((1,i)),13=>scopes.push((2,i)),15=>scopes.push((3,i)),17=>scopes.push((4,i)),
                 14=>{let scope=scopes.last_mut().ok_or_else(||invalid("native mask underflow"))?;
@@ -60,63 +62,64 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
             }
             if matches!(r.kind,0..=11|13|15|17){r.area=intersect(r.area,bounds);}
         }
+        // Extremely deep/large backdrop groups retain a bounded CPU escape.
+        let mut local_captures=std::collections::BTreeMap::new();
+        for (i,r) in raw.iter().enumerate(){
+            if r.kind!=15{continue;}
+            let dependent=r.flags>>8!=0&&r.flags&1==0&&r.flags&2==0;
+            if dependent&&(r.backdrop_depth>=3||r.end-i>50000){local_captures.insert(r.root,raw[r.root].end);}
+        }
+        // A few small knockout groups stay vector. Many tiny, deeply layered
+        // groups remain cheaper as bounded islands (notably ACB 2015).
+        let mut knockout_candidates=std::collections::BTreeSet::new();let mut knockout_commands=0usize;
+        for (i,r) in raw.iter().enumerate(){
+            if r.kind==15&&r.flags&2!=0&&r.flags>>8==0&&r.alpha==1.&&r.end-i>=128&&r.end-i<=65536&&area(r.area)<=area(page)*0.005
+                &&!raw[i+1..r.end].iter().any(|x|matches!(x.kind,4..=7|17)){
+                knockout_candidates.insert(i);knockout_commands+=r.end-i+1;
+            }
+        }
+        if knockout_commands<=512{knockout_candidates.clear();}
         let mut jobs=Vec::new();let mut i=0;let mut regions=0;
         while i<raw.len(){
             let r=&raw[i];let mut mode=0;let mut end=i;let mut rect=intersect(intersect(r.area,page),view);
+            // An offscreen mask clips away its complete content scope. Do not
+            // emit a zero-sized GPU capture, or unbalance its closing clip.
+            if matches!(r.kind,2|6|11|13)&&area(rect)<=0.{i=r.end+1;continue;}
+            // Empty fills/images/shadings paint no ink. Strokes and stroke
+            // clips deliberately stay live: zero-width hairlines are visible.
+            if matches!(r.kind,0|8|9|10)&&area(rect)<=0.{i+=1;continue;}
             let mut density=(scale*if matches!(r.kind,9..=11){1.}else{2.}).min(64.).min(r.density.max(0.01));
-            match r.kind {
-                13=>{
-                    // A whole alpha-image scope has no backdrop-dependent ink.
-                    let content=&raw[r.capture+1..r.end];
-                    let image_only=content.iter().filter(|x|x.kind!=19&&x.kind!=20).count()==1&&content.iter().any(|x|x.kind==9||x.kind==10);
-                    mode=if image_only{1}else{2};end=if image_only{r.end}else{r.capture};
-                },
-                11=>{
-                    let content=&raw[i+1..r.end];
-                    let image=content.iter().find(|x|matches!(x.kind,9|10));
-                    if content.iter().filter(|x|x.kind!=19&&x.kind!=20).count()==1&&image.is_some(){
-                        mode=6;end=r.end;density=scale.min(64.).min(r.density.max(image.unwrap().density).max(0.01));
-                    }else{mode=3;}
-                },
-                8=>{if r.flags!=2&&r.flags!=3{mode=1;density=scale;}},9|10=>{mode=5;},
+            if let Some(last)=local_captures.get(&i){mode=7;end=*last;density=scale;}
+            else {match r.kind {
+                4=>{if r.flags&0x80000000!=0{mode=1;}},
+                // Soft masks and stencil clipping execute on the GPU. Images
+                // still decode into their original bounded sampling grid.
+                8=>{if r.flags==0{mode=1;density=scale;}},9|10=>{mode=5;},
                 17=>{mode=1;end=r.end;},
-                15=>{
-                    if r.flags&16!=0&&(r.alpha<1.-1e-6||r.flags>>8!=0){
-                        return Err(invalid("unsupported CMYK transparency group"));
-                    }
-                    let content=&raw[i+1..r.end];
-                    let region=r.flags&2!=0&&r.flags>>8==0&&r.alpha==1.&&r.end-i>=128&&r.end-i<=65536&&area(r.area)<=area(page)*0.005&&regions<64
-                        &&!content.iter().any(|x|matches!(x.kind,4..=7|17));
-                    if region {mode=1;end=r.end;regions+=1;}
-                    else if r.flags>>8!=0&&r.flags&1==0{
-                        let ink:Vec<_>=content.iter().filter(|x|matches!(x.kind,0|1|4|5|8|9|10)).collect();
-                        let opaque=ink.iter().all(|x|matches!(x.kind,0|1|4|5)&&x.alpha==1.);
-                        let shading=ink.iter().all(|x|x.kind==8);
-                        if ink.len()!=1&&!opaque&&!shading{return Err(invalid("unsupported nonisolated blend group"));}
-                    }
-                },
+                15=>{if regions<64&&knockout_candidates.contains(&i){mode=1;end=r.end;regions+=1;}},
                 _=>{}
-            }
-            if mode!=0{
+            }}
+            if mode!=0||r.kind==11{
                 // Keep antialiased boundary pixels and round dimensions conservatively.
                 if area(rect)>0.{let pad=1./density;rect=intersect([rect[0]-pad,rect[1]-pad,rect[2]+pad,rect[3]+pad],view);}
-                let cap=(16*1024*1024/4) as f64;
+                let cap=(32*1024*1024/4) as f64;
                 if area(rect)>0.{density=density.min((cap/area(rect)).sqrt()*0.98);
-                    density=density.min(32760./(rect[2]-rect[0]).max(rect[3]-rect[1]));}
+                    density=density.min(8190./(rect[2]-rect[0]).max(rect[3]-rect[1]));}
                 if density<=0.||!density.is_finite(){return Err(invalid("native raster density exhausted"));}
             }
             jobs.push((mode,i,end,rect,density));i=end+1;
         }
         // Allocate the complete raster working set together, rather than letting
         // the first large image consume the budget reserved for later masks.
-        let desired:f64=jobs.iter().filter(|j|j.0!=0).map(|j|{
+        let desired:f64=jobs.iter().filter(|j|j.0!=0||raw[j.1].kind==11).map(|j|{
             ((j.3[2]-j.3[0])*j.4+2.)*((j.3[3]-j.3[1])*j.4+2.)*4.
         }).sum();
         let factor=if desired>IMAGE_LIMIT as f64*0.9{(IMAGE_LIMIT as f64*0.9/desired).sqrt()}else{1.};
         let mut out=Vec::new();let mut total=0usize;
         for (mode,start,end,rect,density) in jobs{
-            let density=if mode!=0{density*factor}else{density};
-            if mode!=0&&area(rect)>0.{
+            let sampled=mode!=0||raw[start].kind==11;
+            let density=if sampled{density*factor}else{density};
+            if sampled&&area(rect)>0.{
                 let w=((rect[2]*density).ceil()-(rect[0]*density).floor()).max(0.);
                 let h=((rect[3]*density).ceil()-(rect[1]*density).floor()).max(0.);
                 total=total.checked_add((w*h*4.) as usize).ok_or_else(||invalid("native raster overflow"))?;
@@ -153,7 +156,9 @@ fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<
     let start=point(coords[0],coords[1]);let end=point(coords[3],coords[4]);
     let (path,radial)=if kind==2{
         let dx=end[0]-start[0];let dy=end[1]-start[1];let length=dx.hypot(dy);
-        if length<=1e-6{return Err(invalid("degenerate native linear gradient"));}
+        // MuPDF paints no ink for a truly zero-length axial shading. Do not
+        // discard the rest of an otherwise usable page because of this no-op.
+        if length==0.{return Ok(());}
         let u=[dx/length,dy/length];let v=[-u[1],u[0]];
         let corners=[[b[0],b[1]],[b[2],b[1]],[b[2],b[3]],[b[0],b[3]]];
         let t:Vec<_>=corners.iter().map(|p|((p[0]-start[0])*u[0]+(p[1]-start[1])*u[1])/length).collect();
@@ -185,7 +190,7 @@ fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<
     push(scene,op,Some(b),None);push(scene,Operation::ClipEnd,None,None);Ok(())
 }
 fn import_native(data:&[u8])->CompileResult<Scene>{
-    if data.len()>256*1024*1024{return Err(invalid("native input byte budget exceeded"));}
+    if data.len()>512*1024*1024{return Err(invalid("native input byte budget exceeded"));}
     let mut reader=Reader{data,at:0};let mut scene=Scene::new();let mut index=HashMap::new();
     while reader.at<data.len(){
         if scene.commands.len()>=COMMAND_LIMIT{return Err(invalid("native output count exceeded"));}
@@ -197,12 +202,13 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
                 matrix=p.matrix()?;let even_odd=p.u32()?!=0;let groupable=p.u32()?!=0;
                 let color=argb(p.rect()?);let mut width=0.;let mut style=None;
                 if kind==1||kind==3{
-                    let start=p.u32()?;let dash=p.u32()?;let end=p.u32()?;let join=p.u32()?;
+                    let mut start=p.u32()?;let dash=p.u32()?;let end=p.u32()?;let join=p.u32()?;
                     width=p.number()?;let miter=p.number()?;let mut phase=p.number()?;let n=p.u32()? as usize;
                     if n>4096||width<0.||miter<0.||start>3||dash>3||end>3||join>3{return Err(invalid("invalid native stroke"));}
                     let mut dashes=Vec::with_capacity(n);
                     for _ in 0..n{let v=p.number()?;if v<0.{return Err(invalid("negative native dash"));}dashes.push(v);}
-                    if n>0{if width<=0.{return Err(invalid("unsupported dashed hairline"));}phase/=width;for v in &mut dashes{*v/=width;}}
+                    if width==0.{start|=0x80000000;width=1.;}
+                    if n>0{phase/=width;for v in &mut dashes{*v/=width;}}
                     style=Some(Stroke{start,dash,end,join,miter,phase,dashes});
                 }
                 let n=p.u64()?;let bytes=p.take(n)?;validate_path(bytes)?;
@@ -216,7 +222,7 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
                     2=>Operation::Clip{resource,even_odd},_=>Operation::StrokeClip{resource,width,style}
                 }
             },
-            9=>{
+            9|23=>{
                 matrix=p.matrix()?;let width=p.u32()?;let height=p.u32()?;let stride=p.u32()?;
                 // Smooth continuous-tone images; retain nearest sampling for
                 // binary/stencil art unless the PDF explicitly requests it.
@@ -227,16 +233,22 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
                 let rgba=p.take(size)?;let mut pixels=rgba.to_vec();
                 for px in pixels.chunks_exact_mut(4){px.swap(0,2);}
                 let resource=scene.intern(Resource::Image{pixels,width,height,stride},&mut index)?;
-                Operation::Image{resource,opacity:1.,interpolate}
+                if kind==23{Operation::BackdropImage{resource,interpolate}}
+                else{Operation::Image{resource,opacity:1.,interpolate}}
             },
             12=>Operation::ClipEnd,
-            13=>Operation::Mask{area:p.rect()?,luminosity:false,background:0},
-            14=>Operation::MaskEnd{transfer:Vec::new()},
-            15=>{let opacity=p.number()?;let blend=p.u32()?;let mut isolated=p.u32()?!=0;let knockout=p.u32()?!=0;
+            13=>Operation::Mask{area:p.rect()?,luminosity:p.u32()?!=0,background:p.u32()?},
+            14=>{let n=p.u32()? as usize;if n>65536{return Err(invalid("mask transfer budget"));}
+                let transfer=(0..n).map(|_|p.number()).collect::<CompileResult<Vec<_>>>()?;Operation::MaskEnd{transfer}},
+            21=>{let n=p.u64()?;if n>32*1024*1024||n%72!=0{return Err(invalid("invalid triangle mesh"));}
+                let bytes=p.take(n)?;for value in bytes.chunks_exact(4){if !f32::from_le_bytes(value.try_into().unwrap()).is_finite(){return Err(invalid("nonfinite mesh"));}}
+                let resource=scene.intern(Resource::Mesh(bytes.to_vec()),&mut index)?;Operation::Mesh{resource}},
+            15=>{let opacity=p.number()?;let flags=p.u32()?;let blend=flags&255;let mut isolated=p.u32()?!=0;let knockout=p.u32()?!=0;
+                if flags&256!=0{scene.preparation|=0x8000;}
                 if !(0.0..=1.0).contains(&opacity)||blend>15{return Err(invalid("invalid native group"));}
                 // Single-ink blend sources can be isolated; normal knockout
                 // groups retain the existing accepted isolation approximation.
-                if blend!=0||knockout{isolated=true;}
+                if knockout{isolated=true;}
                 Operation::Group{opacity,blend,isolated,knockout}},
             16=>Operation::GroupEnd,_=>return Err(invalid("unknown materialized operation"))
         };

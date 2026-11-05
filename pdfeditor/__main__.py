@@ -16,15 +16,14 @@ def main(*, allow_residency=True):
         index = sys.argv.index("--gpu-scene-worker")
         sys.exit(gpu_scene_main(sys.argv[index + 1:]))
 
-    # GUI와 OCR 작업 프로세스가 Windows에서 같은 Leaflet 앱으로 인식되도록
-    # 어떤 실행 모드에서도 UI/작업 초기화보다 먼저 명시한다.
+    # Set each workspace's shell identity before creating any GUI windows.
     from .windows_integration import set_current_process_app_id
-    set_current_process_app_id()
 
     # OCR은 별도 실행 파일(leaflet-ocr.exe)이 처리한다 — 같은 프로세스에서
     # Qt와 onnxruntime를 함께 로드하면 DLL 초기화가 깨지기 때문(paths.py).
     # 개발 모드에서 `--ocr-worker`로 직접 호출하는 경우만 지원(테스트용).
     if "--ocr-worker" in sys.argv:
+        set_current_process_app_id()
         from .ocr_subprocess import main as ocr_main
         sys.exit(ocr_main())
 
@@ -43,7 +42,9 @@ def main(*, allow_residency=True):
     from .paths import is_packaged
     # MSIX updates are installed through the package channel, not Inno Setup.
     args.no_updates = args.no_updates or is_packaged()
-    workspace = args.workspace or settings.startup_workspace()
+    from .windows_integration import packaged_workspace
+    workspace = args.workspace or packaged_workspace() or settings.startup_workspace()
+    set_current_process_app_id(workspace)
     allow_residency = allow_residency and not args.no_resident
 
     # A launch that only forwards a file needs no QApplication, UI DLLs or

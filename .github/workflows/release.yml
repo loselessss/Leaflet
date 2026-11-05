@@ -105,9 +105,6 @@ jobs:
           $releaseFiles = "Output\Leaflet_Release_Files_$version.zip"
           python -m tools.release.release_notes --version $version --release-notes docs/releases/RELEASE_NOTES.md --release-notes-ko docs/releases/RELEASE_NOTES.ko.md --output release-notes.md
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
-          "`nDownload Leaflet_Setup_$version.exe. / Leaflet_Setup_$version.exe를 받으세요.`n`nSHA-256: ``$hash``" |
-            Add-Content -Encoding utf8 -LiteralPath release-notes.md
           gh release view $tag --json id 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release edit $tag --title "Leaflet $version" `

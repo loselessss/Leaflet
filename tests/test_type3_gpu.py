@@ -27,7 +27,7 @@ def type3_pdf(*, variant="vector", mode=0, rotated=False, opacity=1.):
             program = b"600 0 0 0 600 700 d1 0 0 500 500 re W n 0 0 600 700 re f"
         elif variant == "bitmap":
             program = (b"600 0 0 0 600 700 d1 600 0 0 700 0 0 cm "
-                       b"BI /W 1 /H 1 /BPC 1 /IM true ID \x80 EI")
+                       b"BI /W 1 /H 1 /BPC 1 /IM true ID \x00 EI")
         glyph = stream(program)
         blank = stream(b"600 0 0 0 600 700 d1")
         font = document.get_new_xref()
@@ -61,14 +61,14 @@ class Type3CompilerTests(unittest.TestCase):
                 self.assertEqual(packets[0], packets[1])
                 self.assertEqual(packets[0], packets[2])
 
-    def test_complex_glyphs_keep_original_raster_handling(self):
+    def test_complex_glyphs_execute_without_text_raster(self):
         from pdfeditor.rust_scene_compiler import compile_vector_page
         for variant in ("colored", "multiple", "clip", "bitmap"):
             with self.subTest(variant=variant), pymupdf.open(
                     stream=type3_pdf(variant=variant), filetype="pdf") as document:
                 scene = compile_vector_page(document[0])
                 self.assertTrue(scene.supported, scene.reason)
-                self.assertIn("text-raster-fallback", scene.features)
+                self.assertNotIn("text-raster-fallback", scene.features)
 
     def test_type3_stroke_and_clip_text_keep_existing_semantics(self):
         from pdfeditor.rust_scene_compiler import compile_vector_page

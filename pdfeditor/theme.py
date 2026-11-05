@@ -1,4 +1,4 @@
-"""sPDF의 Windows 11 Fluent 기반 밝은 테마."""
+"""Windows 설정을 따르는 Fluent UI. PDF 원본 색상은 바꾸지 않는다."""
 
 
 FLUENT_STYLESHEET = r"""
@@ -465,9 +465,71 @@ QToolTip {
 """
 
 
+def _dark_stylesheet():
+    import re
+    # Keep white text on accent buttons while replacing white surfaces.
+    sheet = re.sub(r'(?<![\w-])(?:selection-)?color: #ffffff;',
+                   lambda m: m[0].replace('#ffffff', 'WHITE_TEXT'), FLUENT_STYLESHEET)
+    colors = {
+        '#1a1a1a':'#ffffff', '#1f1f1f':'#f3f3f3', '#242424':'#f3f3f3',
+        '#243247':'#e5e5e5', '#244b91':'#b4d9ff', '#005a9e':'#b4d9ff',
+        '#525252':'#c7c7c7', '#616161':'#b8b8b8', '#777777':'#9b9b9b',
+        '#8a8a8a':'#858585', '#a0a0a0':'#777777', '#a8a8a8':'#858585',
+        '#b8b8b8':'#616161', '#b9cbe7':'#416383', '#c42b1c':'#ff99a4',
+        '#c7c7c7':'#555555', '#c8c8c8':'#616161', '#cfddfa':'#416383',
+        '#d1d1d1':'#555555', '#d9d9d9':'#444444', '#dbeaf7':'#28435c',
+        '#dce2ea':'#444444', '#dedede':'#444444', '#e1e1e1':'#444444',
+        '#e3e7ed':'#383838', '#e3f0fa':'#28435c', '#e5e5e5':'#383838',
+        '#e8efff':'#28435c', '#e8f1fa':'#28435c', '#e9e9e9':'#383838',
+        '#eaf0fa':'#28435c', '#ebebeb':'#383838', '#ededed':'#383838',
+        '#eeeeee':'#383838', '#f0f0f0':'#383838', '#f0f3f7':'#383838',
+        '#f3f3f3':'#202020', '#f5f5f5':'#292929', '#f5f7fa':'#292929',
+        '#f6f6f6':'#383838', '#f7f7f7':'#292929', '#fbfbfb':'#2b2b2b',
+        '#ffffff':'#262626',
+    }
+    sheet = re.sub(r'#[0-9a-f]{6}', lambda m: colors.get(m[0], m[0]), sheet)
+    return (sheet.replace('WHITE_TEXT', '#ffffff')
+            .replace('rgba(0, 0, 0, 0.055)', 'rgba(255, 255, 255, 0.08)')
+            .replace('rgba(255, 255, 255, 0.72)', 'rgba(255, 255, 255, 0.08)'))
+
+
+DARK_STYLESHEET = _dark_stylesheet()
+
+
+def reader_background():
+    from PyQt5.QtGui import QColor
+    from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance()
+    return QColor('#1c1c1c' if app and app.property('leafletDark') else '#e8e8e8')
+
+
+def apply_theme_colors(app, dark):
+    from PyQt5.QtGui import QColor, QPalette
+    app.setProperty('leafletDark', bool(dark))
+    palette = QPalette()
+    colors = {
+        QPalette.Window: '#202020' if dark else '#f3f3f3',
+        QPalette.WindowText: '#f3f3f3' if dark else '#1f1f1f',
+        QPalette.Base: '#262626' if dark else '#ffffff',
+        QPalette.AlternateBase: '#292929' if dark else '#f7f7f7',
+        QPalette.Text: '#f3f3f3' if dark else '#1f1f1f',
+        QPalette.Button: '#2b2b2b' if dark else '#fbfbfb',
+        QPalette.ButtonText: '#f3f3f3' if dark else '#1f1f1f',
+        QPalette.Highlight: '#0f6cbd', QPalette.HighlightedText: '#ffffff',
+        QPalette.Link: '#60b4ff' if dark else '#0f6cbd',
+        QPalette.LinkVisited: '#c8a7ff' if dark else '#5c2e91',
+    }
+    for role, color in colors.items():
+        palette.setColor(role, QColor(color))
+    for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
+        palette.setColor(QPalette.Disabled, role, QColor('#777777' if dark else '#a0a0a0'))
+    app.setPalette(palette)
+    app.setStyleSheet(DARK_STYLESHEET if dark else FLUENT_STYLESHEET)
+
+
 def apply_fluent_theme(app):
     """모든 sPDF 창에 같은 Fluent 시각 체계를 적용한다."""
-    from PyQt5.QtGui import QColor, QFont, QFontDatabase, QPalette
+    from PyQt5.QtGui import QFont, QFontDatabase
 
     # Fusion은 플랫폼과 무관한 고전 Qt 모양을 강제한다. Windows가 제공하는
     # 네이티브 스타일을 유지하고, Windows 11에서만 Variable 글꼴을 고른다.
@@ -478,20 +540,8 @@ def apply_fluent_theme(app):
     )
     app.setFont(QFont(family, 9))
 
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor("#f3f3f3"))
-    palette.setColor(QPalette.WindowText, QColor("#1f1f1f"))
-    palette.setColor(QPalette.Base, QColor("#ffffff"))
-    palette.setColor(QPalette.AlternateBase, QColor("#f7f7f7"))
-    palette.setColor(QPalette.Text, QColor("#1f1f1f"))
-    palette.setColor(QPalette.Button, QColor("#fbfbfb"))
-    palette.setColor(QPalette.ButtonText, QColor("#1f1f1f"))
-    palette.setColor(QPalette.Highlight, QColor("#0f6cbd"))
-    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    palette.setColor(QPalette.Link, QColor("#0f6cbd"))
-    palette.setColor(QPalette.LinkVisited, QColor("#5c2e91"))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor("#a0a0a0"))
-    palette.setColor(
-        QPalette.Disabled, QPalette.ButtonText, QColor("#a0a0a0"))
-    app.setPalette(palette)
-    app.setStyleSheet(FLUENT_STYLESHEET)
+    from .system_theme import SystemThemeController
+    controller = getattr(app, '_leaflet_theme_controller', None)
+    if controller is None:
+        controller = app._leaflet_theme_controller = SystemThemeController(app)
+    controller.refresh()

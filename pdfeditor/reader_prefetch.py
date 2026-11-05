@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-from .render_memory import render_memory, MIB
+from .render_memory import render_memory, vector_gpu_budget, MIB
 from .zoom_limits import MAX_PREFETCH_RASTER_SCALE
 
 _log = logging.getLogger(__name__)
@@ -50,20 +50,31 @@ class ReaderPrefetchMixin:
 
     def _trim_nearby_native_pages(self):
         from .core import _gpu_scene_cost
-        keep = set(self._page_sizes) | set(self._nearby_prefetch_pages())
-        budget = self._document.gpu_scene_memory_budget() // 2
+        video = None
+        surface = self._d2d_surface
+        if surface is not None and getattr(type(surface), 'supports_video_memory_query', False):
+            video = surface.video_memory()
+        budget = vector_gpu_budget(self._document.gpu_scene_memory_budget(), video)
+        self._native_retention_budget = budget
         used = 0
+        kept = len(self._page_sizes)
         for page in reversed(tuple(self._d2d_vector_paths)):
             cached = self._d2d_vector_paths[page]
             if page in self._page_sizes:
                 continue
             cost = _gpu_scene_cost(cached[0])
-            current = self._document.cached_gpu_vector_page(
-                page, self._vector_raster_scale(), memory_only=True)
-            if page not in keep or current is not cached[0] or used + cost > budget:
+            current = (self._vector_viewport_pages.get(page)
+                       if getattr(self, '_document_generation', None) == self._document.render_generation else None)
+            if current is not cached[0]:
+                current = self._document.cached_gpu_vector_page(
+                    page, cached[0].raster_scale, memory_only=True)
+            if current is not cached[0] or used + cost > budget or kept >= 128:
                 self._discard_native_vector_page(page)
             else:
                 used += cost
+                kept += 1
+        self._vector_viewport_pages = {p: scene for p, scene in self._vector_viewport_pages.items()
+            if p in self._page_sizes or p in self._d2d_vector_paths}
 
     def _nearby_prefetch_pages(self):
         if self._document is None or not self._page_sizes:
@@ -81,13 +92,11 @@ class ReaderPrefetchMixin:
         self._prefetch_timer.stop()
         if (self._prefetch_enabled() and self._document is not None and
                 self._d2d_requested and self.isVisible()):
-            self._prefetch_timer.start(700)
+            self._prefetch_timer.start(180)
 
     def _pause_page_prefetch(self):
-        job = self._vector_refine_job
-        if job and job.get("speculative"):
-            self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
-            self._stop_vector_refine_worker()
+        # Scrolling alone does not invalidate preparation of the next page.
+        # A foreground request or memory pressure still preempts this worker.
         self._schedule_page_prefetch()
 
     def _prefetch_next_page(self):
@@ -118,11 +127,26 @@ class ReaderPrefetchMixin:
                                    if key[0] == generation and key[1] in nearby and key[2] == scale}
         for page in nearby:
             key = generation, page, scale
-            if key in self._prefetch_attempted:
+            prepared = document.cached_gpu_vector_page(page, scale, memory_only=True)
+            if prepared is not None:
+                # Upload at most one modest vector page per idle turn. Complex
+                # posters still defer their expensive upload until displayed.
+                from .core import _gpu_scene_cost
+                resident = sum(_gpu_scene_cost(cached[0]) for p, cached in self._d2d_vector_paths.items()
+                               if p not in self._page_sizes)
+                if (self._d2d_surface is not None and prepared.compiled_packet and
+                        resident + _gpu_scene_cost(prepared) <= self._native_retention_budget and
+                        prepared.command_count <= 2048 and page not in self._d2d_vector_paths):
+                    try:
+                        self._native_vector_draws(page, prepared)
+                        self._trim_nearby_native_pages()
+                    except (OSError, RuntimeError, ValueError):
+                        self._discard_native_vector_page(page)
+                    else:
+                        self._schedule_page_prefetch()
+                        return
                 continue
-            if page in self._prefetch_failures:
-                continue
-            if document.cached_gpu_vector_page(page, scale, memory_only=True) is not None:
+            if key in self._prefetch_attempted or page in self._prefetch_failures:
                 continue
             self._prefetch_attempted.add(key)
             self._vector_refine_scale = scale

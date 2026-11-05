@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReleasePackagingTests(unittest.TestCase):
     def test_standalone_starts_in_reader_workspace(self):
         entry = (ROOT / "pdfeditor" / "__main__.py").read_text(encoding="utf-8")
-        self.assertIn('workspace = args.workspace or settings.startup_workspace()', entry)
+        self.assertIn('workspace = args.workspace or packaged_workspace() or settings.startup_workspace()', entry)
         self.assertIn('workspace_mode=workspace', entry)
         from pdfeditor import settings
         from unittest.mock import patch
@@ -104,7 +104,10 @@ class ReleasePackagingTests(unittest.TestCase):
             r'^APP_USER_MODEL_ID = ["\']([^"\']+)["\']$',
             integration, re.MULTILINE).group(1)
         self.assertEqual(runtime_app_id, app_id)
-        self.assertEqual(installer.count('AppUserModelID: "{#MyAppUserModelId}"'), 4)
+        self.assertEqual(installer.count('AppUserModelID: "{#MyAppUserModelId}"'), 2)
+        self.assertEqual(installer.count('AppUserModelID: "{#MyEditorAppUserModelId}"'), 2)
+        from pdfeditor.windows_integration import EDITOR_APP_USER_MODEL_ID
+        self.assertIn('#define MyEditorAppUserModelId "%s"' % EDITOR_APP_USER_MODEL_ID, installer)
         worker = (ROOT / "ocr_worker_main.py").read_text(encoding="utf-8")
         self.assertIn("set_current_process_app_id()", worker)
 
@@ -115,15 +118,13 @@ class ReleasePackagingTests(unittest.TestCase):
                 'Name: "%s\\{cm:ReaderShortcut}"' % target, installer)
             self.assertIn(
                 'Name: "%s\\{cm:EditorShortcut}"' % target, installer)
-        self.assertEqual(installer.count('Parameters: "--workspace reader"'), 2)
+        self.assertEqual(installer.count('Parameters: "--workspace reader"'), 4)
         self.assertEqual(installer.count('Parameters: "--workspace editor"'), 2)
-        self.assertIn("Tasks: desktopreader", installer)
-        self.assertIn("Tasks: desktopeditor", installer)
+        self.assertEqual(installer.count("Tasks: desktopicons"), 2)
         self.assertIn("Flags: unchecked", installer)
         self.assertIn("english.ReaderShortcut=Leaflet\n", installer)
         self.assertIn("korean.ReaderShortcut=Leaflet\n", installer)
         self.assertIn("korean.EditorShortcut=Leaflet 편집기", installer)
-        self.assertNotIn("Tasks: desktopicon", installer)
         for target in ("{group}", "{autodesktop}"):
             self.assertIn(
                 'Type: files; Name: "%s\\{#MyAppName}.lnk"' % target,

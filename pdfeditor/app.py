@@ -136,7 +136,7 @@ def _render_diagnostic_summary(info):
             cpu_tasks.append(localize("pattern bitmap preparation", "패턴 비트맵 준비"))
         if "text-raster-fallback" in features:
             cpu_tasks.append(localize("glyph bitmap preparation", "글자 비트맵 준비"))
-        if "vector-shading" in features:
+        if {"vector-shading", "vector-mesh"}.intersection(features):
             cpu_tasks.append(localize("gradient colors and geometry preparation",
                                       "그라데이션 색상·기하 정보 준비"))
         if "cpu-island" in features:
@@ -154,7 +154,7 @@ def _render_diagnostic_summary(info):
             gpu_tasks.append(localize("vector drawing", "벡터 그리기"))
         if {"text", "text-clip", "stroked-text", "stroked-text-clip"}.intersection(features):
             gpu_tasks.append(localize("text drawing", "글자 그리기"))
-        if {"vector-shading", "gradient-primitive"}.intersection(features):
+        if {"vector-shading", "gradient-primitive", "vector-mesh"}.intersection(features):
             gpu_tasks.append(localize("gradient drawing", "그라데이션 그리기"))
         if {"image", "stencil", "raster-shading", "raster-pattern",
                 "text-raster-fallback", "cpu-island"}.intersection(features):
@@ -611,6 +611,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             o.menuAction().setVisible(False)
 
         v = self.menuBar().addMenu("보기(&V)")
+        if self._shell._renderer_settings_enabled():
+            self._shell._add_renderer_menu(v)
+            v.addSeparator()
         if reader:
             v.addAction(self._rotate_ccw_act)
             v.addAction(self._rotate_cw_act)
@@ -702,8 +705,6 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             tool_bar.setFloatable(False)
             tool_bar.setIconSize(QSize(20, 20))
             tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            if self._open_editor_act is not None:
-                self.add_editor_mode_button(tool_bar)
             tool_bar.addAction(self._open_act)
             tool_bar.addAction(self._back_view_act)
             tool_bar.addAction(self._forward_view_act)
@@ -934,7 +935,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             "즐겨찾기 해제" if favorite else "즐겨찾기 추가"))
         self._favorite_act.setIcon(fluent_icon(
             "star_filled" if favorite else "star",
-            "#0f6cbd" if favorite else "#424242"))
+            "#0f6cbd" if favorite else None))
         self._favorite_act.setToolTip(tr(
             "현재 PDF를 즐겨찾기에서 제거합니다" if favorite else
             "현재 PDF를 즐겨찾기에 추가합니다"))
@@ -1434,7 +1435,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
         self._presentation_tab = None
         self._presentation_window_state = None
 
-        self._start_page = StartPage()
+        self._start_page = StartPage(workspace_mode=(
+            self.workspace_mode or ("reader" if self.read_only else "editor")))
         self._start_page.open_file.connect(self.open_recent)
         self._start_page.browse.connect(self.open_dialog)
         self._start_page.back_to_doc.connect(self._show_tabs_if_any)
@@ -1711,6 +1713,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
                 self, "미저장 작업 복구...", None, self.show_recovery, "undo"))
         m.addAction(_make_action(
             self, "종료", "Ctrl+Q", self.request_exit, "power"))
+        if self._renderer_settings_enabled():
+            self._add_renderer_menu(mb.addMenu("보기(&V)"))
         h = mb.addMenu("도움말(&H)")
         h.addAction(_make_action(
             self, "사용법", "F1", self._shell_help, "help"))
@@ -1757,51 +1761,8 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
                     "Close documents on exit, but keep reader modules ready. OCR is not kept running.",
                     "닫을 때 문서와 캐시는 정리하고 리더 모듈만 대기합니다. OCR은 상주하지 않습니다."))
                 resident.triggered.connect(self._set_reader_resident)
-        if self.updates_enabled:
-            renderer = parent_menu.addMenu(tr("화면 렌더러"))
-            renderer.setIcon(fluent_icon("settings"))
-            renderers = QActionGroup(renderer)
-            renderers.setExclusive(True)
-            d2d = probe_d2d_backend()
-            gpu_available = (
-                d2d.available and d2d.driver == "hardware" and
-                os.environ.get("SPDF_DISABLE_GPU", "").lower() not in
-                ("1", "true", "yes"))
-            for mode, label in (("auto", tr("자동 (권장)")),
-                                ("gpu", "GPU (Direct2D)"),
-                                ("cpu", "CPU (PyMuPDF)")):
-                action = renderer.addAction(label)
-                action.setCheckable(True)
-                action.setChecked(settings.render_backend() == mode)
-                if mode == "gpu" and not gpu_available:
-                    action.setEnabled(False)
-                    action.setToolTip(localize(
-                        "Direct2D hardware rendering is unavailable.",
-                        "Direct2D 하드웨어 렌더링을 사용할 수 없습니다."))
-                renderers.addAction(action)
-                action.triggered.connect(
-                    lambda _checked=False, selected=mode:
-                    self._select_render_backend(selected))
-            renderer.addSeparator()
-            diagnostic = renderer.addAction(localize(
-                "Rendering diagnostics", "렌더링 진단 표시"))
-            diagnostic.setCheckable(True)
-            diagnostic.setChecked(settings.render_diagnostics())
-            diagnostic.setToolTip(localize(
-                "Show the actual rendering path and CPU fallback reason for the current page.",
-                "현재 페이지의 실제 렌더링 경로와 CPU 대체 사유를 표시합니다."))
-            diagnostic.triggered.connect(self._set_render_diagnostics)
-            cache_menu = renderer.addMenu(localize("Disk cache limit", "디스크 캐시 최대 용량"))
-            cache_group = QActionGroup(cache_menu)
-            cache_group.setExclusive(True)
-            for size in settings.DISK_CACHE_SIZES:
-                label = localize("Off", "사용 안 함") if size == 0 else "%d MB" % size
-                action = cache_menu.addAction(label)
-                action.setCheckable(True)
-                action.setChecked(settings.disk_cache_mb() == size)
-                cache_group.addAction(action)
-                action.triggered.connect(
-                    lambda _checked=False, selected=size: self._set_disk_cache_size(selected))
+        if self._renderer_settings_enabled():
+            self._add_renderer_menu(parent_menu)
         menu = parent_menu.addMenu(tr("언어"))
         menu.setIcon(fluent_icon("settings"))
         group = QActionGroup(menu)
@@ -1819,6 +1780,76 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
             menu.addAction(action)
         return menu
 
+    def _renderer_settings_enabled(self):
+        # Store builds disable self-updates but retain standalone preferences.
+        return self.updates_enabled or getattr(
+            QApplication.instance(), '_spdf_standalone_reader', None) is not None
+
+    def _add_renderer_menu(self, parent_menu):
+        renderer = parent_menu.addMenu(tr("화면 렌더러"))
+        renderer.setIcon(fluent_icon("settings"))
+        renderers = QActionGroup(renderer)
+        renderers.setExclusive(True)
+        d2d = probe_d2d_backend()
+        gpu_available = (
+            d2d.available and d2d.driver == "hardware" and
+            os.environ.get("SPDF_DISABLE_GPU", "").lower() not in
+            ("1", "true", "yes"))
+        for mode, label in (("auto", tr("자동 (권장)")),
+                            ("gpu", "GPU (Direct2D)"),
+                            ("cpu", "CPU (PyMuPDF)")):
+            action = renderer.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self._current_render_backend() == mode)
+            if mode == "gpu" and not gpu_available:
+                action.setEnabled(False)
+                action.setToolTip(localize(
+                    "Direct2D hardware rendering is unavailable.",
+                    "Direct2D 하드웨어 렌더링을 사용할 수 없습니다."))
+            renderers.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected=mode:
+                self._select_render_backend(selected))
+            renderer.aboutToShow.connect(
+                lambda action=action, selected=mode:
+                action.setChecked(self._current_render_backend() == selected))
+        renderer.addSeparator()
+        diagnostic = renderer.addAction(localize(
+            "Rendering diagnostics", "렌더링 진단 표시"))
+        diagnostic.setCheckable(True)
+        diagnostic.setChecked(settings.render_diagnostics())
+        diagnostic.setToolTip(localize(
+            "Show the actual rendering path and CPU fallback reason for the current page.",
+            "현재 페이지의 실제 렌더링 경로와 CPU 대체 사유를 표시합니다."))
+        diagnostic.triggered.connect(self._set_render_diagnostics)
+        memory_menu = renderer.addMenu(localize("Vector page cache", "벡터 페이지 캐시 메모리"))
+        memory_menu.setToolTipsVisible(True)
+        memory_group = QActionGroup(memory_menu)
+        memory_group.setExclusive(True)
+        for size in settings.RENDER_CACHE_SIZES:
+            label = localize("Automatic (recommended)", "자동 (권장)") if size == 0 else "%d MB" % size
+            action = memory_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(settings.render_cache_mb() == size)
+            action.setToolTip(localize(
+                "Keep prepared vector pages and GPU drawing resources longer. Actual use adjusts to free memory.",
+                "준비된 벡터 페이지와 GPU 그리기 자원을 더 오래 보관합니다. 실제 사용량은 여유 메모리에 맞춰 조절됩니다."))
+            memory_group.addAction(action)
+            action.triggered.connect(lambda _checked=False, selected=size: self._set_render_cache_size(selected))
+            memory_menu.aboutToShow.connect(lambda action=action, selected=size:
+                action.setChecked(settings.render_cache_mb() == selected))
+        cache_menu = renderer.addMenu(localize("Disk cache limit", "디스크 캐시 최대 용량"))
+        cache_group = QActionGroup(cache_menu)
+        cache_group.setExclusive(True)
+        for size in settings.DISK_CACHE_SIZES:
+            label = localize("Off", "사용 안 함") if size == 0 else "%d MB" % size
+            action = cache_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(settings.disk_cache_mb() == size)
+            cache_group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected=size: self._set_disk_cache_size(selected))
+
     def _select_startup_workspace(self, mode):
         try:
             settings.set_startup_workspace(mode)
@@ -1832,6 +1863,17 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
             trim()
         except OSError as error:
             self._show_shell_status(str(error), 8000)
+
+    def _set_render_cache_size(self, size):
+        try:
+            settings.set_render_cache_mb(size)
+        except OSError as error:
+            self._show_shell_status(str(error), 8000)
+            return
+        for index in range(self._tabs.count()):
+            view = getattr(self._tabs.widget(index), "view", None)
+            if hasattr(view, "apply_render_cache_settings"):
+                view.apply_render_cache_settings()
 
     def _set_reader_resident(self, enabled):
         if not getattr(QApplication.instance(), "_spdf_reader_residency_allowed", True):
@@ -1855,17 +1897,29 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
         else:
             self.close()
 
+    def _current_render_backend(self):
+        tab = self._tabs.currentWidget()
+        return tab.view._render_mode if isinstance(tab, DocumentTab) else settings.render_backend()
+
     def _select_render_backend(self, mode):
-        if mode == settings.render_backend():
+        if mode not in settings.RENDER_BACKENDS:
             return
         try:
             settings.set_render_backend(mode)
         except OSError as error:
-            self.statusBar().showMessage(str(error), 8000)
+            self._show_shell_status(str(error), 8000)
             return
-        QMessageBox.information(
-            self, tr("화면 렌더러 변경"),
-            tr("화면 렌더러 변경 사항은 Leaflet을 다시 실행하면 적용됩니다."))
+        windows = [self] + [window for window in _app_windows if window is not self]
+        for window in windows:
+            if not window._renderer_settings_enabled():
+                continue
+            for index in range(window._tabs.count()):
+                tab = window._tabs.widget(index)
+                if isinstance(tab, DocumentTab):
+                    tab.view.set_render_backend(mode)
+                    tab._update_render_diagnostic()
+        self._show_shell_status(localize(
+            "Display renderer changed.", "화면 렌더러를 변경했습니다."), 3000)
 
     def _set_render_diagnostics(self, enabled):
         try:

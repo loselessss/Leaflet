@@ -13,6 +13,33 @@ from tests import test_gpu_raster as fixtures
 
 
 class NativeSceneCompilerTests(unittest.TestCase):
+    def test_single_gradient_opacity_folds_but_protects_knockout_masks_and_overlap(self):
+        from pdfeditor._path_packer import compile_scene
+        from pdfeditor.gpu_raster import (VectorPage, VectorLinearGradient, VectorPath,
+            GroupPush, GroupPop, ClipPush, ClipPop, MaskBegin, MaskEnd)
+        rect = (("move", 0., 0.), ("line", 100., 0.), ("line", 100., 100.),
+                ("line", 0., 100.), ("close",))
+        gradient = VectorLinearGradient(rect, (0., 0.), (100., 0.),
+                                       ((0., 0xff123456), (1., 0xffabcdef)))
+        normal = GroupPush(.5, isolated=False)
+        cases = (
+            ((normal, ClipPush(rect), gradient, ClipPop(), GroupPop()), 3),
+            ((GroupPush(1., knockout=True), normal, gradient, GroupPop(), GroupPop()), 5),
+            ((GroupPush(1., knockout=True), ClipPush(rect), normal, gradient, GroupPop(), ClipPop(), GroupPop()), 5),
+            ((normal, gradient, gradient, GroupPop()), 4),
+            ((MaskBegin((0., 0., 100., 100.), False, 0), normal, gradient, GroupPop(),
+              MaskEnd(), VectorPath(rect, fill_argb=0xff000000), ClipPop()), 7),
+        )
+        for items, expected in cases:
+            with self.subTest(expected=expected, items=len(items)):
+                compiled = compile_scene(VectorPage(True, items=items))
+                self.assertEqual(compiled.command_count, expected)
+                for end, capture, _depth in compiled.scope_plan():
+                    if end is not None:
+                        self.assertLess(end, expected)
+                    if capture is not None:
+                        self.assertLess(capture, expected)
+
     def test_preparation_provenance_changes_features_without_changing_gpu_packet(self):
         from pdfeditor._path_packer import compile_native_scene
         expected_packet = None
@@ -29,7 +56,7 @@ class NativeSceneCompilerTests(unittest.TestCase):
                 self.assertIn(expected_feature, compiled.features)
             self.assertEqual('raster-shading' in compiled.features, bool(provenance & 0x100))
 
-    def test_actual_cpu_composite_capture_keeps_mixed_rendering_feature(self):
+    def test_small_knockout_group_stays_on_gpu(self):
         with pymupdf.open(stream=fixtures.nonisolated_single_path_pdf_bytes(alpha=1., knockout=True),
                           filetype='pdf') as doc:
             page = doc[0]
@@ -38,10 +65,21 @@ class NativeSceneCompilerTests(unittest.TestCase):
             doc.update_stream(form, doc.xref_stream(form) * 130)
             scene = compile_vector_page(page)
             self.assertTrue(scene.supported, scene.reason)
-            self.assertIn('cpu-island', scene.features)
+            self.assertNotIn('cpu-island', scene.features)
             self.assertNotIn('raster-shading', scene.features)
 
-    def test_cpu_function_shading_bitmap_is_reported_as_cpu_preparation(self):
+    def test_dense_knockout_group_retains_bounded_cpu_preparation(self):
+        with pymupdf.open(stream=fixtures.nonisolated_single_path_pdf_bytes(alpha=1., knockout=True),
+                          filetype='pdf') as doc:
+            page = doc[0]
+            page.set_mediabox(pymupdf.Rect(0, 0, 5000, 5000))
+            form = page.get_xobjects()[0][0]
+            doc.update_stream(form, doc.xref_stream(form) * 600)
+            scene = compile_vector_page(page)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertIn('cpu-island', scene.features)
+
+    def test_function_shading_executes_as_gpu_mesh(self):
         with pymupdf.open() as doc:
             page = doc.new_page(width=100, height=100)
             function = doc.get_new_xref()
@@ -58,10 +96,11 @@ class NativeSceneCompilerTests(unittest.TestCase):
             page.set_contents(contents)
             scene = compile_vector_page(page)
             self.assertTrue(scene.supported, scene.reason)
-            self.assertIn('raster-shading', scene.features)
-            self.assertNotIn('vector-shading', scene.features)
+            self.assertIn('vector-mesh', scene.features)
+            self.assertNotIn('raster-shading', scene.features)
+            self.assertNotIn('image', scene.features)
 
-    def test_native_features_distinguish_images_gpu_gradients_and_cpu_pattern_capture(self):
+    def test_native_features_distinguish_images_gradients_and_vector_patterns(self):
         for name in ('repeated_image_pdf_bytes', 'linear_gradient_pdf_bytes',
                      'radial_gradient_pdf_bytes', 'image_mask_pdf_bytes', 'tiling_pattern_pdf_bytes'):
             with self.subTest(name=name), pymupdf.open(stream=getattr(fixtures, name)(), filetype='pdf') as doc:
@@ -69,10 +108,9 @@ class NativeSceneCompilerTests(unittest.TestCase):
                 self.assertTrue(scene.supported, scene.reason)
                 self.assertNotIn('raster-shading', scene.features)
                 self.assertNotIn('cpu-island', scene.features)
+                self.assertNotIn('raster-pattern', scene.features)
                 if name == 'tiling_pattern_pdf_bytes':
-                    self.assertIn('raster-pattern', scene.features)
-                else:
-                    self.assertNotIn('raster-pattern', scene.features)
+                    self.assertNotIn('image', scene.features)
                 if 'gradient' in name:
                     self.assertIn('vector-shading', scene.features)
                 elif name == 'repeated_image_pdf_bytes':
@@ -119,7 +157,8 @@ class NativeSceneCompilerTests(unittest.TestCase):
             doc[0].insert_text((20,40),'VECTOR',fontsize=20)
             full=compile_page(doc[0],16.)
             cropped=compile_page(doc[0],16.,(40.,40.,60.,60.))
-            self.assertLess(cropped.image_bytes,full.image_bytes)
+            self.assertEqual(cropped.image_bytes,0)
+            self.assertEqual(full.image_bytes,0)
             self.assertGreater(cropped.resource_count,1)
             self.assertLessEqual(full.image_bytes,64*1024*1024)
 
@@ -129,7 +168,8 @@ class NativeSceneCompilerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);source=root/'page.pdf';result=root/'scene'
             source.write_bytes(fixtures.soft_mask_pdf_bytes())
-            with patch.object(reference,'_vector_page_from_pymupdf',side_effect=AssertionError):
+            with patch.object(reference,'_vector_page_from_pymupdf',side_effect=AssertionError), \
+                    patch('pdfeditor.scene_disk_cache._limit',return_value=0):
                 self.assertEqual(main([str(source),str(result),'--base-scene',str(root/'absent')]),0)
                 scene=pickle.loads(result.read_bytes())
                 self.assertTrue(scene.supported,scene.reason)
@@ -163,11 +203,12 @@ class NativeSceneCompilerTests(unittest.TestCase):
                 plan_native_scene(data,(0.,0.,100.,100.))
         with self.assertRaises(ValueError):compile_native_scene(b'bad')
 
-    def test_cmyk_transparency_keeps_cpu_reference_fallback(self):
+    def test_cmyk_transparency_uses_gpu_rgb_approximation(self):
         with pymupdf.open(stream=fixtures.cmyk_group_pdf_bytes(alpha=.5),filetype='pdf') as doc:
             scene=compile_vector_page(doc[0])
-            self.assertFalse(scene.supported)
-            self.assertIn('CMYK transparency group',scene.reason)
+            self.assertTrue(scene.supported,scene.reason)
+            self.assertIn('rgb-transparency-approximation',scene.features)
+            self.assertNotIn('cpu-island',scene.features)
 
     def test_opaque_packet_parallel_transfer_is_lossless(self):
         from pdfeditor.scene_transfer import dumps

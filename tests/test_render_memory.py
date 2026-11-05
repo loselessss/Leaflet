@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 from collections import OrderedDict
 
-from pdfeditor.render_memory import MIB, policy
+from pdfeditor.render_memory import MIB, policy, vector_gpu_budget
 from pdfeditor.core import Document, _gpu_scene_cost
 from pdfeditor.gpu_raster import VectorPage, VectorPath
 
@@ -13,8 +13,18 @@ class RenderMemoryTests(unittest.TestCase):
         high = policy(32 * 1024 * MIB, 16 * 1024 * MIB)
         self.assertGreater(high.scene_bytes, low.scene_bytes)
         self.assertGreater(high.prefetch_pages, low.prefetch_pages)
-        self.assertLessEqual(high.scene_bytes, 1024 * MIB)
+        self.assertLessEqual(high.scene_bytes, 2048 * MIB)
         self.assertEqual(policy(32 * 1024 * MIB, 256 * MIB).prefetch_pages, 0)
+
+    def test_user_limit_is_a_ceiling_and_memory_pressure_can_reduce_it(self):
+        self.assertEqual(policy(32*1024*MIB, 16*1024*MIB, 256).scene_bytes, 256*MIB)
+        self.assertEqual(policy(32*1024*MIB, 256*MIB, 2048).scene_bytes, 64*MIB)
+
+    def test_gpu_cache_reserves_vram_for_composition_and_active_pages(self):
+        self.assertEqual(vector_gpu_budget(1024*MIB, None), 512*MIB)
+        self.assertEqual(vector_gpu_budget(1024*MIB, (512*MIB, 128*MIB)), 128*MIB)
+        self.assertEqual(vector_gpu_budget(1024*MIB, (512*MIB, 500*MIB)), 6*MIB)
+        self.assertEqual(vector_gpu_budget(1024*MIB, (512*MIB, 600*MIB)), 0)
 
     def test_speculative_result_cannot_evict_current_scene(self):
         doc = Document.__new__(Document)

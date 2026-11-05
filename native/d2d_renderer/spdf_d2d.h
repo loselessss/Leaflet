@@ -9,8 +9,12 @@
 #define SPDF_D2D_API extern "C" __declspec(dllimport)
 #endif
 
-constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 24;
+constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 26;
 constexpr std::uint32_t SPDF_D2D_ADAPTER_NAME_LENGTH = 128;
+
+// Optional additive query; the existing scene ABI and info layout are unchanged.
+SPDF_D2D_API std::int32_t spdf_d2d_video_memory(
+    void* surface, std::uint64_t* budget, std::uint64_t* usage) noexcept;
 
 enum SpdfD2DDriver : std::uint32_t {
     SPDF_D2D_DRIVER_NONE = 0,
@@ -74,6 +78,10 @@ enum SpdfD2DSceneCommandType : std::uint32_t {
     SPDF_D2D_SCENE_RADIAL_GRADIENT = 18,
     SPDF_D2D_SCENE_RECT_CLIP_PUSH = 19,
     SPDF_D2D_SCENE_RECT_CLIP_POP = 20,
+    SPDF_D2D_SCENE_MESH = 21,
+    SPDF_D2D_SCENE_BACKDROP_BITMAP = 22,
+    SPDF_D2D_SCENE_COVERAGE_BEGIN = 23,
+    SPDF_D2D_SCENE_COVERAGE_END = 24,
 };
 
 constexpr std::uint32_t SPDF_D2D_SCENE_HAS_TRANSFORM = 1;

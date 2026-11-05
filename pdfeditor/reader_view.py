@@ -20,6 +20,7 @@ from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap,
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidget
 
 from . import settings
+from .theme import reader_background
 from .d2d_backend import D2DSurface, probe_d2d_backend
 from .reader_prefetch import ReaderPrefetchMixin
 from .wheel_pan import pan_wheel_event, wheel_scroll_delta
@@ -71,11 +72,11 @@ def _axis_aligned_clip_rect(item):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def opengl_allowed():
+def opengl_allowed(render_mode=None):
     return (os.name == "nt" and
             os.environ.get("QT_QPA_PLATFORM", "").lower() not in ("offscreen", "minimal") and
             os.environ.get("SPDF_DISABLE_GPU", "").lower() not in ("1", "true", "yes") and
-            settings.render_backend() != "cpu")
+            (render_mode if render_mode is not None else settings.render_backend()) != "cpu")
 
 
 class _ReaderCanvas(PageCanvas):
@@ -183,9 +184,16 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._sharp_poll_timer.setInterval(30)
         self._sharp_poll_timer.timeout.connect(self._poll_sharp_refine)
         self._sharp_attempted = {}
+        self._sharp_pending_key = None
         self.canvas = _ReaderCanvas(self)
         enable_opengl = opengl_allowed() if use_opengl is None else use_opengl
         render_mode = settings.render_backend() if use_opengl is None else "auto"
+        self._configure_render_backend(render_mode, enable_opengl)
+        self.canvas.pan_requested.connect(self._pan_canvas)
+        self.horizontalScrollBar().valueChanged.connect(self._viewport_moved)
+        self.verticalScrollBar().valueChanged.connect(self._viewport_moved)
+
+    def _configure_render_backend(self, render_mode, enable_opengl):
         self._render_mode = render_mode
         d2d = probe_d2d_backend() if enable_opengl else None
         self._backend_failure = (d2d.reason if d2d is not None and
@@ -193,6 +201,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._d2d_requested = bool(
             d2d is not None and d2d.available and
             (render_mode != "gpu" or d2d.driver == "hardware"))
+        if render_mode == "gpu" and not self._d2d_requested and not self._backend_failure:
+            self._backend_failure = "Direct2D hardware rendering is unavailable"
         if self._d2d_requested:
             viewport = QWidget()
             viewport.setAttribute(Qt.WA_NativeWindow)
@@ -206,12 +216,48 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             except (RuntimeError, ImportError):
                 self._gpu_surface = None
                 self.setViewport(QWidget())
+        else:
+            self.setViewport(QWidget())
         self.viewport().setObjectName("documentViewportSurface")
         self.setMouseTracking(True)
         self.canvas.refresh_cursor()
-        self.canvas.pan_requested.connect(self._pan_canvas)
-        self.horizontalScrollBar().valueChanged.connect(self._viewport_moved)
-        self.verticalScrollBar().valueChanged.connect(self._viewport_moved)
+
+    def set_render_backend(self, mode):
+        """Replace the display surface without reopening or modifying the PDF."""
+        if mode not in settings.RENDER_BACKENDS:
+            raise ValueError("unsupported display renderer")
+        center = self.mapToScene(self.viewport().rect().center())
+        document = self._document
+        pages = tuple(self._page_sizes)
+        active = self.canvas._active_page
+        self.stop_rendering()
+        self._vector_refine_attempted.clear()
+        self._prefetch_attempted.clear()
+        self._prefetch_failures.clear()
+        self._updating = True
+        try:
+            self._release_d2d_surface()
+            self._gpu_surface = None
+            self._configure_render_backend(mode, opengl_allowed(mode))
+        finally:
+            self._updating = False
+        if document is not None:
+            self.render_document(document, pages, active)
+        self._updating = True
+        try:
+            self.centerOn(center)
+            actual = self.mapToScene(self.viewport().rect().center())
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() + round(center.x()-actual.x()))
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() + round(center.y()-actual.y()))
+        finally:
+            self._updating = False
+        if self._gpu_surface is not None:
+            QTimer.singleShot(0, self._verify_gpu)
+        self.viewport().update()
+        self._notify_render_device()
+        self.viewport_changed.emit()
 
     @property
     def composition_backend(self):
@@ -784,6 +830,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         if cached is not None and cached[0] is scene and \
                 all(not path.closed for path in cached[2]) and \
                 (cached[3] is None or not cached[3].closed):
+            self._d2d_vector_paths.pop(page)
+            self._d2d_vector_paths[page] = cached
             return cached[1]
         if cached is not None:
             if cached[3] is not None:
@@ -791,7 +839,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             for path in cached[2]:
                 path.close()
         if scene.compiled_packet:
-            width, height = self._page_sizes[page]
+            width, height = (self._page_sizes[page] if page in self._page_sizes
+                             else self._document.page_size(page))
             retained = self._d2d_surface.create_rust_scene(scene, width, height)
             draws = range(scene.command_count)
             self._d2d_vector_paths[page] = (scene, draws, (), retained)
@@ -1004,17 +1053,28 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._d2d_vector_paths[page] = (scene, draws, resources, retained)
         return draws
 
+    def _retained_page_transform(self, page):
+        matrix = self._page_transforms[page]
+        origin = self.mapFromScene(QPointF(0, 0))
+        ratio = max(1.0, self.viewport().devicePixelRatioF())
+        # Cache phases stay identical across one-pixel scroll steps on HiDPI.
+        return (matrix.m11(), matrix.m12(), matrix.m21(), matrix.m22(),
+                round((matrix.dx() + origin.x()) * ratio) / ratio,
+                round((matrix.dy() + origin.y()) * ratio) / ratio)
+
+    def apply_render_cache_settings(self):
+        from .render_memory import invalidate_render_memory
+        invalidate_render_memory()
+        if self._document is not None:
+            self._document.trim_gpu_scene_memory(self._page_sizes)
+            self._trim_nearby_native_pages()
+
     def _draw_vector_page(self, page, scene):
         draws = self._native_vector_draws(page, scene)
         page_transform = self._page_transforms[page]
         retained = self._d2d_vector_paths[page][3]
         if retained is not None:
-            viewport_origin = self.mapFromScene(QPointF(0, 0))
-            transform = (
-                page_transform.m11(), page_transform.m12(),
-                page_transform.m21(), page_transform.m22(),
-                page_transform.dx() + viewport_origin.x(),
-                page_transform.dy() + viewport_origin.y())
+            transform = self._retained_page_transform(page)
             if self._zoom_animation_timer.isActive():
                 if self._d2d_surface.draw_scene_preview(retained, transform):
                     return
@@ -1028,6 +1088,28 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     return
             elif self._d2d_surface.draw_sharp_scene(retained, transform):
                 return
+            if not self._zoom_animation_timer.isActive() and len(draws) >= 256:
+                key = (retained, transform, self._d2d_size)
+                fresh = self._sharp_attempted.get(page) != key
+                waiting = self._sharp_pending_key == (page, key)
+                if fresh or waiting:
+                    # Render the final-scale atlas once in the GPU worker.
+                    # Replaying a coarse page here would delay that job and
+                    # repeat the poster's expensive transparency composition.
+                    preview = self._d2d_surface.draw_scene_preview(retained, transform)
+                    if not preview and {"gpu-mask", "gpu-backdrop",
+                            "rgb-transparency-approximation", "cpu-island"}.intersection(scene.features):
+                        if page in self._previews:
+                            width, height = self._page_sizes[page]
+                            self._set_page_transform(page_transform)
+                            bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
+                            self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+                            preview = True
+                    if preview:
+                        self._d2d_surface.draw_sharp_partial(retained, transform)
+                        if fresh and not self._sharp_poll_timer.isActive():
+                            self._sharp_refine_timer.start(0)
+                        return
             self._d2d_surface.draw_scene(retained, transform, reuse_groups=True)
             if not self._zoom_animation_timer.isActive():
                 self._d2d_surface.draw_sharp_partial(retained, transform)
@@ -1151,7 +1233,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 round(self.viewport().height() * ratio), 96.0 * ratio)
             self._d2d_size = size
         exposed = self._visible_scene_rect()
-        self._d2d_surface.begin_frame(0xffe8e8e8)
+        self._d2d_surface.begin_frame(reader_background().rgba())
         rasterized = {}
         for page, preview, rect in self.canvas._pages:
             if not rect.intersects(exposed):
@@ -1219,12 +1301,19 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._notify_render_device()
 
     def render_document(self, document, pages, active_page):
-        self.stop_rendering()
+        pages = list(pages)
+        job = self._vector_refine_job
+        promote = bool(job and job.get("document") is document and
+            job.get("generation") == document.render_generation and job.get("page") in pages)
+        self.stop_rendering(keep_vector_refine_worker=promote)
+        if promote:
+            job["speculative"] = False
         self._begin_page_switch(document, active_page)
         self._gpu_initial_frame_pending = self._d2d_requested
         self._rasterized_pages.clear()
         changed = document is not self._document
-        if changed:
+        generation = document.render_generation
+        if changed or getattr(self, "_document_generation", None) != generation:
             self._vector_refine_attempted.clear()
             self._prefetch_attempted.clear()
             if (self._document is None or
@@ -1246,7 +1335,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._d2d_vector_paths.clear()
             self._clear_tiles()
         self._document = document
-        pages = list(pages)
+        self._document_generation = generation
         self._previews = {p: pix for p, pix in self._previews.items() if p in pages}
         for page in tuple(self._d2d_previews):
             if page not in pages:
@@ -1262,7 +1351,6 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 self._previews[page] = QPixmap.fromImage(image)
         # Document invalidation owns the scene cache. Ask it on every refresh
         # so an edit on the same page cannot leave stale native geometry here.
-        self._vector_viewport_pages.clear()
         self._vector_pages = {
             page: self._gpu_vector_page(document, page) for page in pages
         } if self._d2d_requested else {}
@@ -1388,26 +1476,26 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def _cancel_sharp_refine(self):
         self._sharp_refine_timer.stop()
         self._sharp_poll_timer.stop()
+        self._sharp_pending_key = None
+        self._sharp_attempted.clear()
         if self._d2d_surface is not None:
             cancel = getattr(self._d2d_surface, "cancel_sharp", None)
             if cancel is not None:
                 cancel()
 
     def _start_sharp_refine(self):
+        self._sharp_refine_timer.stop()
         if self._d2d_surface is None or self._document is None or \
                 not self.isVisible() or self._zoom_animation_timer.isActive():
             return
         exposed = self._visible_scene_rect()
-        origin = self.mapFromScene(QPointF(0, 0))
         visible = {page for page, _preview, rect in self.canvas._pages if rect.intersects(exposed)}
         self._sharp_attempted = {p: key for p, key in self._sharp_attempted.items() if p in visible}
         for page in sorted(visible):
             cached = self._d2d_vector_paths.get(page)
             if cached is None or cached[3] is None:
                 continue
-            matrix = self._page_transforms[page]
-            transform = (matrix.m11(), matrix.m12(), matrix.m21(), matrix.m22(),
-                         matrix.dx() + origin.x(), matrix.dy() + origin.y())
+            transform = self._retained_page_transform(page)
             retained = cached[3]
             key = (retained, transform, self._d2d_size)
             if self._sharp_attempted.get(page) == key:
@@ -1416,10 +1504,15 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             try:
                 pending = self._d2d_surface.request_sharp_scene(retained, transform)
             except (OSError, RuntimeError, ValueError):
+                self.viewport().update()
                 continue  # Keep the fast frame on optional refinement failure.
             if pending:
+                self._sharp_pending_key = (page, key)
                 self._sharp_poll_timer.start()
                 return
+            # A declined optional job must release the temporary preview and
+            # allow the normal live-vector path on the next paint.
+            self.viewport().update()
 
     def _poll_sharp_refine(self):
         if self._d2d_surface is None:
@@ -1434,8 +1527,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 self.viewport().update()
             return
         self._sharp_poll_timer.stop()
-        if status == 2:
-            self.viewport().update()
+        self._sharp_pending_key = None
+        self.viewport().update()
         self._sharp_refine_timer.start(0)
 
     def _visible_scene_rect(self):
@@ -1534,7 +1627,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._tile_timer.start(1)
 
     def drawBackground(self, painter, exposed):
-        painter.fillRect(exposed, QColor("#e8e8e8"))
+        painter.fillRect(exposed, reader_background())
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         for page, preview, rect in self.canvas._pages:
             if not rect.intersects(exposed):

@@ -1,5 +1,10 @@
 # Leaflet 사용 안내
 
+첫 화면의 **읽기 모드 / 편집 모드** 표시로 현재 작업 창을 확인할 수 있습니다.
+시작 메뉴의 **Leaflet**은 읽기 모드, **Leaflet 편집기**는 편집 모드로 열립니다.
+보기 → 화면 렌더러에서 자동·GPU·CPU를 선택하고 벡터 페이지 캐시 용량을 조절할 수 있습니다.
+렌더러와 캐시 용량 변경은 즉시 반영됩니다. 렌더러를 바꿔도 현재 페이지·배율·보고 있던 위치와 미저장 변경 사항은 유지됩니다.
+
 [개인정보 처리방침 / Privacy policy](../../PRIVACY.md)
 
 [English](GUIDE.md) | 한국어
@@ -30,7 +35,7 @@ EPS를 열려면 PC에 [Ghostscript](https://www.ghostscript.com/releases/gsdnld
 최신 일반 설치파일은 [GitHub 릴리스](https://github.com/loselessss/Leaflet/releases/latest)에서도 받을 수 있습니다.
 
 시작 메뉴의 **Leaflet** 또는 **Leaflet 편집기**로 실행합니다.
-리더의 **편집 모드**, 편집기의 **리더로 돌아가기** 버튼으로 모드를 전환합니다.
+리더의 **편집 → 편집 창에서 열기**(Ctrl+E), 편집기의 **리더로 돌아가기** 버튼으로 모드를 전환합니다.
 자세한 사용법은 프로그램에서 **F1**을 누르면 볼 수 있습니다.
 
 ## 주요 기능

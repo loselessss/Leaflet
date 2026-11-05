@@ -1114,18 +1114,16 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.assertEqual(tab._undo_stack, [])
         self.assertFalse(tab._dirty)
 
-    def test_reader_prominent_button_and_embedded_behavior(self):
+    def test_reader_editor_entry_stays_in_menu_and_embedded_behavior(self):
         reader = self.module.new_window(str(self.path), workspace_mode="reader")
         self.settle()
         reading = reader._tabs.currentWidget()
-        button = reading._editor_mode_button
-        self.assertEqual(button.text(), "Edit mode")
-        self.assertFalse(button.property("accent"))
-        self.assertGreaterEqual(button.height(), 34)
-        self.assertTrue(reading._interaction_toolbar.isAncestorOf(button))
+        self.assertFalse(hasattr(reading, "_editor_mode_button"))
+        self.assertEqual(reading._open_editor_act.shortcut().toString(), "Ctrl+E")
+        self.assertNotIn(reading._open_editor_act, reading._interaction_toolbar.actions())
         self.assertIsNone(reading._workspace_header)
         with patch.object(reader, "open_editor") as launch:
-            button.click()
+            reading._open_editor_act.trigger()
         launch.assert_called_once_with(reading)
         embedded = self.module.new_window(str(self.path))
         self.settle()

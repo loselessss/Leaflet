@@ -51,12 +51,12 @@ struct Program {
     }
     void load(Reader& reader,float width,float height){
         const auto count=reader.count(1048576);resources.reserve(count);size_t total=0,images=0;
-        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>1)throw std::runtime_error("invalid resource type");
-            resource.size=reader.count(128*1024*1024);resource.bytes=reader.take(resource.size);
-            total+=resource.size;if(total>128*1024*1024)throw std::runtime_error("resource budget");
+        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>2)throw std::runtime_error("invalid resource type");
+            resource.size=reader.count(256*1024*1024);resource.bytes=reader.take(resource.size);
+            total+=resource.size;if(total>256*1024*1024)throw std::runtime_error("resource budget");
             if(resource.kind==1){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();resource.stride=reader.value<uint32_t>();
                 if(resource.w==0||resource.h==0||uint64_t(resource.w)*4>resource.stride||uint64_t(resource.h)*resource.stride!=resource.size)throw std::runtime_error("invalid image");
-                images+=resource.size;if(images>64*1024*1024)throw std::runtime_error("image budget");}
+                images+=resource.size;if(images>128*1024*1024)throw std::runtime_error("image budget");}
             resources.push_back(resource);
         }
         SpdfD2DSceneCommand clear{};clear.type=1;clear.values[2]=width;clear.values[3]=height;clear.uint_values[0]=0xffffffff;commands.push_back(clear);
@@ -82,6 +82,19 @@ struct Program {
                 std::vector<uint32_t> indices(n);for(size_t j=0;j<n;++j){indices[j]=reader.value<uint32_t>();std::array<float,6> values{};for(auto& v:values)v=reader.number();std::memcpy(&matrices[j],values.data(),sizeof(matrices[j]));}
                 command.uint_values[0]=reader.value<uint32_t>();const bool even=reader.boolean();for(size_t j=0;j<n;++j)sources[j]=path(indices[j],even);
                 void* group=nullptr;check(spdf_d2d_create_geometry_group(surface,sources.data(),matrices.data(),static_cast<uint32_t>(n),even?1u:0u,&group));paths.push_back(group);command.resource=group;command.type=15;break;}
+            case 12:{command.resource=bitmap(reader.value<uint32_t>());command.type=22;command.values[2]=1;command.values[3]=1;
+                command.uint_values[0]=reader.boolean()?1u:0u;break;}
+            case 13:{const auto& mesh=get(reader.value<uint32_t>(),2);if(mesh.size%72||mesh.size>65536*72)throw std::runtime_error("mesh size");
+                command.type=21;command.data=mesh.bytes;command.data_count=static_cast<uint32_t>(mesh.size/4);
+                Reader vertices{mesh.bytes,mesh.size};bool first=true;
+                while(vertices.left){const auto x=vertices.value<float>(),y=vertices.value<float>();vertices.take(16);
+                    if(!std::isfinite(x)||!std::isfinite(y))throw std::runtime_error("mesh bounds");
+                    if(first){command.values[0]=command.values[2]=x;command.values[1]=command.values[3]=y;first=false;}
+                    else{command.values[0]=(std::min)(command.values[0],x);command.values[1]=(std::min)(command.values[1],y);
+                         command.values[2]=(std::max)(command.values[2],x);command.values[3]=(std::max)(command.values[3],y);}}
+                break;}
+            case 14:command.type=23;break;
+            case 15:command.type=24;break;
             default:throw std::runtime_error("invalid operation");
             }
             std::array<float,6> matrix{};for(auto& value:matrix)value=reader.number();command.flags=1;
@@ -104,7 +117,7 @@ struct Program {
 }
 
 extern "C" __declspec(dllexport) int32_t spdf_d2d_import_rust_scene(void* surface,const void* bytes,size_t size,float width,float height,void** output) noexcept {
-    if(!surface||!bytes||!output||size<8||size>256*1024*1024||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0)return static_cast<int32_t>(E_INVALIDARG);
+    if(!surface||!bytes||!output||size<8||size>512*1024*1024||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0)return static_cast<int32_t>(E_INVALIDARG);
     *output=nullptr;
     try {
         leaflet_rust_upload::Reader reader{static_cast<const uint8_t*>(bytes),size};

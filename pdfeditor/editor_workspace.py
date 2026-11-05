@@ -88,24 +88,13 @@ class EditorWorkspaceMixin:
             self.view.object_controller = self._object_controller
         return viewer
 
-    def add_editor_mode_button(self, tool_bar):
-        self._editor_mode_button = self._mode_button(
-            localize("Edit mode", "편집 모드"), "edit")
-        self._editor_mode_button.setObjectName("openEditorModeButton")
-        self._editor_mode_button.setToolTip(localize(
-            "Open the page organizer in an editor window (Ctrl+E)",
-            "편집 창의 페이지 구성으로 열기 (Ctrl+E)"))
-        self._editor_mode_button.clicked.connect(lambda: self._shell.open_editor(self))
-        tool_bar.addWidget(self._editor_mode_button)
-        tool_bar.addSeparator()
-
     @staticmethod
     def _mode_button(text, icon, *, accent=False):
         button = QPushButton(text)
         button.setMinimumHeight(34)
         button.setIconSize(QSize(20, 20))
         button.setProperty("accent", accent)
-        button.setIcon(fluent_icon(icon, "#ffffff" if accent else "#242424"))
+        button.setIcon(fluent_icon(icon, "#ffffff" if accent else None))
         return button
 
     def is_editor_overview(self):

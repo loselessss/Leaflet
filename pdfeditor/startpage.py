@@ -65,7 +65,7 @@ class StartPage(QWidget):
     lists_changed = pyqtSignal()  # 즐겨찾기/최근 목록이 바뀜 (메뉴 갱신용)
     back_to_doc = pyqtSignal()    # 열어둔 문서로 돌아가기
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, workspace_mode=None):
         super().__init__(parent)
         self.setObjectName("startPage")
         root = QVBoxLayout(self)
@@ -79,6 +79,14 @@ class StartPage(QWidget):
         f.setPointSize(22)
         f.setBold(True)
         title.setFont(f)
+        self.mode_label = QLabel(localize("Reader mode", "읽기 모드")
+                                 if workspace_mode == "reader" else localize("Editor mode", "편집 모드"))
+        self.mode_label.setObjectName("startWorkspaceMode")
+        font = self.mode_label.font()
+        font.setPointSize(14)
+        font.setBold(True)
+        self.mode_label.setFont(font)
+        self.mode_label.setVisible(workspace_mode in ("reader", "editor"))
         ver = QLabel(localize(
             "v%s — PDF reading · search · annotations · text editing · page organization · OCR",
             "v%s — PDF 읽기 · 검색 · 주석 · 텍스트 편집 · 페이지 구성 · OCR") % APP_VERSION)
@@ -87,6 +95,12 @@ class StartPage(QWidget):
         purpose = QLabel(localize(
             "Read and annotate in Reader; edit text, organize pages and recognize scanned text in Editor.",
             "리더에서 읽고 메모하세요. 편집기에서 글자와 페이지를 수정하고, OCR로 스캔 문자를 인식하세요."))
+        if workspace_mode == "reader":
+            purpose.setText(localize("Read, search and annotate PDFs in Reader mode.",
+                                    "현재 읽기 모드입니다. PDF를 읽고 검색하거나 주석을 추가할 수 있습니다."))
+        elif workspace_mode == "editor":
+            purpose.setText(localize("Edit text, organize pages and run OCR in Editor mode.",
+                                    "현재 편집 모드입니다. 글자·페이지를 수정하거나 OCR을 실행할 수 있습니다."))
         purpose.setObjectName("subtitle")
         purpose.setWordWrap(True)
 
@@ -104,7 +118,12 @@ class StartPage(QWidget):
         self._back_btn.clicked.connect(lambda _c=False: self.back_to_doc.emit())
         self._back_btn.hide()
 
-        root.addWidget(title)
+        title_row = QHBoxLayout()
+        title_row.addWidget(title)
+        title_row.addSpacing(16)
+        title_row.addWidget(self.mode_label)
+        title_row.addStretch(1)
+        root.addLayout(title_row)
         root.addWidget(ver)
         root.addWidget(purpose)
         root.addSpacing(8)

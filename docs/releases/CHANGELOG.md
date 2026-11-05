@@ -1,12 +1,22 @@
 # Changelog
 
-## Unreleased (1.38.0)
+## 1.38.0 - 2026-11-05
 
 ### 새 기능
 
 - Copy selected text or the current page in AI-assisted reading order (Ctrl+Shift+C). Analysis runs locally and releases its model memory when finished.
 
 ### 개선
+
+- Switch CPU/GPU display immediately from the View menu, preserving the current document, zoom, reading position and unsaved changes.
+- Add display renderer selection and a vector page cache limit to the View menu. Retain recently viewed GPU drawing resources and prepare nearby pages without creating page-image caches.
+- Show Reader or Editor mode clearly on the home screen.
+- Reduce redundant opacity composition for single gradients in complex illustrations.
+- Reduce blur after zooming complex posters by preparing sharp GPU tiles immediately. Keep small knockout illustrations on the GPU when their command count is low.
+- Allow larger GPU pages with a higher, bounded memory budget. Prevent unusually complex glyphs, deeply nested patterns, empty gradients and very wide images from unnecessarily switching the entire page to CPU display.
+- Draw more transparency, patterned fills, mesh gradients, Type3 glyphs and dashed hairlines on the GPU, reducing CPU bitmap preparation while zooming. CMYK transparency uses an RGB approximation; CPU mode retains the reference appearance.
+- Follow Windows light/dark mode for the interface, title bars and icons while keeping PDF colors unchanged.
+- Keep the editor entry in the Edit menu and Ctrl+E shortcut, simplifying the reader toolbar.
 
 - Render simple Type3 vector fonts directly on the GPU, keeping text sharper while zooming and reducing high-zoom memory use.
 
@@ -18,6 +28,7 @@
 
 ### 버그 수정
 
+- Keep Reader and Editor shortcuts distinct in the Windows Start menu. Create desktop shortcuts as a pair and provide separate Reader/Editor entry points in Store packages.
 - Fix installed OCR failing to initialize because of an outdated bundled runtime.
 - Preserve required Python SSL runtime data so installed OCR can download its models.
 

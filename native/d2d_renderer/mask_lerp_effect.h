@@ -6,17 +6,20 @@
 #include <d2d1_1.h>
 #include <d2d1effectauthor.h>
 #include "spdf_mask_lerp_shader.h"
+#include "leaflet_backdrop_source_shader.h"
 
 namespace {
 
 constexpr GUID CLSID_SpdfMaskLerp = {0x4a84aca5,0x6d34,0x45ad,{0x9e,0x78,0x23,0x72,0xa1,0x13,0x50,0x2a}};
 constexpr GUID GUID_SpdfMaskLerpShader = {0x71410267,0xb05b,0x4f80,{0x9d,0xbc,0x64,0x20,0xe1,0x3f,0x2b,0x4d}};
+constexpr GUID CLSID_LeafletBackdropSource = {0x7d59afc8,0x130d,0x426b,{0x9b,0xae,0xee,0xd6,0x22,0x8c,0x73,0xb1}};
+constexpr GUID GUID_LeafletBackdropShader = {0x335e47b0,0x3c88,0x4a42,{0x80,0xb1,0x03,0xcc,0x34,0x29,0x6c,0x09}};
 
-class MaskLerpEffect final : public ID2D1EffectImpl, public ID2D1DrawTransform {
+template<bool Recover> class ThreeInputEffect final : public ID2D1EffectImpl, public ID2D1DrawTransform {
 public:
     static HRESULT CALLBACK Create(IUnknown** output) noexcept {
         if (!output) return E_POINTER;
-        auto value = new (std::nothrow) MaskLerpEffect();
+        auto value = new (std::nothrow) ThreeInputEffect();
         *output = value ? static_cast<ID2D1EffectImpl*>(value) : nullptr;
         return value ? S_OK : E_OUTOFMEMORY;
     }
@@ -29,7 +32,7 @@ public:
   <Property name="Description" type="string" value="Premultiplied backdrop/coverage interpolation"/>
   <Inputs><Input name="Backdrop"/><Input name="Source"/><Input name="Mask"/></Inputs>
 </Effect>)xml";
-        return factory->RegisterEffectFromString(CLSID_SpdfMaskLerp, xml, nullptr, 0, Create);
+        return factory->RegisterEffectFromString(Recover?CLSID_LeafletBackdropSource:CLSID_SpdfMaskLerp, xml, nullptr, 0, Create);
     }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** output) override {
         if (!output) return E_POINTER;
@@ -51,9 +54,10 @@ public:
     }
     HRESULT STDMETHODCALLTYPE Initialize(ID2D1EffectContext* context, ID2D1TransformGraph* graph) override {
         auto result = S_OK;
-        if (!context->IsShaderLoaded(GUID_SpdfMaskLerpShader)) {
-            result = context->LoadPixelShader(GUID_SpdfMaskLerpShader, spdf_mask_lerp_shader,
-                static_cast<UINT32>(sizeof(spdf_mask_lerp_shader)));
+        const auto& shader=Recover?GUID_LeafletBackdropShader:GUID_SpdfMaskLerpShader;
+        if (!context->IsShaderLoaded(shader)) {
+            if constexpr(Recover)result=context->LoadPixelShader(shader,leaflet_backdrop_source_shader,static_cast<UINT32>(sizeof(leaflet_backdrop_source_shader)));
+            else result = context->LoadPixelShader(shader, spdf_mask_lerp_shader,static_cast<UINT32>(sizeof(spdf_mask_lerp_shader)));
         }
         if (SUCCEEDED(result)) result = graph->SetSingleTransformNode(this);
         return result;
@@ -66,7 +70,7 @@ public:
             const auto result = info->SetInputDescription(i, {D2D1_FILTER_MIN_MAG_MIP_POINT, 1});
             if (FAILED(result)) return result;
         }
-        return info->SetPixelShader(GUID_SpdfMaskLerpShader);
+        return info->SetPixelShader(Recover?GUID_LeafletBackdropShader:GUID_SpdfMaskLerpShader);
     }
     HRESULT STDMETHODCALLTYPE MapOutputRectToInputRects(const D2D1_RECT_L* output,
             D2D1_RECT_L* inputs, UINT32 count) const override {
@@ -96,5 +100,7 @@ public:
 private:
     std::atomic<ULONG> references_{1};
 };
+using MaskLerpEffect=ThreeInputEffect<false>;
+using BackdropSourceEffect=ThreeInputEffect<true>;
 
 } // namespace

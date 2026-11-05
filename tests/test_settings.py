@@ -117,6 +117,16 @@ class AutomaticUpdateScheduleTests(unittest.TestCase):
         with patch.object(settings, "_load", return_value={"render_backend": "bad"}):
             self.assertEqual(settings.render_backend(), "auto")
 
+    def test_vector_page_cache_defaults_to_auto_and_validates_sizes(self):
+        self.assertEqual(settings.render_cache_mb(), 0)
+        settings.set_render_cache_mb(2048)
+        self.assertEqual(settings.render_cache_mb(), 2048)
+        for value in (-1, True, "512", 8192):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                settings.set_render_cache_mb(value)
+        with patch.object(settings, '_load', return_value={'render_cache_mb': '2048'}):
+            self.assertEqual(settings.render_cache_mb(), 0)
+
     def test_object_snapping_defaults_on_and_persists(self):
         self.assertTrue(settings.object_snapping())
         settings.set_object_snapping(False)
