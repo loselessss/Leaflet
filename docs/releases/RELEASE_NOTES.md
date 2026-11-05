@@ -3,7 +3,7 @@
 ## 1.38.0 - 2026-11-05
 
 - Switch CPU/GPU display from the View menu without restarting or losing your place.
-- Zoom, pan and return to recent pages more smoothly. Adjust the vector page cache from the View menu.
+- Zoom, pan and return to recent pages more smoothly, avoiding duplicate rendering of complex illustrations after zooming. Adjust the vector page cache from the View menu.
 - Keep more text and complex illustrations sharp with GPU acceleration, including large images and transparent artwork.
 - Follow Windows light/dark mode and simplify the reader toolbar. Open editing tools from the Edit menu or Ctrl+E.
 - Open Reader and Editor from separate shortcuts and see the current mode on the home screen.

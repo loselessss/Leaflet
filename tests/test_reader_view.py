@@ -1211,6 +1211,59 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
 
+    def test_poster_renders_sharp_once_after_pending_image_replacement(self):
+        from dataclasses import replace
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=('gpu-mask', 'image-downsample'), raster_scale=1.)
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = False
+        surface.draw_scene_preview.return_value = True
+        surface.request_sharp_scene.return_value = True
+        self.view.preview_zoom(8.)
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        self.view._vector_refine_pages = [0]
+        with patch.object(self.view, '_native_vector_draws', return_value=range(300)):
+            # Both the queued and running preparation must avoid composing the
+            # lower-resolution images into an atlas that will be thrown away.
+            for running in (False, True):
+                if running:
+                    self.view._vector_refine_pages.clear()
+                    self.view._vector_refine_job = dict(document=self.doc,
+                        generation=self.doc.render_generation, page=0, scale=8.)
+                self.view._draw_vector_page(0, scene)
+                self.view._start_sharp_refine()
+                surface.draw_scene.assert_not_called()
+                surface.request_sharp_scene.assert_not_called()
+                self.assertNotIn(0, self.view._sharp_attempted)
+            # A replacement at the requested resolution starts one exact job.
+            self.view._vector_refine_job = None
+            scene = replace(scene, raster_scale=8.)
+            self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+            self.view._draw_vector_page(0, scene)
+            self.view._start_sharp_refine()
+            self.view._start_sharp_refine()
+            surface.request_sharp_scene.assert_called_once()
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
+    def test_failed_image_replacement_allows_sharp_lower_resolution_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True, features=('image-downsample',), raster_scale=1.)
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.request_sharp_scene.return_value = True
+        self.view.preview_zoom(8.)
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        self.view._vector_refine_pages.clear()
+        self.view._vector_refine_job = None
+        self.view._start_sharp_refine()
+        surface.request_sharp_scene.assert_called_once()
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
     def test_poster_failed_refinement_leaves_preview_and_replays_vectors(self):
         from pdfeditor.gpu_raster import VectorPage
         scene = VectorPage(True, features=('gpu-mask',))
@@ -1478,6 +1531,27 @@ class ReaderViewTests(unittest.TestCase):
         self.view._vector_pages[0] = scene
         self.view._finish_failed_vector_refine(0)
         self.assertIs(self.view._vector_pages[0], scene)
+
+    def test_failed_viewport_image_worker_repaints_previous_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self.view.zoom = 8.
+        previous = VectorPage(True, features=('image-downsample',), raster_scale=1.)
+        self.view._vector_pages[0] = previous
+        directory = tempfile.mkdtemp(prefix='spdf-worker-test-')
+        result = Path(directory) / 'scene.pickle'
+        result.write_bytes(pickle.dumps(VectorPage(False, reason='GPU image preparation failed')))
+        self.view._vector_refine_process = Mock(returncode=0, poll=Mock(return_value=0))
+        self.view._vector_refine_job = dict(document=self.doc,
+            generation=self.doc.render_generation, page=0, scale=8.,
+            viewport=self.view._gpu_visible_region(0, padded=True),
+            directory=directory, result=str(result), deadline=0)
+        self.view._vector_refine_attempted.add((self.doc.render_generation, 0, 8.,
+            self.view._vector_refine_job['viewport']))
+        with patch.object(self.view.viewport(), 'update') as update:
+            self.finish_worker_result()
+            update.assert_called_once()
+        self.assertIs(self.view._vector_pages[0], previous)
+        self.assertFalse(self.view._image_refinement_pending(0, previous))
 
     def test_zoom_does_not_cancel_running_scene_worker(self):
         process = Mock()

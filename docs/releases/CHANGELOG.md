@@ -28,6 +28,8 @@
 
 ### 버그 수정
 
+- Avoid rendering complex illustrations twice after zooming while higher-resolution images are still being prepared.
+- Fix release packaging tests on Windows accounts with short temporary-directory paths.
 - Keep Reader and Editor shortcuts distinct in the Windows Start menu. Create desktop shortcuts as a pair and provide separate Reader/Editor entry points in Store packages.
 - Fix installed OCR failing to initialize because of an outdated bundled runtime.
 - Preserve required Python SSL runtime data so installed OCR can download its models.

@@ -399,6 +399,18 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             return detail
         return self._vector_pages.get(page)
 
+    def _image_refinement_pending(self, page, scene):
+        if ("image-downsample" not in scene.features or
+                scene.raster_scale >= self._vector_raster_scale()):
+            return False
+        if page in self._vector_refine_pages:
+            return True
+        job = self._vector_refine_job
+        return bool(job and job["document"] is self._document and
+                    job["generation"] == self._document.render_generation and
+                    job["page"] == page and not job.get("speculative") and
+                    job["scale"] == self._vector_raster_scale())
+
     def _schedule_vector_refine(self, delay=VECTOR_SCENE_REFINE_DELAY_MS):
         remaining = self._vector_refine_timer.remainingTime()
         if remaining >= 0:
@@ -547,6 +559,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     self._finish_failed_vector_refine(
                         page, "GPU scene worker could not start: " + str(error))
                 self.render_failed.emit(str(error))
+                self.viewport().update()
             else:
                 self._schedule_page_prefetch()
             if self._vector_refine_pages:
@@ -668,10 +681,14 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 self._discard_native_vector_page(job["page"])
                 self._vector_pages[job["page"]] = scene
             self.viewport().update()
-        elif current and not usable and job.get("viewport") is None:
-            reason = (scene.reason if isinstance(scene, VectorPage) and scene.reason
-                      else failure_reason or "GPU scene worker returned invalid result")
-            self._finish_failed_vector_refine(job["page"], reason)
+        elif current and not usable:
+            if job.get("viewport") is None:
+                reason = (scene.reason if isinstance(scene, VectorPage) and scene.reason
+                          else failure_reason or "GPU scene worker returned invalid result")
+                self._finish_failed_vector_refine(job["page"], reason)
+            # A failed image replacement must also release the old scene for
+            # sharp rendering; otherwise it can remain a preview indefinitely.
+            self.viewport().update()
         if self._vector_refine_pages:
             self._vector_refine_timer.start(0)
 
@@ -1092,7 +1109,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 key = (retained, transform, self._d2d_size)
                 fresh = self._sharp_attempted.get(page) != key
                 waiting = self._sharp_pending_key == (page, key)
-                if fresh or waiting:
+                image_refining = self._image_refinement_pending(page, scene)
+                if fresh or waiting or image_refining:
                     # Render the final-scale atlas once in the GPU worker.
                     # Replaying a coarse page here would delay that job and
                     # repeat the poster's expensive transparency composition.
@@ -1107,7 +1125,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                             preview = True
                     if preview:
                         self._d2d_surface.draw_sharp_partial(retained, transform)
-                        if fresh and not self._sharp_poll_timer.isActive():
+                        if fresh and not image_refining and not self._sharp_poll_timer.isActive():
                             self._sharp_refine_timer.start(0)
                         return
             self._d2d_surface.draw_scene(retained, transform, reuse_groups=True)
@@ -1494,6 +1512,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         for page in sorted(visible):
             cached = self._d2d_vector_paths.get(page)
             if cached is None or cached[3] is None:
+                continue
+            if cached[0] is not None and self._image_refinement_pending(page, cached[0]):
                 continue
             transform = self._retained_page_transform(page)
             retained = cached[3]

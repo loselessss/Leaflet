@@ -22,7 +22,7 @@ class BuildPayloadTests(unittest.TestCase):
                 runtime_ssl_datas(module)
             certificate = source.with_name("codex-rejected-cas.pem")
             certificate.write_bytes(b"trust policy data")
-            self.assertEqual(runtime_ssl_datas(module), [(str(certificate), ".")])
+            self.assertEqual(runtime_ssl_datas(module), [(str(certificate.resolve()), ".")])
 
     def test_ocr_replaces_stale_runtime_and_rejects_missing_files(self):
         import tempfile
