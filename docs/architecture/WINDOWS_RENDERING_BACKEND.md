@@ -111,15 +111,15 @@
 
 ### 1.25.0 구현 이력
 
-구현 현황: sPDF 1.25.0에서 ABI v6 DLL을 독립 실행 리더·편집기의 실제 Qt HWND에 연결한다. Intel Iris Xe의 하드웨어 D3D feature level 11.1에서 D3D11/DXGI 장치, Direct2D device context, DirectWrite factory와 flip-model swap chain을 검증했다. PyMuPDF의 512px BGRA 타일, 페이지 회전 행렬, 검색·선택·편집 테두리를 Direct2D로 합성한다. 지원되는 페이지는 MuPDF가 CPU에서 해석한 선·사각형·베지어와 원래 글꼴 glyph 윤곽을 immutable Direct2D geometry 및 realization으로 만들어 상세 CPU 타일 없이 GPU 래스터화한다. CPU에서 디코딩한 배치 이미지와 색상 스텐실 마스크는 원래 PDF 행렬로 Direct2D가 확대·합성하며, 중첩된 벡터·텍스트 클리핑은 표시 순서대로 Direct2D layer에 적용한다. 모든 shading 유형은 제한된 고품질 이미지로 변환해 합성하고 일반 격리 투명도 그룹은 opacity layer로 처리한다. 숨김·닫기 때 네이티브 캐시를 해제하며 실패하면 같은 문서와 좌표를 유지한 채 Qt 표시로 전환한다.
+구현 현황: Leaflet 1.25.0에서 ABI v6 DLL을 독립 실행 리더·편집기의 실제 Qt HWND에 연결한다. Intel Iris Xe의 하드웨어 D3D feature level 11.1에서 D3D11/DXGI 장치, Direct2D device context, DirectWrite factory와 flip-model swap chain을 검증했다. PyMuPDF의 512px BGRA 타일, 페이지 회전 행렬, 검색·선택·편집 테두리를 Direct2D로 합성한다. 지원되는 페이지는 MuPDF가 CPU에서 해석한 선·사각형·베지어와 원래 글꼴 glyph 윤곽을 immutable Direct2D geometry 및 realization으로 만들어 상세 CPU 타일 없이 GPU 래스터화한다. CPU에서 디코딩한 배치 이미지와 색상 스텐실 마스크는 원래 PDF 행렬로 Direct2D가 확대·합성하며, 중첩된 벡터·텍스트 클리핑은 표시 순서대로 Direct2D layer에 적용한다. 모든 shading 유형은 제한된 고품질 이미지로 변환해 합성하고 일반 격리 투명도 그룹은 opacity layer로 처리한다. 숨김·닫기 때 네이티브 캐시를 해제하며 실패하면 같은 문서와 좌표를 유지한 채 Qt 표시로 전환한다.
 
 ## 결정
 
-sPDF 독립 실행 리더와 편집기의 Windows 우선 화면 백엔드는 다음 조합을 목표로 한다.
+Leaflet 독립 실행 리더와 편집기의 Windows 우선 화면 백엔드는 다음 조합을 목표로 한다.
 
 - Direct3D 11 장치와 DXGI flip-model swap chain으로 창 표면과 프레임 표시를 관리한다.
 - Direct2D device context로 페이지 이미지, 편집 개체, 선택 표시와 안내선을 합성한다.
-- DirectWrite로 sPDF가 새로 만드는 조판 텍스트의 측정·glyph 배치·화면 표시를 처리한다.
+- DirectWrite로 Leaflet이 새로 만드는 조판 텍스트의 측정·glyph 배치·화면 표시를 처리한다.
 - 리더와 편집기는 같은 백엔드 코드를 사용하되 장치·swap chain·캐시·문서 상태를 각 OS 프로세스가 독립 소유한다.
 - 장치 생성 실패, 원격 데스크톱, 드라이버 reset에는 CPU 표시 경로로 전환한다. 편집 좌표와 저장 결과는 백엔드와 무관해야 한다.
 
@@ -202,9 +202,9 @@ GPU 자원 보관 예산은 CPU 장면 예산의 절반·DXGI 프로세스 예�
 - 숨긴 탭·닫은 창의 대기 작업과 장치 자원이 남지 않고 종료를 지연하지 않는다.
 - GPU를 끄거나 사용할 수 없어도 읽기·편집·실행 취소·저장 결과가 동일하다.
 
-## PDF 내부 sPDF 편집 데이터
+## PDF 내부 Leaflet 편집 데이터
 
-PDF 1.3 이후의 page-piece dictionary와 PDF 1.4 이후 문서 catalog의 `PieceInfo`에는 응용 프로그램 전용 데이터를 넣을 수 있다. sPDF는 `/PieceInfo << /sPDF ... >>` 아래 application data dictionary의 `/Private` stream에 형식 버전이 있는 JSON 또는 CBOR 데이터를 저장하는 방식을 시제품으로 검증한다. `/LastModified`를 함께 기록하고, 모르는 다른 응용 프로그램 항목은 보존한다.
+PDF 1.3 이후의 page-piece dictionary와 PDF 1.4 이후 문서 catalog의 `PieceInfo`에는 응용 프로그램 전용 데이터를 넣을 수 있다. Leaflet은 `/PieceInfo << /sPDF ... >>` 아래 application data dictionary의 `/Private` stream에 형식 버전이 있는 JSON 또는 CBOR 데이터를 저장하는 방식을 시제품으로 검증한다. `/LastModified`를 함께 기록하고, 모르는 다른 응용 프로그램 항목은 보존한다.
 
 여기에는 안정적인 개체 ID, 그룹·스타일·프레임 연결, 안내선, 원본 문자열과 출력 설정처럼 비교적 작은 편집 정보를 넣을 수 있다. 일반 PDF 뷰어는 이를 무시하므로 PDF 열람에는 필요하지 않아야 한다. [Adobe PDF Reference의 Page-Piece Dictionaries](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf)와 [PDF Association의 custom metadata 지침](https://pdfa.org/download-area/publications/Including-custom-metadata-structures-in-PDF.pdf)을 따른다.
 

@@ -2,20 +2,20 @@
 
 ## Project overview
 
-- sPDF is a Windows desktop PDF editor built with Python, PyQt5, and PyMuPDF.
+- Leaflet is a Windows desktop PDF editor built with Python, PyQt5, and PyMuPDF.
 - The user interface is Korean-first. Preserve the existing Korean UI unless localization is explicitly requested.
 - `run.py` is the console development entry point; `run.pyw` launches without a console.
 - Repository entry points and public/legal documents stay at the root. Build and release tools live in `tools/`, installer/spec files in `packaging/`, and detailed documents in `docs/`; keep the root focused.
 - Application code lives in `pdfeditor/`. Keep `app.py` focused on `MainWindow` composition and place feature behavior in the existing mixin/module that owns it.
 - OCR runs out of process. Preserve the separation between the GUI process, `ocr_worker_main.py`, and `pdfeditor/ocr_subprocess.py`.
-- sPDF is an independent project. Keep its feature plans, documentation and implementation focused on its own reader and editor; do not describe other applications as companion components of sPDF.
-- External applications may reuse the sPDF reader API. Document only the sPDF-side API contract; their features, settings, release plans and source changes are outside this repository's task scope. Do not import external application modules into the sPDF entry point or mix their settings with `~/.spdf.json`.
+- Leaflet is an independent project. Keep its feature plans, documentation and implementation focused on its own reader and editor; do not describe other applications as companion components of Leaflet.
+- External applications may reuse the Leaflet reader API. Document only the Leaflet-side API contract; their features, settings, release plans and source changes are outside this repository's task scope. Do not import external application modules into the Leaflet entry point or mix their settings with `~/.spdf.json`.
 
 ## Embedded-module integration
 
-- When another program imports sPDF as an internal module, create its window with `pdfeditor.app.new_window(path)` or `AppWindow()` and leave `updates_enabled` at its default. Embedded mode must not create the GitHub update service, schedule automatic update checks, or expose the update menu.
-- Only the standalone sPDF entry point (`pdfeditor.__main__`, including the installed executable, `run.py`, and `run.pyw`) may pass `updates_enabled=True`.
-- New windows created from an existing window must inherit that window's update mode. Do not re-enable sPDF self-updates from a host application's embedded window.
+- When another program imports Leaflet as an internal module, create its window with `pdfeditor.app.new_window(path)` or `AppWindow()` and leave `updates_enabled` at its default. Embedded mode must not create the GitHub update service, schedule automatic update checks, or expose the update menu.
+- Only the standalone Leaflet entry point (`pdfeditor.__main__`, including the installed executable, `run.py`, and `run.pyw`) may pass `updates_enabled=True`.
+- New windows created from an existing window must inherit that window's update mode. Do not re-enable Leaflet self-updates from a host application's embedded window.
 - Keep the embedded-mode behavior covered by `tests/test_embedded_mode.py` whenever startup, menus, window creation, or update handling changes.
 
 ## Design constraints
@@ -28,7 +28,7 @@
 - Save through a temporary/new file and replace the destination only after a successful write. Do not introduce direct writes that can corrupt the original PDF on failure.
 - Respect encrypted-PDF restrictions and existing password handling; do not bypass edit limitations silently.
 - Keep rendering memory bounded for large PDFs. Avoid eager rendering or caching every page; follow the nearby-page/thumbnail caching approach.
-- File-type registration must remain per-user and must not silently force sPDF as the Windows default PDF application.
+- File-type registration must remain per-user and must not silently force Leaflet as the Windows default PDF application.
 
 ## Versioning
 

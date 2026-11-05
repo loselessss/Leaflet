@@ -16,6 +16,7 @@
 - Allow larger GPU pages with a higher, bounded memory budget. Prevent unusually complex glyphs, deeply nested patterns, empty gradients and very wide images from unnecessarily switching the entire page to CPU display.
 - Draw more transparency, patterned fills, mesh gradients, Type3 glyphs and dashed hairlines on the GPU, reducing CPU bitmap preparation while zooming. CMYK transparency uses an RGB approximation; CPU mode retains the reference appearance.
 - Follow Windows light/dark mode for the interface, title bars and icons while keeping PDF colors unchanged.
+- Use Leaflet consistently in documentation titles and product guidance while retaining internal compatibility identifiers.
 - Keep the editor entry in the Edit menu and Ctrl+E shortcut, simplifying the reader toolbar.
 
 - Render simple Type3 vector fonts directly on the GPU, keeping text sharper while zooming and reducing high-zoom memory use.
@@ -30,6 +31,7 @@
 
 - Avoid rendering complex illustrations twice after zooming while higher-resolution images are still being prepared.
 - Fix release packaging tests on Windows accounts with short temporary-directory paths.
+- Include exact-version source directions for the PDF engine's compatibility packages when preparing release files.
 - Keep Reader and Editor shortcuts distinct in the Windows Start menu. Create desktop shortcuts as a pair and provide separate Reader/Editor entry points in Store packages.
 - Fix installed OCR failing to initialize because of an outdated bundled runtime.
 - Preserve required Python SSL runtime data so installed OCR can download its models.

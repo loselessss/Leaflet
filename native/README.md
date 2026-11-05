@@ -1,4 +1,4 @@
-# sPDF Windows native renderer
+# Leaflet Windows native renderer
 
 This directory contains the Windows rendering boundary. On supported Windows
 systems the reader loads it automatically; a missing or failed DLL falls back

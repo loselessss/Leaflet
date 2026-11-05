@@ -71,6 +71,24 @@ class LicensingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             source_record({"name": "PyQt5-Qt5", "version": "5.99.0"}, fetch)
 
+    def test_empty_layout_and_4llm_packages_use_matching_pymupdf_source(self):
+        def fetch(url):
+            name, version = url.split('/')[-3:-1]
+            return {'info': {'name': name, 'version': version}, 'urls': ([]
+                if name.replace('_', '-') in ('pymupdf-layout', 'pymupdf4llm') else [{
+                    'packagetype': 'sdist', 'filename': 'pymupdf-'+version+'.tar.gz',
+                    'url': 'https://files.pythonhosted.org/pymupdf-'+version+'.tar.gz',
+                    'digests': {'sha256': 'a'*64}}])}
+        for name in ('pymupdf_layout', 'pymupdf4llm'):
+            for version in ('2.0', '2.1'):
+                record = source_record({'name': name, 'version': version}, fetch)
+                self.assertEqual(record['name'], name)
+                self.assertEqual(record['version'], version)
+                self.assertEqual(record['sha256'], 'a'*64)
+                self.assertEqual(record['url'], 'https://files.pythonhosted.org/pymupdf-'+version+'.tar.gz')
+            with self.assertRaisesRegex(ValueError, 'mapping required'):
+                source_record({'name': name, 'version': '2.99'}, fetch)
+
     def test_source_excludes_companion_and_private_paths(self):
         for name in ("", ".", "paperorganizer/core.py", "paper_organizer.py", "paper_organizer.pyw",
                      "tests/test_paperlib.py", "tests/test_paper_settings.py",

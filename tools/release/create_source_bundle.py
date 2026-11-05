@@ -81,6 +81,13 @@ def source_record(package, fetch=read_json):
         url, digest = entry["url"], entry["digests"]["sha256"]
         if not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
             raise ValueError("Missing source SHA-256: " + name)
+    elif canonical in {"pymupdf-layout", "pymupdf4llm"} and version in {"2.0", "2.1"}:
+        # These are empty upgrade-compatibility wheels. Their implementation
+        # moved into the matching PyMuPDF distribution, which has an sdist.
+        # https://pypi.org/project/pymupdf-layout/2.1/
+        # https://pypi.org/project/pymupdf4llm/2.1/
+        core = source_record({"name": "pymupdf", "version": version}, fetch)
+        url, digest = core["url"], core["sha256"]
     elif canonical == "pyqt5-qt5" and version == "5.15.2":
         url = "https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.tar.xz"
         digest = None
