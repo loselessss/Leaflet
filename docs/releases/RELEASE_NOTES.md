@@ -1,5 +1,10 @@
 # Leaflet Release Notes
 
+## Unreleased (1.38.1)
+
+- Switch light/dark mode directly from the ribbon, or follow Windows settings. Your choice is remembered.
+- Identify editing commands more easily with a magic wand icon.
+
 ## 1.38.0 - 2026-11-05
 
 - Switch CPU/GPU display from the View menu without restarting or losing your place.

@@ -11,7 +11,7 @@ AVAILABLE_ICONS = frozenset({
     "new_window", "note", "notes", "ocr", "open", "pages", "power",
     "presentation", "print", "recent", "redo", "rotate_ccw", "rotate_cw", "save", "save_as",
     "image", "magnet", "object_select", "rectangle", "search", "select_all", "settings", "sidebar_left", "split", "star", "star_filled",
-    "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out",
+    "text_select", "two_page", "undo", "update", "zoom_in", "zoom_out", "moon", "magic_wand",
 })
 
 
@@ -186,7 +186,27 @@ def fluent_icon(name, color=None, size=20):
     def line(x1, y1, x2, y2):
         painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-    if name == "open":
+    if name == "moon":
+        path = QPainterPath(QPointF(12.8, 2.7))
+        path.cubicTo(10.0, 3.3, 8.5, 5.7, 8.8, 8.4)
+        path.cubicTo(9.1, 11.6, 12.0, 13.7, 15.1, 13.1)
+        path.cubicTo(16.0, 12.9, 16.7, 12.6, 17.3, 12.1)
+        path.cubicTo(16.2, 15.7, 12.5, 17.9, 8.8, 16.9)
+        path.cubicTo(5.1, 15.9, 2.8, 12.1, 3.8, 8.3)
+        path.cubicTo(4.8, 4.6, 8.6, 2.2, 12.8, 2.7)
+        path.closeSubpath()
+        painter.drawPath(path)
+    elif name == "magic_wand":
+        painter.drawPolygon(QPolygonF([QPointF(3.0, 15.0), QPointF(11.7, 6.3),
+            QPointF(14.2, 8.8), QPointF(5.5, 17.5)]))
+        line(9.6, 8.4, 12.1, 10.9)
+        line(6.0, 2.5, 6.0, 6.5)
+        line(4.0, 4.5, 8.0, 4.5)
+        line(15.7, 1.8, 15.7, 5.6)
+        line(13.8, 3.7, 17.6, 3.7)
+        line(16.0, 12.2, 16.0, 15.4)
+        line(14.4, 13.8, 17.6, 13.8)
+    elif name == "open":
         path = QPainterPath(QPointF(2.5, 6.0))
         path.lineTo(7.5, 6.0)
         path.lineTo(9.1, 7.6)

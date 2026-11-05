@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (1.38.1)
+
+### 개선
+
+- Add a labeled Dark mode button to the reader and editor ribbon. Switch immediately between light, dark and Windows appearance, and remember the choice.
+- Use a magic wand icon for editor entry and text editing mode.
+
 ## 1.38.0 - 2026-11-05
 
 ### 새 기능

@@ -533,14 +533,14 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                   "select_all")
         e.addSeparator()
         self._edit_act = self._act(e, "텍스트 편집 모드", "Ctrl+E",
-                                   self.toggle_edit_mode, "edit")
+                                   self.toggle_edit_mode, "magic_wand")
         self._edit_act.setCheckable(True)
         self._open_editor_act = None
         if self._shell.workspace_mode == "reader":
             self._edit_act.setShortcut("")
             self._open_editor_act = self._act(
                 e, localize("Open in editor", "편집 창에서 열기"), "Ctrl+E",
-                lambda: self._shell.open_editor(self), "edit")
+                lambda: self._shell.open_editor(self), "magic_wand")
         e.addSeparator()
         self._search_act = self._act(
             e, "찾기...", "Ctrl+F", self.show_search, "search")
@@ -746,6 +746,9 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
                 tool_bar.addSeparator()
                 tool_bar.addAction(self._presentation_act)
                 tool_bar.addAction(self._full_screen_act)
+        if self._shell.workspace_mode in ("reader", "editor"):
+            from .appearance import add_theme_button
+            self._theme_button = add_theme_button(tool_bar, self._undo_act)
         self.addToolBar(Qt.TopToolBarArea, tool_bar)
         self._interaction_toolbar = tool_bar
 
@@ -1703,7 +1706,7 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
         if self.workspace_mode == "reader":
             m.addAction(_make_action(
                 self, localize("Open editor", "편집 창 열기"), "Ctrl+E",
-                self.open_editor, "edit"))
+                self.open_editor, "magic_wand"))
         elif self.workspace_mode == "editor":
             m.addAction(_make_action(self, localize("Open reader", "읽기 창 열기"),
                                      None, self.open_reader, "open"))

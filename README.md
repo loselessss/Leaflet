@@ -5,7 +5,7 @@ English | [한국어](README.ko.md)
 A Windows PDF reader and editor with GPU-accelerated zooming and panning,
 annotations, page organization, text editing, and offline Korean/English OCR.
 
-**Version: 1.38.0 (2026-11-05)** · Windows · English and Korean
+**Version: 1.38.1 (development)** · Windows · English and Korean
 
 ## Download
 
@@ -17,7 +17,7 @@ See [release notes](docs/releases/RELEASE_NOTES.md) for recent improvements.
 ## What you can do
 
 - **Read:** Zoom up to 3200%, pan smoothly, search, use bookmarks and two-page view, and detach tabs into separate windows.
-- **Appearance:** Follow Windows light or dark mode while preserving the PDF's original colors.
+- **Appearance:** Use the ribbon's Dark mode button or follow Windows settings while preserving the PDF's original colors.
 - **Copy in reading order:** Press Ctrl+Shift+C to analyze the selected text or current page locally. Model memory is released after each job.
 - **Annotate:** Highlight text, add notes, and manage annotations in one window.
 - **Edit:** Change text and add or adjust images and shapes.

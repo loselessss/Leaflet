@@ -161,6 +161,20 @@ def set_ui_language(language):
     return True
 
 
+def theme_mode():
+    mode = _load().get("theme_mode", "system")
+    return mode if mode in ("system", "light", "dark") else "system"
+
+
+def set_theme_mode(mode):
+    if mode not in ("system", "light", "dark"):
+        return False
+    data = _load()
+    data["theme_mode"] = mode
+    _save(data)
+    return True
+
+
 def startup_workspace():
     mode = _load().get("startup_workspace", "reader")
     return mode if mode in ("reader", "editor") else "reader"

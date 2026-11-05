@@ -1,6 +1,6 @@
 """Windows app-theme notifications, without polling or changing OS settings."""
 import sys
-from PyQt5.QtCore import QAbstractNativeEventFilter, QEvent, QObject, QTimer, Qt
+from PyQt5.QtCore import QAbstractNativeEventFilter, QEvent, QObject, QTimer, Qt, pyqtSignal
 
 
 def windows_dark_mode():
@@ -32,10 +32,13 @@ class _WindowsThemeEvents(QAbstractNativeEventFilter):
 
 
 class SystemThemeController(QObject):
+    appearance_changed = pyqtSignal()
+
     def __init__(self, app):
         super().__init__(app)
         self.app = app
         self.dark = None
+        self.mode = None
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(50)
@@ -47,14 +50,18 @@ class SystemThemeController(QObject):
 
     def refresh(self):
         from .theme import apply_theme_colors
-        dark = windows_dark_mode()
-        if dark == self.dark:
+        from .settings import theme_mode
+        mode = theme_mode()
+        dark = windows_dark_mode() if mode == 'system' else mode == 'dark'
+        if dark == self.dark and mode == self.mode:
             return
+        self.mode = mode
         self.dark = dark
         apply_theme_colors(self.app, dark)
         for widget in self.app.topLevelWidgets():
             self._titlebar(widget)
             widget.update()
+        self.appearance_changed.emit()
 
     def _titlebar(self, widget):
         if widget.isWindow() and widget.testAttribute(Qt.WA_WState_Created):

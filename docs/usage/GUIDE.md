@@ -1,5 +1,9 @@
 # Leaflet usage guide
 
+Use the ribbon's **Dark mode** button to switch immediately. Its arrow menu offers
+**Light mode / Dark mode / Follow Windows settings**. Your choice is remembered;
+the PDF's original colors stay unchanged. Editing commands use a magic wand icon.
+
 The home screen shows **Reader mode / Editor mode**. The **Leaflet** Start menu entry
 opens Reader; **Leaflet Editor** opens Editor. View → Display Renderer offers automatic,
 GPU and CPU display plus a vector page cache limit. Both apply immediately. Switching

@@ -710,6 +710,22 @@ class EmbeddedModeTests(unittest.TestCase):
                     window.toggle_presentation()
                     self.assertFalse(window.presentation_active)
 
+    def test_theme_ribbon_is_visible_only_in_standalone_workspaces(self):
+        with self.document_windows() as (module, source):
+            for mode in ('reader', 'editor', None):
+                with self.subTest(mode=mode):
+                    window = module.new_window(str(source), workspace_mode=mode)
+                    self.settle()
+                    tab = window._tabs.currentWidget()
+                    if mode is None:
+                        self.assertFalse(hasattr(tab, '_theme_button'))
+                    else:
+                        button = tab._theme_button
+                        self.assertIn(button, tab._interaction_toolbar.findChildren(type(button)))
+                        self.assertFalse(button.isHidden())
+                        self.assertTrue(button.text())
+                        self.assertFalse(button.icon().isNull())
+
     def test_reader_rotation_actions_are_view_only_and_thumbnails_follow(self):
         from PyQt5.QtCore import Qt
         with self.document_windows() as (module, source):

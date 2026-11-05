@@ -10,6 +10,9 @@ class SystemThemeTests(unittest.TestCase):
         from PyQt5.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        self.enterContext(patch('pdfeditor.settings.theme_mode', return_value='system'))
+
     def tearDown(self):
         from pdfeditor.theme import apply_theme_colors
         apply_theme_colors(self.app, False)
@@ -64,3 +67,86 @@ class SystemThemeTests(unittest.TestCase):
         self.assertIn('selection-color: #ffffff;', DARK_STYLESHEET)
         self.assertIn('color: #f3f3f3;', DARK_STYLESHEET)
         self.assertNotIn('WHITE_TEXT', DARK_STYLESHEET)
+
+
+class AppearanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from PyQt5.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from pdfeditor import settings
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.enterContext(patch.object(settings, 'PATH', str(Path(self.directory.name)/'settings.json')))
+        self.enterContext(patch.object(settings, '_OLD_PATH', str(Path(self.directory.name)/'absent.json')))
+        self.windows = self.enterContext(patch('pdfeditor.system_theme.windows_dark_mode', return_value=False))
+        self.buttons = []
+        controller = getattr(self.app, '_leaflet_theme_controller', None)
+        if controller is not None:
+            controller.dark = controller.mode = None
+            controller.refresh()
+
+    def tearDown(self):
+        from PyQt5.QtCore import QEvent
+        from pdfeditor.theme import apply_theme_colors
+        for button in self.buttons:
+            button.close()
+            button.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        apply_theme_colors(self.app, False)
+
+    def button(self):
+        from pdfeditor.appearance import ThemeButton
+        button = ThemeButton()
+        self.buttons.append(button)
+        return button
+
+    def test_ribbon_toggle_updates_all_buttons_and_system_menu_restores_following(self):
+        from pdfeditor import settings
+        first, second = self.button(), self.button()
+        self.assertFalse(first.isChecked())
+        first.click()
+        self.assertEqual(settings.theme_mode(), 'dark')
+        self.assertTrue(self.app.property('leafletDark'))
+        self.assertTrue(second.isChecked())
+        self.assertTrue(second.mode_actions['dark'].isChecked())
+        second.click()
+        self.windows.return_value = True
+        second.controller.refresh()
+        self.assertEqual(settings.theme_mode(), 'light')
+        self.assertFalse(self.app.property('leafletDark'))
+        self.assertFalse(first.isChecked())
+        first.mode_actions['system'].trigger()
+        self.assertEqual(settings.theme_mode(), 'system')
+        self.assertTrue(self.app.property('leafletDark'))
+        self.assertTrue(second.isChecked())
+        self.assertTrue(second.mode_actions['system'].isChecked())
+
+    def test_saved_dark_choice_is_used_by_a_new_controller(self):
+        from pdfeditor import settings
+        from pdfeditor.system_theme import SystemThemeController
+        settings.set_theme_mode('dark')
+        controller = SystemThemeController(self.app)
+        try:
+            controller.refresh()
+            self.assertTrue(controller.dark)
+            self.assertTrue(self.app.property('leafletDark'))
+        finally:
+            self.app.removeEventFilter(controller)
+            self.app.removeNativeEventFilter(controller.native_filter)
+            controller.deleteLater()
+
+    def test_invalid_theme_values_keep_system_default_and_preserve_settings(self):
+        from pdfeditor import settings
+        settings._save({'theme_mode': 'invalid', 'recent': ['keep.pdf']})
+        self.assertEqual(settings.theme_mode(), 'system')
+        self.assertFalse(settings.set_theme_mode('invalid'))
+        self.assertEqual(settings._load()['recent'], ['keep.pdf'])
+        settings.set_theme_mode('light')
+        self.assertEqual(settings.theme_mode(), 'light')
+        self.assertEqual(settings._load()['recent'], ['keep.pdf'])
