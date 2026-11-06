@@ -1,15 +1,12 @@
 # Leaflet Release Notes
 
-## Unreleased (1.39.0)
+## 1.39.0 - 2026-11-06
 
 - Prepare more nearby pages using available memory and keep compressed vector scenes in RAM to reduce repeated preparation when revisiting pages.
-- Right-click the moon to choose document inclusion. Toggle the command bar from View.
-- Choose include/exclude document directly from View → Dark mode. Document colors follow the app theme and the moon remembers inclusion. Pictures and dark areas are preserved when possible. Your PDF file stays unchanged.
-
-- Switch light/dark mode from the centered ribbon moon. View → Dark mode also offers following Windows settings, with full menu labels. Your choice is remembered.
-- Switch between Reader and Editor directly from the home screen.
-- Open the editor from the ribbon's magic wand. Remove back/forward buttons from the reader ribbon.
-- Keep the title bar and document tabs readable in dark mode.
+- Choose whether dark mode includes documents. Bright paper and text become easier to read while pictures and already-dark areas are preserved when possible. Original PDFs stay unchanged.
+- Set appearance from the ribbon moon or View menu, and right-click the moon to choose document inclusion. Title bars and document tabs follow the theme too.
+- Switch Reader and Editor from the home screen, or open editing from the ribbon magic wand.
+- Align ribbon icons and remove unnecessary navigation buttons. Show or hide the command bar from View, and prevent accidental hiding from its right-click menu.
 
 ## 1.38.0 - 2026-11-05
 
