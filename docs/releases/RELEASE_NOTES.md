@@ -2,6 +2,7 @@
 
 ## Unreleased (1.39.0)
 
+- Prepare more nearby pages using available memory and keep compressed vector scenes in RAM to reduce repeated preparation when revisiting pages.
 - Right-click the moon to choose document inclusion. Toggle the command bar from View.
 - Choose include/exclude document directly from View → Dark mode. Document colors follow the app theme and the moon remembers inclusion. Pictures and dark areas are preserved when possible. Your PDF file stays unchanged.
 

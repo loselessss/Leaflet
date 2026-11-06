@@ -23,8 +23,12 @@ class ReaderPrefetchMixin:
         }
 
     def prefetch_diagnostic(self):
+        packed = getattr(self._document, '_gpu_packed_cache', None)
         return dict(self._prefetch_metrics, cache_bytes=(
-            self._document._gpu_vector_cache_bytes if self._document else 0))
+            self._document._gpu_vector_cache_bytes if self._document else 0),
+            packed_pages=len(packed.entries) if packed else 0,
+            packed_bytes=packed.bytes if packed else 0,
+            packed_hits=packed.hits if packed else 0)
 
     def _prefetch_enabled(self):
         return os.environ.get("LEAFLET_SCENE_PREFETCH", "1").lower() not in (
@@ -67,7 +71,9 @@ class ReaderPrefetchMixin:
                        if getattr(self, '_document_generation', None) == self._document.render_generation else None)
             if current is not cached[0]:
                 current = self._document.cached_gpu_vector_page(
-                    page, cached[0].raster_scale, memory_only=True)
+                    page, cached[0].raster_scale, memory_only=True, restore_compressed=False)
+            if self._document.has_packed_gpu_scene(page, cached[0].raster_scale):
+                current = None  # Release the raw packet reference held by inactive native scenes too.
             if current is not cached[0] or used + cost > budget or kept >= 128:
                 self._discard_native_vector_page(page)
             else:
@@ -104,6 +110,7 @@ class ReaderPrefetchMixin:
         if (not self._prefetch_enabled() or document is None or
                 not self.isVisible() or not self._d2d_requested):
             return
+        document.reserve_gpu_scene_memory(32 * MIB, self._page_sizes)
         document.trim_gpu_scene_memory(self._page_sizes)
         self._trim_nearby_native_pages()
         if (self._vector_refine_process is not None or self._vector_refine_pages or
@@ -127,7 +134,10 @@ class ReaderPrefetchMixin:
                                    if key[0] == generation and key[1] in nearby and key[2] == scale}
         for page in nearby:
             key = generation, page, scale
-            prepared = document.cached_gpu_vector_page(page, scale, memory_only=True)
+            if document.has_packed_gpu_scene(page, scale):
+                continue  # Leave the RAM archive packed until the reader actually needs it.
+            prepared = document.cached_gpu_vector_page(page, scale, memory_only=True,
+                                                       restore_compressed=False)
             if prepared is not None:
                 # Upload at most one modest vector page per idle turn. Complex
                 # posters still defer their expensive upload until displayed.

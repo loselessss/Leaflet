@@ -173,6 +173,7 @@ class Document:
     # --- 수명 주기 ---------------------------------------------------
 
     def close(self):
+        self._clear_packed_gpu_scenes()
         hash_job = getattr(self, "_disk_cache_hash_job", None)
         if hash_job is not None:
             hash_job.cancel()
@@ -273,6 +274,7 @@ class Document:
         return pix.x, pix.y, pix.width, pix.height, pix.stride, samples
 
     def invalidate_render(self, index=None):
+        self._clear_packed_gpu_scenes()
         hash_job = getattr(self, "_disk_cache_hash_job", None)
         if hash_job is not None:
             hash_job.cancel()
@@ -308,6 +310,10 @@ class Document:
                     self._gpu_vector_cache.move_to_end(cached_key)
                     return candidate
         if scene is None:
+            scene = self._restore_packed_gpu_scene(index, scale, aggressive_band_merge)
+            if scene is not None:
+                return scene
+        if scene is None:
             scene = self._load_disk_gpu_scene(index, scale)
         if scene is None:
             scene = compile_vector_page(
@@ -321,11 +327,12 @@ class Document:
                    len(self._gpu_vector_cache) > 1):
                 _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
                 self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
+                self._stash_gpu_scene(_old_key, old_scene)
         else:
             self._gpu_vector_cache.move_to_end(key)
         return scene
 
-    def cached_gpu_vector_page(self, index, raster_scale=1.0, *, memory_only=False):
+    def cached_gpu_vector_page(self, index, raster_scale=1.0, *, memory_only=False, restore_compressed=True):
         """Return a reusable supported scene without starting extraction."""
         scale = max(1.0, float(raster_scale))
         aggressive_band_merge = _aggressive_gpu_band_merge_enabled()
@@ -338,19 +345,60 @@ class Document:
                     "image-downsample" not in candidate.features:
                 self._gpu_vector_cache.move_to_end(cached_key)
                 return candidate
+        if restore_compressed:
+            scene = self._restore_packed_gpu_scene(index, scale, aggressive_band_merge)
+            if scene is not None:
+                return scene
         return None if memory_only else self._load_disk_gpu_scene(index, scale)
 
     def gpu_scene_memory_budget(self):
-        return min(GPU_VECTOR_CACHE_BYTES, render_memory().scene_bytes)
+        # Reserve one quarter of the configured RAM limit for the packed tier.
+        return min(GPU_VECTOR_CACHE_BYTES, render_memory().scene_bytes) * 3 // 4
 
-    def trim_gpu_scene_memory(self, protected=()):
-        """Release speculative entries first when available memory shrinks."""
-        budget = self.gpu_scene_memory_budget()
+    def _clear_packed_gpu_scenes(self):
+        archive = getattr(self, '_gpu_packed_cache', None)
+        if archive is not None:
+            archive.clear()
+
+    def _stash_gpu_scene(self, key, scene):
+        from .scene_memory_cache import SceneMemoryCache
+        archive = getattr(self, '_gpu_packed_cache', None)
+        if archive is None:
+            archive = self._gpu_packed_cache = SceneMemoryCache()
+        limit = min(256 * 1024 * 1024, self.gpu_scene_memory_budget() // 3)
+        archive.trim(limit if render_memory().prefetch_pages else 0)
+        archive.store(key, scene)
+
+    def has_packed_gpu_scene(self, index, scale=1.):
+        archive = getattr(self, '_gpu_packed_cache', None)
+        return archive is not None and archive.contains(index, scale, _aggressive_gpu_band_merge_enabled())
+
+    def _restore_packed_gpu_scene(self, index, scale, variant):
+        archive = getattr(self, '_gpu_packed_cache', None)
+        if archive is None:
+            return None
+        scene = archive.take(index, scale, variant)
+        if scene is not None:
+            return self.install_gpu_vector_page(index, scene, persist=False)
+        return None
+
+    def reserve_gpu_scene_memory(self, needed, protected=()):
+        budget = max(0, self.gpu_scene_memory_budget() - needed)
         for key in tuple(self._gpu_vector_cache):
             if self._gpu_vector_cache_bytes <= budget:
                 break
             if key[0] not in protected:
-                self._gpu_vector_cache_bytes -= _gpu_scene_cost(self._gpu_vector_cache.pop(key))
+                scene = self._gpu_vector_cache.pop(key)
+                self._gpu_vector_cache_bytes -= _gpu_scene_cost(scene)
+                self._stash_gpu_scene(key, scene)
+
+    def trim_gpu_scene_memory(self, protected=()):
+        """Release speculative entries first when available memory shrinks."""
+        self.reserve_gpu_scene_memory(0, protected)
+        archive = getattr(self, '_gpu_packed_cache', None)
+        if archive is not None:
+            archive.trim(min(256 * 1024 * 1024, self.gpu_scene_memory_budget() // 3)
+                         if render_memory().prefetch_pages else 0)
 
     def gpu_scene_disk_cache_key(self, index, raster_scale=1.0):
         from . import scene_disk_cache as disk
@@ -446,6 +494,7 @@ class Document:
                len(self._gpu_vector_cache) > 1):
             _old_key, old_scene = self._gpu_vector_cache.popitem(last=False)
             self._gpu_vector_cache_bytes -= _gpu_scene_cost(old_scene)
+            self._stash_gpu_scene(_old_key, old_scene)
         if persist:
             self._save_disk_gpu_scene(index, scene, background=background)
         return scene
@@ -1207,6 +1256,7 @@ class Document:
     @document_write
     def restore(self, data):
         """스냅샷으로 되돌린다 — 내부 문서를 통째로 교체."""
+        self._clear_packed_gpu_scenes()
         self._doc.close()
         self._doc = fitz.open("pdf", data)
         self._edited_since_open = True
@@ -1313,6 +1363,7 @@ class Document:
                     os.close(fd)
                     self._doc.save(pending, garbage=3, deflate=True,
                                    encryption=fitz.PDF_ENCRYPT_KEEP)
+                self._clear_packed_gpu_scenes()
                 self._display_cache.clear()
                 self._gpu_vector_cache.clear()
                 self._gpu_vector_cache_bytes = 0
