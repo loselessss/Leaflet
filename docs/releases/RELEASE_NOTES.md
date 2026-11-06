@@ -1,9 +1,13 @@
 # Leaflet Release Notes
 
-## Unreleased (1.38.1)
+## Unreleased (1.39.0)
 
-- Switch light/dark mode directly from the ribbon, or follow Windows settings. Your choice is remembered.
-- Identify editing commands more easily with a magic wand icon.
+- Enable Dark document from View → Dark mode for easier night reading. Bright paper and text are adjusted while pictures and dark areas are preserved when possible. Your PDF file stays unchanged.
+
+- Switch light/dark mode from the centered ribbon moon. View → Dark mode also offers following Windows settings, with full menu labels. Your choice is remembered.
+- Switch between Reader and Editor directly from the home screen.
+- Open the editor from the ribbon's magic wand. Remove back/forward buttons from the reader ribbon.
+- Keep the title bar and document tabs readable in dark mode.
 
 ## 1.38.0 - 2026-11-05
 

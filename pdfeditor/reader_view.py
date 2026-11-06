@@ -17,7 +17,7 @@ import time
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap,
                          QTransform)
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidget
+from PyQt5.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidget
 
 from . import settings
 from .theme import reader_background
@@ -113,7 +113,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     ZOOM_MIN = 0.1
     FLIP_THRESHOLD = 120
 
-    def __init__(self, parent=None, *, use_opengl=None):
+    def __init__(self, parent=None, *, use_opengl=None, document_colors=False):
         super().__init__(parent)
         self.setObjectName("documentViewport")
         self.setScene(QGraphicsScene(self))
@@ -139,6 +139,11 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._d2d_size = None
         self._d2d_previews = {}
         self._d2d_tiles = {}
+        self._night_gpu_masks = {}
+        self._night_display = None
+        self._document_colors_allowed = bool(document_colors)
+        self._document_night_enabled = bool(document_colors and settings.document_night())
+        self._appearance_controller = None
         self._vector_pages = {}
         self._vector_viewport_pages = {}
         self._d2d_vector_paths = {}
@@ -192,6 +197,44 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self.canvas.pan_requested.connect(self._pan_canvas)
         self.horizontalScrollBar().valueChanged.connect(self._viewport_moved)
         self.verticalScrollBar().valueChanged.connect(self._viewport_moved)
+        controller = getattr(QApplication.instance(), '_leaflet_theme_controller', None)
+        if controller is not None and self._document_colors_allowed:
+            self.bind_appearance_controller(controller)
+
+    def bind_appearance_controller(self, controller):
+        if not self._document_colors_allowed:
+            return
+        if controller is self._appearance_controller:
+            return
+        if self._appearance_controller is not None:
+            self._appearance_controller.appearance_changed.disconnect(self._document_colors_changed)
+        self._appearance_controller = controller
+        controller.appearance_changed.connect(self._document_colors_changed)
+        self._document_colors_changed()
+
+    def _document_colors_changed(self):
+        self._document_night_enabled = bool(self._document_colors_allowed and settings.document_night())
+        if not self._document_night_enabled:
+            self._night_display = None
+            self._release_night_masks()
+            if self._d2d_surface is not None:
+                release = getattr(self._d2d_surface, 'release_document_night', None)
+                if release is not None:
+                    release()
+        self.viewport().update()
+
+    def _release_night_masks(self):
+        for _identity, bitmap in self._night_gpu_masks.values():
+            bitmap.close()
+        self._night_gpu_masks.clear()
+
+    def _night_plan(self, page, preview):
+        if not self._document_night_enabled:
+            return None
+        if self._night_display is None:
+            from .document_night import NightDisplay
+            self._night_display = NightDisplay()
+        return self._night_display.plan(self._document, page, preview, self._page_sizes[page])
 
     def _configure_render_backend(self, render_mode, enable_opengl):
         self._render_mode = render_mode
@@ -765,6 +808,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._notify_render_device()
 
     def _release_d2d_surface(self, *, disable=False):
+        self._release_night_masks()
         self._cancel_sharp_refine()
         self._sharp_attempted.clear()
         for _key, bitmap in tuple(self._d2d_previews.values()):
@@ -1253,12 +1297,15 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         exposed = self._visible_scene_rect()
         self._d2d_surface.begin_frame(reader_background().rgba())
         rasterized = {}
+        night_pages = []
+        active_overlays = []
         for page, preview, rect in self.canvas._pages:
             if not rect.intersects(exposed):
                 continue
             transform = self._page_transforms[page]
             self._set_page_transform(transform)
             width, height = self._page_sizes[page]
+            night_plan = self._night_plan(page, preview)
             vector_scene = self._display_vector_scene(page)
             if vector_scene is not None and vector_scene.supported:
                 self._draw_vector_page(page, vector_scene)
@@ -1277,8 +1324,20 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                         self._d2d_surface.draw_bitmap(
                             tile, region.left(), region.top(),
                             region.right(), region.bottom())
+            if night_plan is not None:
+                mask = self._native_bitmap(self._night_gpu_masks, page, night_plan.mask)
+                night_pages.append((mask, self._retained_page_transform(page), width, height))
             if page == self.canvas._active_page:
-                self._draw_d2d_overlays()
+                if self._document_night_enabled:
+                    active_overlays.append(page)
+                else:
+                    self._draw_d2d_overlays()
+        if night_pages:
+            self._d2d_surface.apply_document_night(night_pages)
+        # Selection, search and editing overlays retain their ordinary colors.
+        for page in active_overlays:
+            self._set_page_transform(self._page_transforms[page])
+            self._draw_d2d_overlays()
         self._d2d_surface.end_frame()
         self._rasterized_pages = rasterized
         self._notify_render_device()
@@ -1332,6 +1391,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         changed = document is not self._document
         generation = document.render_generation
         if changed or getattr(self, "_document_generation", None) != generation:
+            self._night_display = None
+            self._release_night_masks()
             self._vector_refine_attempted.clear()
             self._prefetch_attempted.clear()
             if (self._document is None or
@@ -1355,6 +1416,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._document = document
         self._document_generation = generation
         self._previews = {p: pix for p, pix in self._previews.items() if p in pages}
+        for page in tuple(self._night_gpu_masks):
+            if page not in pages:
+                self._night_gpu_masks.pop(page)[1].close()
         for page in tuple(self._d2d_previews):
             if page not in pages:
                 _identity, bitmap = self._d2d_previews.pop(page)
@@ -1654,16 +1718,22 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 continue
             transform = self._page_transforms[page]
             w, h = self._page_sizes[page]
+            night_plan = self._night_plan(page, preview)
             page_rect = QRectF(0, 0, w, h)
             painter.save()
             painter.setTransform(transform, True)
             painter.setClipRect(page_rect, Qt.IntersectClip)
-            painter.drawPixmap(page_rect, preview, QRectF(preview.rect()))
+            display_preview = (self._night_display.pixmap(preview, (0, 0, w, h), night_plan)
+                               if night_plan is not None else preview)
+            painter.drawPixmap(page_rect, display_preview, QRectF(display_preview.rect()))
             for key, (pixmap, region) in self._tiles.items():
                 if key not in self._wanted or key[0] != page:
                     continue
                 if transform.mapRect(region).intersects(exposed):
-                    painter.drawPixmap(region, pixmap, QRectF(pixmap.rect()))
+                    display_tile = (self._night_display.pixmap(pixmap,
+                        (region.left(), region.top(), region.right(), region.bottom()), night_plan)
+                        if night_plan is not None else pixmap)
+                    painter.drawPixmap(region, display_tile, QRectF(display_tile.rect()))
             if page == self.canvas._active_page:
                 self.canvas.paint_overlays(painter, zoom=1, origin=QPointF())
                 controller = getattr(self, "object_controller", None)
@@ -1697,6 +1767,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
 
     def clear(self):
         self.stop_rendering()
+        self._night_display = None
+        self._release_night_masks()
         self._prefetch_ready.clear()
         self._prefetch_failures.clear()
         self._document = None

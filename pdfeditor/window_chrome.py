@@ -3,8 +3,8 @@
 import sys
 
 from PyQt5.QtCore import QEvent, QRectF, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPen
-from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QStackedWidget, QStyle,
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPalette, QPen
+from PyQt5.QtWidgets import (QApplication, QHBoxLayout, QLabel, QStackedWidget, QStyle,
                              QToolButton, QVBoxLayout, QWidget)
 
 from .i18n import localize
@@ -121,8 +121,9 @@ class CaptionButton(QToolButton):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(QColor("#ffffff" if self.kind == "close" and self.underMouse()
-                                  else "#42464d"), 1.0))
+        color = (QColor('#ffffff') if self.kind == 'close' and self.underMouse()
+                 else self.palette().color(QPalette.ButtonText))
+        painter.setPen(QPen(color, 1.0))
         painter.translate(self.width() / 2 - 4.5, self.height() / 2 - 4.5)
         if self.kind == "minimize":
             painter.drawLine(0, 5, 9, 5)
@@ -131,7 +132,8 @@ class CaptionButton(QToolButton):
             painter.drawLine(9, 0, 0, 9)
         elif self.kind == "restore":
             painter.drawRect(QRectF(2, 0, 7, 7))
-            painter.fillRect(QRectF(0, 2, 7, 7), QColor("#e9edf2"))
+            painter.fillRect(QRectF(0, 2, 7, 7),
+                QColor(self.parentWidget().property('captionBackground')))
             painter.drawRect(QRectF(0, 2, 7, 7))
         else:
             painter.drawRect(QRectF(0, 0, 9, 9))
@@ -209,17 +211,9 @@ class WindowChrome(QWidget):
         self.drag_space.installEventFilter(self)
         bar.installEventFilter(self)
         window.installEventFilter(self)
-        self.setStyleSheet("""
-            QWidget#windowCaption { background: #e9edf2; }
-            QWidget#captionDivider { background: #c9ced6; }
-            QLabel#captionBrand { color: #20242a; font-weight: 600; }
-            QTabBar#captionTabs { background: transparent; }
-            QTabBar#captionTabs::tab { min-width: 90px; max-width: 290px;
-                min-height: 30px; font-weight: normal; }
-            QToolButton { border: 0; border-radius: 0; background: transparent; }
-            QToolButton:hover { background: #dce1e7; }
-            QToolButton#captionClose:hover { background: #e45b60; }
-        """)
+        self._dark = None
+        app = QApplication.instance()
+        self.apply_theme(bool(app and app.property('leafletDark')))
         self._resize_handles = [
             ResizeHandle(window, edges, cursor) for edges, cursor in (
                 (Qt.TopEdge, Qt.SizeVerCursor),
@@ -232,6 +226,37 @@ class WindowChrome(QWidget):
                 (Qt.BottomEdge | Qt.RightEdge, Qt.SizeFDiagCursor),
             )]
         self._sync_resize_handles()
+
+    def apply_theme(self, dark):
+        if dark == self._dark:
+            return
+        self._dark = dark
+        background = '#20242b' if dark else '#e9edf2'
+        divider = '#3b4048' if dark else '#c9ced6'
+        text = '#f3f3f3' if dark else '#20242a'
+        muted = '#c8ced7' if dark else '#52575f'
+        selected = '#2d333d' if dark else '#f7f9fb'
+        hover = '#343b46' if dark else '#dce1e7'
+        accent = '#60b4ff' if dark else '#0f6cbd'
+        self.caption.setProperty('captionBackground', background)
+        self.setStyleSheet(f"""
+            QWidget#windowCaption {{ background: {background}; }}
+            QWidget#captionDivider {{ background: {divider}; }}
+            QLabel#captionBrand {{ color: {text}; font-weight: 600; }}
+            QTabBar#captionTabs {{ background: transparent; }}
+            QTabBar#captionTabs::tab {{ min-width: 90px; max-width: 290px;
+                min-height: 30px; font-weight: normal; color: {muted}; }}
+            QTabBar#captionTabs::tab:selected {{ background: {selected};
+                color: {text}; border-bottom-color: {accent}; }}
+            QTabBar#captionTabs::tab:hover:!selected {{ background: {hover}; }}
+            QToolButton {{ border: 0; border-radius: 0;
+                background: transparent; color: {text}; }}
+            QToolButton:hover {{ background: {hover}; }}
+            QToolButton#captionClose:hover {{ background: #e45b60; }}
+        """)
+        for button in (self.minimize, self.maximize, self.close_button):
+            button.update()
+        self.refresh_caption()
 
     def _sync_resize_handles(self):
         handles = getattr(self, "_resize_handles", ())

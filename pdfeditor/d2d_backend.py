@@ -95,6 +95,10 @@ class _GradientStop(Structure):
     _fields_ = [("position", c_float), ("argb", c_uint32)]
 
 
+class _NightPage(Structure):
+    _fields_ = [('mask', c_void_p), ('transform', _Transform), ('width', c_float), ('height', c_float)]
+
+
 class _SceneCommand(Structure):
     _fields_ = [
         ("type", c_uint32), ("flags", c_uint32),
@@ -275,6 +279,7 @@ class D2DSurface:
         self._paths = set()
         self._stroke_styles = set()
         self._scenes = set()
+        self._document_night_lut_ready = False
         native = _NativeInfo()
         native.struct_size = ctypes.sizeof(_NativeInfo)
         result = self._library.spdf_d2d_create_surface(
@@ -597,6 +602,40 @@ class D2DSurface:
     def cancel_sharp(self):
         if not self.closed:
             self._library.spdf_d2d_cancel_sharp(self._handle)
+
+    def release_document_night(self):
+        setter = getattr(self._library, 'spdf_d2d_set_document_night_lut', None)
+        if setter is not None and not self.closed:
+            setter.argtypes = [c_void_p, c_void_p, c_uint32, c_uint32]
+            setter.restype = c_int32
+            _check_hresult(setter(self._handle, None, 0, 0), 'release document night resources')
+        self._document_night_lut_ready = False
+
+    def apply_document_night(self, pages):
+        """One native GPU postprocess call; retained scene/raster caches stay original."""
+        function = getattr(self._library, 'spdf_d2d_apply_document_night', None)
+        setter = getattr(self._library, 'spdf_d2d_set_document_night_lut', None)
+        if function is None or setter is None or not pages:
+            return False
+        if self.closed:
+            raise RuntimeError('Direct2D surface is closed')
+        if not self._document_night_lut_ready:
+            setter.argtypes = [c_void_p, c_void_p, c_uint32, c_uint32]
+            setter.restype = c_int32
+            _check_hresult(setter(self._handle, None, 0, 33),
+                           'document night color table')
+            self._document_night_lut_ready = True
+        entries = []
+        for mask, transform, width, height in pages:
+            if mask.closed or mask._surface is not self:
+                raise ValueError('night mask does not belong to this surface')
+            entries.append(_NightPage(mask._handle, _Transform(*transform), width, height))
+        array = (_NightPage*len(entries))(*entries)
+        function.argtypes = [c_void_p, POINTER(_NightPage), c_uint32]
+        function.restype = c_int32
+        result = function(self._handle, array, len(entries))
+        _check_hresult(result, 'document night display')
+        return result == 0
 
     def begin_frame(self, argb=0xffe8e8e8):
         if self.closed:

@@ -19,6 +19,12 @@ The build also uses the Windows SDK's x64 `fxc.exe` to compile
 `d2d_renderer/mask_lerp.hlsl` into an ignored header in `native/bin`. The shader
 bytecode is embedded in the DLL; runtime shader compilation is not required.
 
+Optional ABI v26 document-night exports analyze a bounded preview and transform
+CPU display pixels in native code. GPU display uses a native 33³ color table and
+the existing mask-lerp effect, with two reusable tiles limited to 32 MiB total.
+Original scenes and pixels remain unchanged; embedded readers opt in explicitly.
+See [the display-color measurements](../docs/benchmarks/DOCUMENT_NIGHT_MODE_2026-11-06.md).
+
 ## Rust compiler and native PDF input
 
 The GUI uses `pdfeditor.rust_scene_compiler.compile_vector_page` for synchronous

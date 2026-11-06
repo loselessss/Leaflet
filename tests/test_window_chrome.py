@@ -107,6 +107,38 @@ class WindowChromeTests(unittest.TestCase):
         viewport_update.assert_called_once_with()
         window.close()
 
+    def test_custom_caption_tabs_and_window_buttons_follow_light_and_dark(self):
+        from PyQt5.QtGui import QPalette
+        from pdfeditor.theme import apply_theme_colors
+        window = QMainWindow()
+        chrome = window._window_chrome = WindowChrome(window, QTabBar())
+        chrome.bar.addTab('first.pdf')
+        chrome.bar.addTab('second.pdf')
+        window.setMenuWidget(chrome)
+        window.resize(700, 200)
+        window.show()
+        try:
+            for dark in (True, False):
+                with self.subTest(dark=dark):
+                    apply_theme_colors(self.app, dark)
+                    self.app.processEvents()
+                    image = chrome.caption.grab().toImage()
+                    self.assertEqual(image.pixelColor(2, 2).lightness() < 128, dark)
+                    self.assertEqual(chrome.brand.palette().color(QPalette.WindowText).lightness() > 128, dark)
+                    for button in (chrome.minimize, chrome.maximize, chrome.close_button):
+                        self.assertEqual(button.palette().color(QPalette.ButtonText).lightness() > 128, dark)
+                    tab = chrome.bar.tabRect(0)
+                    image = chrome.bar.grab().toImage()
+                    ratio = image.devicePixelRatio()
+                    self.assertEqual(image.pixelColor(round((tab.left()+8)*ratio),
+                        round((tab.top()+5)*ratio)).lightness() < 128, dark)
+                    chrome.maximize.kind = 'restore'
+                    chrome.maximize.grab()  # Exercise its themed background fill.
+        finally:
+            window.close()
+            window.deleteLater()
+            apply_theme_colors(self.app, False)
+
     def test_only_standalone_workspace_has_caption_tabs(self):
         from pdfeditor.app import AppWindow
         embedded = AppWindow()

@@ -525,6 +525,10 @@ def apply_theme_colors(app, dark):
         palette.setColor(QPalette.Disabled, role, QColor('#777777' if dark else '#a0a0a0'))
     app.setPalette(palette)
     app.setStyleSheet(DARK_STYLESHEET if dark else FLUENT_STYLESHEET)
+    for window in app.topLevelWidgets():
+        chrome = getattr(window, '_window_chrome', None)
+        if chrome is not None:
+            chrome.apply_theme(dark)
 
 
 def apply_fluent_theme(app):

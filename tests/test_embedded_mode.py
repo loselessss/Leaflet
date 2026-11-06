@@ -725,6 +725,12 @@ class EmbeddedModeTests(unittest.TestCase):
                         self.assertFalse(button.isHidden())
                         self.assertTrue(button.text())
                         self.assertFalse(button.icon().isNull())
+                        from PyQt5.QtCore import Qt
+                        self.assertEqual(button.toolButtonStyle(), Qt.ToolButtonIconOnly)
+                        if mode == 'reader':
+                            self.assertIn(tab._open_editor_act, tab._interaction_toolbar.actions())
+                            self.assertNotIn(tab._back_view_act, tab._interaction_toolbar.actions())
+                            self.assertNotIn(tab._forward_view_act, tab._interaction_toolbar.actions())
 
     def test_reader_rotation_actions_are_view_only_and_thumbnails_follow(self):
         from PyQt5.QtCore import Qt
@@ -1003,6 +1009,38 @@ class EmbeddedModeTests(unittest.TestCase):
                 self.assertEqual(window._start_page.mode_label.text(), expected)
                 self.assertIn('Display Renderer', [a.text() for a in window.findChildren(QAction)])
                 self.assertIsNone(window._update_service)
+
+    def test_home_workspace_switch_and_view_appearance_stay_out_of_embedded_windows(self):
+        from PyQt5.QtWidgets import QMenu
+        with self.document_windows() as (module, source):
+            for mode, handler in (('reader', 'open_editor'), ('editor', 'open_reader')):
+                window = module.new_window(force_new=True, workspace_mode=mode)
+                button = window._start_page.switch_mode_button
+                self.assertFalse(button.isHidden())
+                with patch.object(window, handler) as switch:
+                    button.click()
+                    switch.assert_called_once_with()
+                self.assertIn(window._appearance_menu,
+                    window._shell_menubar.findChildren(QMenu))
+                tab = window.open_in_tab(str(source))
+                self.assertIn(tab._appearance_menu, tab._menubar.findChildren(QMenu))
+            embedded = module.new_window()
+            self.assertTrue(embedded._start_page.switch_mode_button.isHidden())
+            self.assertFalse(hasattr(embedded, '_appearance_menu'))
+            with patch('pdfeditor.process_workspace.application_bridge') as bridge:
+                embedded.switch_workspace('editor')
+                bridge.assert_not_called()
+
+    def test_empty_home_handoff_keeps_documents_opened_while_waiting(self):
+        with self.document_windows() as (module, source):
+            window = module.new_window(workspace_mode='reader')
+            with patch.object(window, 'close') as close:
+                window._complete_workspace_handoff(None)
+                close.assert_called_once_with()
+                close.reset_mock()
+                window.open_in_tab(str(source))
+                window._complete_workspace_handoff(None)
+                close.assert_not_called()
 
     def test_renderer_choice_applies_to_existing_windows_without_restarting_or_losing_edits(self):
         from pdfeditor import settings

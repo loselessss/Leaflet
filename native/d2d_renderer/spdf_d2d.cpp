@@ -2,6 +2,7 @@
 #include "spdf_d2d.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cfloat>
 #include <cstring>
@@ -118,6 +119,53 @@ void set_adapter_name(ID3D11Device* device, SpdfD2DInfo* info) noexcept {
         SPDF_D2D_ADAPTER_NAME_LENGTH,
         description.Description,
         _TRUNCATE);
+}
+
+void document_night_color(const unsigned char* input, unsigned char* mapped) noexcept {
+    const auto low=(std::min)({input[0],input[1],input[2]});
+    const auto high=(std::max)({input[0],input[1],input[2]});
+    static const auto gray=[] {
+        std::array<unsigned char,256> values{};
+        for(std::size_t index=0;index<values.size();++index)
+            values[index]=static_cast<unsigned char>(std::lround(
+                (.12+.76*std::pow(1.-static_cast<double>(index)/255.,.8))*255.));
+        return values;
+    }();
+    if(high==low){mapped[0]=mapped[1]=mapped[2]=gray[low];return;}
+    const auto luminance=(.2126*input[2]+.7152*input[1]+.0722*input[0])/255.;
+    const auto target=.12+.76*std::pow((std::max)(0.,1.-luminance),.8);
+    const auto white=low/255.;
+    const auto ink=(std::max)(1.-white,1e-6);
+    auto colored=(std::clamp)(((high-low)/255./ink-.06)/.19,0.,1.);
+    colored=colored*colored*(3.-2.*colored);
+    for(int channel=0;channel<3;++channel) {
+        const auto value=input[channel]/255.;
+        const auto transformed=target>=luminance
+            ? value+(1.-value)*(target-luminance)/(std::max)(1.-luminance,1e-6)
+            : value*target/(std::max)(luminance,1e-6);
+        // Colored ink was antialiased against white paper. Replace that white
+        // contribution rather than retaining a bright fringe on dark paper.
+        const auto color=(std::min)(1.,(value-white)/ink*1.3)*ink+white*.12;
+        mapped[channel]=static_cast<unsigned char>(std::lround(
+            (std::clamp)(transformed+(color-transformed)*colored,0.,1.)*255.));
+    }
+}
+
+const std::array<unsigned char,33*33*33*4>& document_night_cube() noexcept {
+    static const auto cube=[] {
+        std::array<unsigned char,33*33*33*4> bytes{};
+        std::size_t offset=0;
+        for(unsigned int red=0;red<33;++red)for(unsigned int green=0;green<33;++green)
+            for(unsigned int blue=0;blue<33;++blue) {
+                const unsigned char input[]={static_cast<unsigned char>((blue*255+16)/32),
+                    static_cast<unsigned char>((green*255+16)/32),static_cast<unsigned char>((red*255+16)/32)};
+                unsigned char mapped[3];document_night_color(input,mapped);
+                bytes[offset++]=mapped[2];bytes[offset++]=mapped[1];
+                bytes[offset++]=mapped[0];bytes[offset++]=255;
+            }
+        return bytes;
+    }();
+    return cube;
 }
 
 class Surface {
@@ -1704,6 +1752,124 @@ public:
         return S_OK;
     }
 
+    HRESULT set_document_night_lut(const unsigned char* data,
+        std::uint32_t size, std::uint32_t edge) noexcept {
+        if (!data && size == 0 && edge == 0) {
+            night_composite_.Reset(); night_tone_.Reset(); night_lut_.Reset();
+            night_source_.Reset(); night_mask_.Reset();
+            return S_OK;
+        }
+        if(!data && size==0 && edge==33) {
+            const auto& cube=document_night_cube();data=cube.data();size=static_cast<std::uint32_t>(cube.size());
+        }
+        if (!data || edge < 2 || edge > 65 || size != edge*edge*edge*4) return E_INVALIDARG;
+        ComPtr<ID2D1DeviceContext2> context;
+        auto result = d2d_context_.As(&context);
+        if (FAILED(result)) return result;
+        const std::uint32_t extents[] = {edge, edge, edge};
+        const std::uint32_t strides[] = {edge*4, edge*edge*4};
+        return context->CreateLookupTable3D(D2D1_BUFFER_PRECISION_8BPC_UNORM,
+            extents, data, size, strides, &night_lut_);
+    }
+
+    HRESULT apply_document_night(const SpdfD2DNightPage* pages, std::uint32_t count) noexcept {
+        if (!drawing_ || layer_depth_ || axis_clip_depth_ || !mask_captures_.empty() ||
+            !composite_captures_.empty() || !pages || count == 0 || count > 128) return E_INVALIDARG;
+        if (!night_lut_ || !mask_lerp_available_) return S_FALSE;
+        for (std::uint32_t index=0; index<count; ++index) {
+            const auto& page=pages[index];
+            auto* bitmap=static_cast<Bitmap*>(page.mask);
+            if (!bitmap || bitmap->owner != this || !bitmap->resource ||
+                !std::isfinite(page.width) || !std::isfinite(page.height) ||
+                page.width <= 0 || page.height <= 0) return E_INVALIDARG;
+            const float values[] = {page.transform.m11,page.transform.m12,page.transform.m21,
+                page.transform.m22,page.transform.dx,page.transform.dy};
+            for (const auto value:values) if(!std::isfinite(value))return E_INVALIDARG;
+        }
+        ComPtr<ID2D1Image> current;
+        d2d_context_->GetTarget(&current);
+        ComPtr<ID2D1Bitmap1> target;
+        auto result=current.As(&target);
+        if(FAILED(result))return result;
+        const auto size=target->GetPixelSize();
+        // Two reusable, at most 2048-square surfaces: <=32 MiB, even on 8K
+        // monitors or at 3200% zoom. No readback or scene replay is involved.
+        const auto tile=D2D1::SizeU((std::min)(size.width,2048U),(std::min)(size.height,2048U));
+        if(!night_source_ || night_source_->GetPixelSize().width != tile.width ||
+            night_source_->GetPixelSize().height != tile.height) {
+            night_composite_.Reset(); night_tone_.Reset();
+            night_source_.Reset(); night_mask_.Reset();
+            auto properties=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                target->GetPixelFormat(),dpi_,dpi_);
+            result=d2d_context_->CreateBitmap(tile,nullptr,0,properties,&night_source_);
+            properties.bitmapOptions=D2D1_BITMAP_OPTIONS_TARGET;
+            if(SUCCEEDED(result))result=d2d_context_->CreateBitmap(tile,nullptr,0,properties,&night_mask_);
+            if(FAILED(result)){night_source_.Reset();night_mask_.Reset();return S_FALSE;}
+        }
+        if(!night_tone_) {
+            result=d2d_context_->CreateEffect(CLSID_D2D1LookupTable3D,&night_tone_);
+            if(SUCCEEDED(result))result=night_tone_->SetValue(D2D1_LOOKUPTABLE3D_PROP_LUT,night_lut_.Get());
+            if(SUCCEEDED(result))result=night_tone_->SetValue(
+                D2D1_LOOKUPTABLE3D_PROP_ALPHA_MODE,D2D1_ALPHA_MODE_PREMULTIPLIED);
+            if(SUCCEEDED(result))result=d2d_context_->CreateEffect(CLSID_SpdfMaskLerp,&night_composite_);
+            if(FAILED(result)){night_tone_.Reset();night_composite_.Reset();return S_FALSE;}
+            night_tone_->SetInput(0,night_source_.Get());
+            night_composite_->SetInput(0,night_source_.Get());
+            night_composite_->SetInputEffect(1,night_tone_.Get());
+            night_composite_->SetInput(2,night_mask_.Get());
+        }
+        D2D1_MATRIX_3X2_F previous;
+        d2d_context_->GetTransform(&previous);
+        const auto blend=d2d_context_->GetPrimitiveBlend();
+        const auto dip=96.0f/dpi_;
+        for(UINT32 top=0; top<size.height; top+=tile.height) {
+            for(UINT32 left=0; left<size.width; left+=tile.width) {
+                const auto width=(std::min)(tile.width,size.width-left);
+                const auto height=(std::min)(tile.height,size.height-top);
+                // Flush before reusing inputs referenced by the previous tile.
+                result=d2d_context_->Flush();
+                if(FAILED(result))break;
+                d2d_context_->SetTarget(nullptr);
+                const auto rectangle=D2D1::RectU(left,top,left+width,top+height);
+                result=night_source_->CopyFromBitmap(nullptr,target.Get(),&rectangle);
+                if(FAILED(result))break;
+                d2d_context_->SetTarget(night_mask_.Get());
+                d2d_context_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+                d2d_context_->Clear(D2D1::ColorF(0,0,0,0));
+                for(std::uint32_t index=0;index<count;++index) {
+                    const auto& page=pages[index];
+                    const auto& matrix=page.transform;
+                    d2d_context_->SetTransform(D2D1::Matrix3x2F(matrix.m11,matrix.m12,matrix.m21,
+                        matrix.m22,matrix.dx-left*dip,matrix.dy-top*dip));
+                    const auto area=D2D1::RectF(0,0,page.width,page.height);
+                    auto* bitmap=static_cast<Bitmap*>(page.mask);
+                    d2d_context_->DrawBitmap(bitmap->resource.Get(),area,1.,D2D1_INTERPOLATION_MODE_LINEAR);
+                }
+                d2d_context_->SetTarget(target.Get());
+                d2d_context_->SetTransform(D2D1::Matrix3x2F::Identity());
+                // Bitmap contents changed since the previous tile/frame.
+                // Invalidate the cached effect graph after writing both inputs.
+                night_tone_->SetInput(0,night_source_.Get(),TRUE);
+                night_composite_->SetInput(0,night_source_.Get(),TRUE);
+                night_composite_->SetInputEffect(1,night_tone_.Get(),TRUE);
+                night_composite_->SetInput(2,night_mask_.Get(),TRUE);
+                const auto area=D2D1::RectF(0,0,width*dip,height*dip);
+                // SOURCE_COPY also clears outside its input bounds. Restrict it
+                // to this tile so later source copies still see original pixels.
+                d2d_context_->PushAxisAlignedClip(D2D1::RectF(left*dip,top*dip,
+                    (left+width)*dip,(top+height)*dip),D2D1_ANTIALIAS_MODE_ALIASED);
+                d2d_context_->DrawImage(night_composite_.Get(),D2D1::Point2F(left*dip,top*dip),area,
+                    D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,D2D1_COMPOSITE_MODE_SOURCE_COPY);
+                d2d_context_->PopAxisAlignedClip();
+            }
+            if(FAILED(result))break;
+        }
+        d2d_context_->SetTarget(target.Get());
+        d2d_context_->SetTransform(previous);
+        d2d_context_->SetPrimitiveBlend(blend);
+        return result;
+    }
+
     HRESULT end_frame() noexcept {
         if (!d2d_context_ || !drawing_) {
             return E_UNEXPECTED;
@@ -2261,6 +2427,9 @@ private:
     std::vector<ComPtr<ID2D1Bitmap1>> pending_coverage_;
     std::uint64_t composite_bytes_ = 0;
     ComPtr<ID2D1LookupTable3D> luminosity_lut_;
+    ComPtr<ID2D1LookupTable3D> night_lut_;
+    ComPtr<ID2D1Bitmap1> night_source_, night_mask_;
+    ComPtr<ID2D1Effect> night_tone_, night_composite_;
     std::uint32_t layer_depth_ = 0;
     std::uint32_t axis_clip_depth_ = 0;
     bool drawing_ = false;
@@ -3907,6 +4076,116 @@ std::int32_t spdf_d2d_begin_frame(void* surface, std::uint32_t argb) noexcept {
 
 std::int32_t spdf_d2d_video_memory(void* surface, std::uint64_t* budget, std::uint64_t* usage) noexcept {
     return surface ? static_cast<std::int32_t>(static_cast<Surface*>(surface)->video_memory(budget, usage))
+                   : static_cast<std::int32_t>(E_INVALIDARG);
+}
+
+std::int32_t spdf_d2d_set_document_night_lut(void* surface, const unsigned char* data,
+    std::uint32_t size, std::uint32_t edge) noexcept {
+    return surface ? static_cast<std::int32_t>(static_cast<Surface*>(surface)->set_document_night_lut(data,size,edge))
+                   : static_cast<std::int32_t>(E_INVALIDARG);
+}
+
+std::int32_t spdf_document_night_pixels(const unsigned char* source, std::uint32_t width,
+    std::uint32_t height, std::uint32_t stride, const unsigned char* coverage,
+    unsigned char* output, std::uint32_t output_stride) noexcept {
+    if(!source || !coverage || !output || !width || !height ||
+        static_cast<std::uint64_t>(width)*height>6'000'000 || stride<width*4 || output_stride<width*4)
+        return static_cast<std::int32_t>(E_INVALIDARG);
+    for(std::uint32_t y=0;y<height;++y) {
+        const auto* input=source+static_cast<std::size_t>(y)*stride;
+        auto* destination=output+static_cast<std::size_t>(y)*output_stride;
+        for(std::uint32_t x=0;x<width;++x,input+=4,destination+=4) {
+            const auto alpha=coverage[static_cast<std::size_t>(y)*width+x];
+            if(!alpha || !input[3]) {
+                std::memcpy(destination,input,4);
+                continue;
+            }
+            unsigned char mapped[3];
+            document_night_color(input,mapped);
+            for(int channel=0;channel<3;++channel)
+                destination[channel]=static_cast<unsigned char>(
+                    (input[channel]*(255-alpha)+mapped[channel]*alpha+127)/255);
+            destination[3]=input[3];
+        }
+    }
+    return static_cast<std::int32_t>(S_OK);
+}
+
+std::int32_t spdf_document_night_mask(const unsigned char* source, std::uint32_t width,
+    std::uint32_t height, std::uint32_t stride, unsigned char* coverage, std::uint32_t* flags) noexcept {
+    if(!source || !coverage || !flags || !width || !height || width>512 || height>512 || stride<width*4)
+        return static_cast<std::int32_t>(E_INVALIDARG);
+    try {
+        const auto count=width*height;
+        std::vector<unsigned char> candidate(count);
+        std::uint32_t paper=0, colored=0, midtones=0, border=0, dark_border=0;
+        for(std::uint32_t y=0;y<height;++y) {
+            const auto* row=source+static_cast<std::size_t>(y)*stride;
+            for(std::uint32_t x=0;x<width;++x) {
+                const auto* pixel=row+x*4;
+                const auto sum=static_cast<unsigned int>(pixel[0])+pixel[1]+pixel[2];
+                const auto chroma=(std::max)({pixel[0],pixel[1],pixel[2]})-
+                    (std::min)({pixel[0],pixel[1],pixel[2]});
+                if(sum>597 && chroma<46)++paper;
+                if(chroma>46)++colored;
+                if(sum>115 && sum<597)++midtones;
+                candidate[y*width+x]=static_cast<unsigned char>(sum<550 || chroma>51);
+                if(x==0 || y==0 || x+1==width || y+1==height) {
+                    ++border;if(sum<383)++dark_border;
+                }
+            }
+        }
+        if(paper<count*.03 || (paper<count*.25 && dark_border>border/2)) {
+            std::memset(coverage,0,count);return static_cast<std::int32_t>(S_FALSE);
+        }
+        *flags=(paper>count*.55 && colored<count*.02 && midtones<count*.15)?1U:0U;
+        std::memset(coverage,255,count);
+        std::vector<std::uint32_t> pending;
+        pending.reserve(count/8+1);
+        for(std::uint32_t start=0;start<count;++start) {
+            if(!candidate[start])continue;
+            pending.clear();pending.push_back(start);candidate[start]=0;
+            auto left=start%width, right=left, top=start/width, bottom=top;
+            std::uint32_t pixels=0;
+            while(!pending.empty()) {
+                const auto index=pending.back();pending.pop_back();++pixels;
+                const auto x=index%width,y=index/width;
+                left=(std::min)(left,x);right=(std::max)(right,x);
+                top=(std::min)(top,y);bottom=(std::max)(bottom,y);
+                const auto visit=[&](std::uint32_t neighbor) {
+                    if(candidate[neighbor]){candidate[neighbor]=0;pending.push_back(neighbor);}
+                };
+                if(x)visit(index-1);if(x+1<width)visit(index+1);
+                if(y)visit(index-width);if(y+1<height)visit(index+width);
+            }
+            const auto box_width=right-left+1,box_height=bottom-top+1;
+            // Dense two-dimensional fields are backgrounds/artwork. Thin
+            // glyphs and paragraph strokes remain eligible for night text.
+            if(box_width>=12 && box_height>=12 && pixels*100ULL>=box_width*box_height*72ULL) {
+                const auto ink=[&](std::uint32_t x,std::uint32_t y) {
+                    const auto* pixel=source+static_cast<std::size_t>(y)*stride+x*4;
+                    const auto sum=static_cast<unsigned int>(pixel[0])+pixel[1]+pixel[2];
+                    return sum<550 || (std::max)({pixel[0],pixel[1],pixel[2]})-
+                        (std::min)({pixel[0],pixel[1],pixel[2]})>51;
+                };
+                std::uint32_t boundary=0,filled=0;
+                for(auto x=left;x<=right;++x){boundary+=2;filled+=ink(x,top)+ink(x,bottom);}
+                for(auto y=top+1;y<bottom;++y){boundary+=2;filled+=ink(left,y)+ink(right,y);}
+                // Rounded glyphs must not be mistaken for a filled dark panel.
+                if(filled*4>=boundary*3)
+                    for(auto y=top;y<=bottom;++y)
+                        std::memset(coverage+y*width+left,0,box_width);
+            }
+        }
+        return static_cast<std::int32_t>(S_OK);
+    } catch(const std::bad_alloc&) {
+        return static_cast<std::int32_t>(E_OUTOFMEMORY);
+    }
+}
+
+std::int32_t spdf_d2d_apply_document_night(void* surface,
+    const SpdfD2DNightPage* pages, std::uint32_t count) noexcept {
+    return surface ? static_cast<std::int32_t>(static_cast<Surface*>(surface)->apply_document_night(pages,count))
                    : static_cast<std::int32_t>(E_INVALIDARG);
 }
 

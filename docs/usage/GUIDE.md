@@ -1,10 +1,15 @@
 # Leaflet usage guide
 
-Use the ribbon's **Dark mode** button to switch immediately. Its arrow menu offers
+Use the ribbon's **moon icon** to switch light/dark mode immediately. **View → Dark mode** offers
 **Light mode / Dark mode / Follow Windows settings**. Your choice is remembered;
-the PDF's original colors stay unchanged. Editing commands use a magic wand icon.
+the PDF's original colors stay unchanged. The reader ribbon's **magic wand** opens the editor.
 
-The home screen shows **Reader mode / Editor mode**. The **Leaflet** Start menu entry
+**View → Dark mode → Dark document** is an independent, optional display setting.
+It adjusts bright paper and text while preserving pictures and dark areas when possible.
+Paper-like scans can also be adjusted; complex or uncertain artwork may stay original.
+Turn the option off for reference colors. Saving, printing and exporting remain unchanged.
+
+The home screen shows **Reader mode / Editor mode**. **Switch to Editor / Switch to Reader** opens the other mode; the empty previous home closes after the new window is ready. The **Leaflet** Start menu entry
 opens Reader; **Leaflet Editor** opens Editor. View → Display Renderer offers automatic,
 GPU and CPU display plus a vector page cache limit. Both apply immediately. Switching
 renderers preserves the current page, zoom, reading position and unsaved changes.

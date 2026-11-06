@@ -141,6 +141,37 @@ class AppearanceTests(unittest.TestCase):
             self.app.removeNativeEventFilter(controller.native_filter)
             controller.deleteLater()
 
+    def test_view_menu_and_ribbon_keep_the_same_appearance_settings(self):
+        from PyQt5.QtWidgets import QMenu
+        from pdfeditor.appearance import add_appearance_menu
+        from pdfeditor import settings
+        button = self.button()
+        view = QMenu()
+        try:
+            menu = add_appearance_menu(view)
+            self.assertIsNone(button.menu())
+            menu.mode_actions['dark'].trigger()
+            self.assertTrue(button.isChecked())
+            button.click()
+            self.assertTrue(menu.mode_actions['light'].isChecked())
+            menu.document_action.trigger()
+            self.assertTrue(settings.document_night())
+            self.assertTrue(button.document_action.isChecked())
+        finally:
+            view.deleteLater()
+
+    def test_document_colors_are_independent_of_ui_theme_and_sync_buttons(self):
+        from pdfeditor import settings
+        first, second = self.button(), self.button()
+        self.assertFalse(settings.document_night())
+        first.document_action.trigger()
+        self.assertTrue(settings.document_night())
+        self.assertTrue(second.document_action.isChecked())
+        self.assertFalse(self.app.property('leafletDark'))
+        second.document_action.trigger()
+        self.assertFalse(settings.document_night())
+        self.assertFalse(first.document_action.isChecked())
+
     def test_invalid_theme_values_keep_system_default_and_preserve_settings(self):
         from pdfeditor import settings
         settings._save({'theme_mode': 'invalid', 'recent': ['keep.pdf']})

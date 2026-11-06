@@ -170,6 +170,18 @@ class ProcessIsolationTests(unittest.TestCase):
         self.assertFalse(self.reader.isVisible())
         self.assertEqual(self.report(child)["mode"], "editor")
 
+    def test_empty_home_switch_waits_for_the_other_process_before_closing(self):
+        home = app.new_window(force_new=True, workspace_mode='reader')
+        home.show()
+        child = home.switch_workspace('editor')
+        self.assertIn(home, app._app_windows)
+        self.assertTrue(home.isVisible())
+        self.wait(lambda: child.status == 'opened')
+        self.wait(lambda: home not in app._app_windows)
+        self.wait(lambda: self.report(child).get('mode') == 'editor')
+        self.assertEqual(self.report(child)['mode'], 'editor')
+        self.assertFalse(self.report(child).get('document'))
+
     def direct_process(self, mode=None, parent=None):
         args = [process_python_executable(), str(Path(__file__).with_name("workspace_process_fixture.py")),
                 str(self.path), "--no-updates"]

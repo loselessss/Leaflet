@@ -208,6 +208,16 @@ class Document:
 
     # --- 렌더 -------------------------------------------------------
 
+    def display_image_regions(self, index):
+        """Image bounds in visible page coordinates; used only by optional night display."""
+        page = self._doc[index]
+        rotation = page.rotation_matrix
+        images = page.get_image_info()
+        if len(images) > 4096:
+            raise ValueError('Too many images for optional document color analysis')
+        return [tuple(fitz.Rect(info['bbox'])*rotation) for info in images
+                if info.get('colorspace', 3) != 0]  # Stencils may be text, not photographs.
+
     def render(self, index, zoom=1.0, *, copy_pixels=True):
         """페이지를 RGB888 픽셀로 렌더. (width, height, stride, bytes) 반환.
 

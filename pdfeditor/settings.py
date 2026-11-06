@@ -8,7 +8,7 @@ import time
 from .zoom_limits import MAX_SAVED_ZOOM
 
 PATH = os.path.expanduser("~/.spdf.json")
-_OLD_PATH = os.path.expanduser("~/.pdfeditor.json")  # 개명 전 설정 파일
+_OLD_PATH = os.path.expanduser("~/.pdfeditor.json")  # 이전 설정 경로(호환용)
 MAX_RECENT = 10
 DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 96
@@ -25,7 +25,7 @@ DEFAULT_RENDER_BACKEND = "auto"
 
 
 def _load():
-    # sPDF로 개명하면서 설정 파일도 이사 — 예전 파일이 있으면 한 번만 옮긴다.
+    # 현재 설정이 없으면 이전 경로의 설정을 한 번만 가져온다.
     if not os.path.exists(PATH) and os.path.exists(_OLD_PATH):
         try:
             os.rename(_OLD_PATH, PATH)
@@ -164,6 +164,16 @@ def set_ui_language(language):
 def theme_mode():
     mode = _load().get("theme_mode", "system")
     return mode if mode in ("system", "light", "dark") else "system"
+
+
+def document_night():
+    return _load().get("document_night", False) is True
+
+
+def set_document_night(enabled):
+    data = _load()
+    data["document_night"] = bool(enabled)
+    _save(data)
 
 
 def set_theme_mode(mode):

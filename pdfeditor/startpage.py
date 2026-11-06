@@ -64,8 +64,9 @@ class StartPage(QWidget):
     browse = pyqtSignal()
     lists_changed = pyqtSignal()  # 즐겨찾기/최근 목록이 바뀜 (메뉴 갱신용)
     back_to_doc = pyqtSignal()    # 열어둔 문서로 돌아가기
+    workspace_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None, *, workspace_mode=None):
+    def __init__(self, parent=None, *, workspace_mode=None, workspace_switching=False):
         super().__init__(parent)
         self.setObjectName("startPage")
         root = QVBoxLayout(self)
@@ -129,6 +130,15 @@ class StartPage(QWidget):
         root.addSpacing(8)
         row = QHBoxLayout()
         row.addWidget(btn)
+        target_mode = 'editor' if workspace_mode == 'reader' else 'reader'
+        self.switch_mode_button = QPushButton(localize('Switch to Editor', '편집 모드로 전환')
+            if target_mode == 'editor' else localize('Switch to Reader', '읽기 모드로 전환'))
+        self.switch_mode_button.setObjectName('startWorkspaceSwitch')
+        self.switch_mode_button.setIcon(fluent_icon('magic_wand' if target_mode == 'editor' else 'open'))
+        self.switch_mode_button.setVisible(workspace_switching and workspace_mode in ('reader', 'editor'))
+        self.switch_mode_button.clicked.connect(lambda _checked=False:
+            self.workspace_requested.emit(target_mode))
+        row.addWidget(self.switch_mode_button)
         row.addWidget(self._back_btn)
         row.addStretch(1)
         root.addLayout(row)

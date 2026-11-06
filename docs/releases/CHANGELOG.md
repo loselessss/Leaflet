@@ -1,11 +1,18 @@
 # Changelog
 
-## Unreleased (1.38.1)
+## Unreleased (1.39.0)
+
+### 새 기능
+
+- Add optional document night mode under View → Dark mode. Darken bright paper and lighten text while preserving pictures and already-dark areas when possible, without changing the PDF file.
 
 ### 개선
 
-- Add a labeled Dark mode button to the reader and editor ribbon. Switch immediately between light, dark and Windows appearance, and remember the choice.
-- Use a magic wand icon for editor entry and text editing mode.
+- Add an icon-only Dark mode button to the reader and editor ribbon. Switch immediately between light, dark and Windows appearance, and remember the choice.
+- Put the editor's magic wand on the reader ribbon and remove its back/forward navigation buttons.
+- Keep custom title bars, document tabs and window controls readable in light and dark mode.
+- Switch between Reader and Editor from the home screen; close the empty previous home only after the other workspace is ready.
+- Center the ribbon moon without a split arrow and move appearance options to View → Dark mode, with menu labels shown in full on the home screen and in documents.
 
 ## 1.38.0 - 2026-11-05
 

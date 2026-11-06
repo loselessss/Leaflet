@@ -52,6 +52,25 @@ struct SpdfD2DTransform {
     float dy;
 };
 
+struct SpdfD2DNightPage {
+    void* mask;
+    SpdfD2DTransform transform;
+    float width;
+    float height;
+};
+
+// Optional display-only effects; no scene, document or existing ABI changes.
+SPDF_D2D_API std::int32_t spdf_d2d_set_document_night_lut(
+    void* surface, const unsigned char* data, std::uint32_t size, std::uint32_t edge) noexcept;
+SPDF_D2D_API std::int32_t spdf_d2d_apply_document_night(
+    void* surface, const SpdfD2DNightPage* pages, std::uint32_t count) noexcept;
+SPDF_D2D_API std::int32_t spdf_document_night_pixels(
+    const unsigned char* source, std::uint32_t width, std::uint32_t height, std::uint32_t stride,
+    const unsigned char* coverage, unsigned char* output, std::uint32_t output_stride) noexcept;
+SPDF_D2D_API std::int32_t spdf_document_night_mask(
+    const unsigned char* source, std::uint32_t width, std::uint32_t height,
+    std::uint32_t stride, unsigned char* coverage, std::uint32_t* flags) noexcept;
+
 struct SpdfD2DGradientStop {
     float position;
     std::uint32_t argb;

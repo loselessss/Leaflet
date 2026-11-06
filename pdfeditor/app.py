@@ -335,7 +335,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         sidebar_layout.addWidget(self._sidebar_stack, 1)
         if self._shell.workspace_mode in ("reader", "editor"):
             from .reader_view import TiledPageView
-            self.view = TiledPageView()
+            self.view = TiledPageView(document_colors=True)
             self.view.render_failed.connect(lambda error: self.statusBar().showMessage(
                 localize("Detailed rendering failed: ", "선명한 화면 표시 실패: ") + error, 6000))
             self.view.render_device_changed.connect(
@@ -611,6 +611,10 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             o.menuAction().setVisible(False)
 
         v = self.menuBar().addMenu("보기(&V)")
+        if self._shell.workspace_mode in ('reader', 'editor'):
+            from .appearance import add_appearance_menu
+            self._appearance_menu = add_appearance_menu(v)
+            v.addSeparator()
         if self._shell._renderer_settings_enabled():
             self._shell._add_renderer_menu(v)
             v.addSeparator()
@@ -706,8 +710,6 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             tool_bar.setIconSize(QSize(20, 20))
             tool_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
             tool_bar.addAction(self._open_act)
-            tool_bar.addAction(self._back_view_act)
-            tool_bar.addAction(self._forward_view_act)
             tool_bar.addAction(self._save_act)
             tool_bar.addAction(self._print_act)
             tool_bar.addSeparator()
@@ -716,8 +718,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             tool_bar.addSeparator()
             tool_bar.addAction(self._hand_tool_act)
             tool_bar.addAction(self._select_tool_act)
-            if self._open_editor_act is None:
-                tool_bar.addAction(self._edit_act)
+            tool_bar.addAction(self._open_editor_act or self._edit_act)
             tool_bar.addSeparator()
             tool_bar.addAction(self._pages_act)
             tool_bar.addAction(self._rotate_ccw_act)
@@ -749,6 +750,7 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         if self._shell.workspace_mode in ("reader", "editor"):
             from .appearance import add_theme_button
             self._theme_button = add_theme_button(tool_bar, self._undo_act)
+            self.view.bind_appearance_controller(self._theme_button.controller)
         self.addToolBar(Qt.TopToolBarArea, tool_bar)
         self._interaction_toolbar = tool_bar
 
@@ -1439,10 +1441,12 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
         self._presentation_window_state = None
 
         self._start_page = StartPage(workspace_mode=(
-            self.workspace_mode or ("reader" if self.read_only else "editor")))
+            self.workspace_mode or ("reader" if self.read_only else "editor")),
+            workspace_switching=self.workspace_mode in ('reader', 'editor'))
         self._start_page.open_file.connect(self.open_recent)
         self._start_page.browse.connect(self.open_dialog)
         self._start_page.back_to_doc.connect(self._show_tabs_if_any)
+        self._start_page.workspace_requested.connect(self.switch_workspace)
 
         if workspace_mode in ("reader", "editor"):
             from .window_chrome import DocumentTabs, WindowChrome
@@ -1716,8 +1720,13 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
                 self, "미저장 작업 복구...", None, self.show_recovery, "undo"))
         m.addAction(_make_action(
             self, "종료", "Ctrl+Q", self.request_exit, "power"))
-        if self._renderer_settings_enabled():
-            self._add_renderer_menu(mb.addMenu("보기(&V)"))
+        if self.workspace_mode in ('reader', 'editor') or self._renderer_settings_enabled():
+            view_menu = mb.addMenu("보기(&V)")
+            if self.workspace_mode in ('reader', 'editor'):
+                from .appearance import add_appearance_menu
+                self._appearance_menu = add_appearance_menu(view_menu)
+            if self._renderer_settings_enabled():
+                self._add_renderer_menu(view_menu)
         h = mb.addMenu("도움말(&H)")
         h.addAction(_make_action(
             self, "사용법", "F1", self._shell_help, "help"))

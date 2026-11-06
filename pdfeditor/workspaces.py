@@ -16,6 +16,15 @@ def workspace_policy(mode, read_only, annotations_enabled):
 
 
 class WindowWorkspaceMixin:
+    def switch_workspace(self, mode):
+        if self.workspace_mode not in ('reader', 'editor') or mode == self.workspace_mode:
+            return None
+        if mode == 'editor':
+            return self.open_editor()
+        if mode == 'reader':
+            return self.open_reader()
+        return None
+
     @property
     def workspace_mode(self):
         return self._workspace_mode
@@ -60,8 +69,12 @@ class WindowWorkspaceMixin:
             return None
 
     def _complete_workspace_handoff(self, source):
-        """Close only the source document after its peer opened successfully."""
-        if source is None or self._tabs.indexOf(source) < 0:
+        """Close the source document or empty home after its peer is ready."""
+        if source is None:
+            if self._tabs.count() == 0:
+                self.close()
+            return
+        if self._tabs.indexOf(source) < 0:
             return
         if (source._dirty and source._recovery.revision !=
                 getattr(source, "_workspace_handoff_revision", -1)):

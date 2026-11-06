@@ -208,7 +208,7 @@ class WorkspaceBridge(QObject):
                 if child.channel is not None and child.status in ("opened", "open_failed", "open_timeout"):
                     child.request = request
                     self.pending[request["request_id"]] = time.monotonic()
-                    if handoff_source and source is not None and path:
+                    if handoff_source and (source is None or path):
                         self.handoffs[request["request_id"]] = (shell, source)
                     child.channel.send("open", **request)
                 return child
@@ -224,7 +224,7 @@ class WorkspaceBridge(QObject):
         child = EditorProcess(process, path, mode, request, last_seen=time.monotonic())
         self.children.append(child)
         self.pending[request["request_id"]] = time.monotonic()
-        if handoff_source and source is not None and path:
+        if handoff_source and (source is None or path):
             self.handoffs[request["request_id"]] = (shell, source)
         self.report(localize("Opening a separate workspace process…", "별도 작업 프로세스를 여는 중…"))
         return child
