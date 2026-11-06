@@ -18,11 +18,13 @@ opens Reader; **Leaflet Editor** opens Editor. View → Display Renderer offers 
 GPU and CPU display plus a vector page cache limit. Both apply immediately. Switching
 renderers preserves the current page, zoom, reading position and unsaved changes.
 
-Up to 32 nearby vector pages are prepared sequentially when memory permits. Recent scenes remain ready;
+Nearby vector pages are prepared sequentially based on scene sizes and available memory, without fixed page-count limits. Recent scenes remain ready;
 displaced scenes are compressed in RAM. The packed tier uses at most one quarter of the cache budget,
-capped at 256 MiB and 128 entries, charging in-flight source packets too. Edits, close and memory pressure
+charging in-flight source packets too. Edits, close and memory pressure
 clear stale entries. Pages are never prepared eagerly across the entire document. Restored scenes may
 still require GPU upload and composition.
+While idle, nearby pages are also uploaded to the GPU one at a time, including complex pages.
+GPU retention follows available VRAM and reserves room for the active page.
 
 English | [한국어](GUIDE.ko.md)
 

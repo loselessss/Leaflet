@@ -1120,7 +1120,7 @@ class EditorWorkspaceTests(unittest.TestCase):
         reading = reader._tabs.currentWidget()
         self.assertFalse(hasattr(reading, "_editor_mode_button"))
         self.assertEqual(reading._open_editor_act.shortcut().toString(), "Ctrl+E")
-        self.assertNotIn(reading._open_editor_act, reading._interaction_toolbar.actions())
+        self.assertIn(reading._open_editor_act, reading._interaction_toolbar.actions())
         self.assertIsNone(reading._workspace_header)
         with patch.object(reader, "open_editor") as launch:
             reading._open_editor_act.trigger()

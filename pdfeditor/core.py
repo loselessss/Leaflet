@@ -365,7 +365,7 @@ class Document:
         archive = getattr(self, '_gpu_packed_cache', None)
         if archive is None:
             archive = self._gpu_packed_cache = SceneMemoryCache()
-        limit = min(256 * 1024 * 1024, self.gpu_scene_memory_budget() // 3)
+        limit = self.gpu_scene_memory_budget() // 3
         archive.trim(limit if render_memory().prefetch_pages else 0)
         archive.store(key, scene)
 
@@ -397,7 +397,7 @@ class Document:
         self.reserve_gpu_scene_memory(0, protected)
         archive = getattr(self, '_gpu_packed_cache', None)
         if archive is not None:
-            archive.trim(min(256 * 1024 * 1024, self.gpu_scene_memory_budget() // 3)
+            archive.trim(self.gpu_scene_memory_budget() // 3
                          if render_memory().prefetch_pages else 0)
 
     def gpu_scene_disk_cache_key(self, index, raster_scale=1.0):

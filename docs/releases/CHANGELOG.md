@@ -8,7 +8,7 @@
 
 ### 개선
 
-- Prepare up to 32 nearby vector pages when memory permits. Keep recent scenes ready and archive displaced scenes with background LZ4 compression in RAM, restoring them without disk access or PDF recompilation. Clear stale scenes on edits, close and memory pressure.
+- Prepare nearby vector pages according to scene sizes and available memory, without fixed page-count limits. Keep recent scenes ready and archive displaced scenes with background LZ4 compression in RAM, restoring them without disk access or PDF recompilation. Clear stale scenes on edits, close and memory pressure.
 - Right-click the moon to choose document inclusion. Remove accidental command-bar hiding from the default context menu; toggle the command bar with its checkbox in View.
 - Add an icon-only Dark mode button to the reader and editor ribbon. Switch immediately between light, dark and Windows appearance, and remember the choice.
 - Put the editor's magic wand on the reader ribbon and remove its back/forward navigation buttons.

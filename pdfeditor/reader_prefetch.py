@@ -61,7 +61,6 @@ class ReaderPrefetchMixin:
         budget = vector_gpu_budget(self._document.gpu_scene_memory_budget(), video)
         self._native_retention_budget = budget
         used = 0
-        kept = len(self._page_sizes)
         for page in reversed(tuple(self._d2d_vector_paths)):
             cached = self._d2d_vector_paths[page]
             if page in self._page_sizes:
@@ -74,18 +73,27 @@ class ReaderPrefetchMixin:
                     page, cached[0].raster_scale, memory_only=True, restore_compressed=False)
             if self._document.has_packed_gpu_scene(page, cached[0].raster_scale):
                 current = None  # Release the raw packet reference held by inactive native scenes too.
-            if current is not cached[0] or used + cost > budget or kept >= 128:
+            if current is not cached[0] or used + cost > budget:
                 self._discard_native_vector_page(page)
             else:
                 used += cost
-                kept += 1
         self._vector_viewport_pages = {p: scene for p, scene in self._vector_viewport_pages.items()
             if p in self._page_sizes or p in self._d2d_vector_paths}
 
     def _nearby_prefetch_pages(self):
         if self._document is None or not self._page_sizes:
             return []
-        count = render_memory().prefetch_pages
+        memory = render_memory()
+        count = memory.prefetch_pages
+        if not count:
+            return []
+        samples = len(self._document._gpu_vector_cache)
+        if samples:
+            # Small papers can fit many more pages than image-heavy posters.
+            average = max(MIB, self._document._gpu_vector_cache_bytes // samples)
+            budget = min(memory.scene_bytes * 3 // 4, self._document.gpu_scene_memory_budget())
+            count = max(count, budget // average)
+        count = min(count, self._document.page_count)
         first, last = min(self._page_sizes), max(self._page_sizes)
         candidates = []
         for distance in range(1, count + 1):
@@ -139,14 +147,14 @@ class ReaderPrefetchMixin:
             prepared = document.cached_gpu_vector_page(page, scale, memory_only=True,
                                                        restore_compressed=False)
             if prepared is not None:
-                # Upload at most one modest vector page per idle turn. Complex
-                # posters still defer their expensive upload until displayed.
+                # Upload one page per idle turn, including complex posters.
+                # Actual RAM/VRAM budgets replace command-count/page-count caps.
                 from .core import _gpu_scene_cost
                 resident = sum(_gpu_scene_cost(cached[0]) for p, cached in self._d2d_vector_paths.items()
                                if p not in self._page_sizes)
                 if (self._d2d_surface is not None and prepared.compiled_packet and
                         resident + _gpu_scene_cost(prepared) <= self._native_retention_budget and
-                        prepared.command_count <= 2048 and page not in self._d2d_vector_paths):
+                        page not in self._d2d_vector_paths):
                     try:
                         self._native_vector_draws(page, prepared)
                         self._trim_nearby_native_pages()

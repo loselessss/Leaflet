@@ -441,7 +441,7 @@ class ReaderViewTests(unittest.TestCase):
 
     def test_idle_prefetch_uploads_prepared_vector_page_without_rasterizing_it(self):
         from pdfeditor.gpu_raster import VectorPage
-        prepared = VectorPage(True, compiled_packet=b'owned-vector-packet', command_count=1)
+        prepared = VectorPage(True, compiled_packet=b'owned-vector-packet', command_count=30000)
         self.doc.install_gpu_vector_page(1, prepared, persist=False)
         self.view._prefetch_attempted.add((self.doc.render_generation, 1, 1.))
         surface = Mock()
@@ -475,6 +475,31 @@ class ReaderViewTests(unittest.TestCase):
             self.assertIs(self.doc.cached_gpu_vector_page(1, memory_only=True), scene)
         finally:
             self.view._d2d_surface = None
+
+    def test_memory_can_prepare_more_than_32_nearby_pages_and_pressure_stops_it(self):
+        from pdfeditor.gpu_raster import VectorPage
+        from pdfeditor.render_memory import RenderMemory, MIB
+        from unittest.mock import PropertyMock
+        self.doc.install_gpu_vector_page(0, VectorPage(True), persist=False)
+        with patch.object(type(self.doc), 'page_count', new_callable=PropertyMock, return_value=200), \
+                patch('pdfeditor.reader_prefetch.render_memory', return_value=RenderMemory(512*MIB, 16)):
+            self.assertGreater(len(self.view._nearby_prefetch_pages()), 32)
+        with patch('pdfeditor.reader_prefetch.render_memory', return_value=RenderMemory(16*MIB, 0)):
+            self.assertEqual(self.view._nearby_prefetch_pages(), [])
+
+    def test_native_gpu_retention_has_no_128_page_cap(self):
+        from pdfeditor.gpu_raster import VectorPage
+        from pdfeditor.render_memory import MIB
+        scene = VectorPage(True)
+        for page in range(1, 151):
+            self.view._d2d_vector_paths[page] = (scene, (), (), Mock(closed=False))
+        with patch.object(self.doc, 'cached_gpu_vector_page', return_value=scene), \
+                patch('pdfeditor.reader_prefetch.vector_gpu_budget', return_value=64*MIB):
+            self.view._trim_nearby_native_pages()
+        self.assertEqual(len(self.view._d2d_vector_paths), 150)
+        with patch('pdfeditor.reader_prefetch.vector_gpu_budget', return_value=0):
+            self.view._trim_nearby_native_pages()
+        self.assertEqual(len(self.view._d2d_vector_paths), 0)
 
     def test_document_edit_discards_retained_previews_and_gpu_pages(self):
         from pdfeditor.gpu_raster import VectorPage

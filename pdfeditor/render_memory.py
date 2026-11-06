@@ -20,7 +20,7 @@ def policy(total, available, limit_mb=0):
     if limit_mb:
         budget = min(budget, limit_mb * MIB)
     # Leave ample room for the worker's temporary image/geometry buffers.
-    count = 0 if available < 1024 * MIB else min(32, max(2, budget // (32 * MIB)))
+    count = 0 if available < 1024 * MIB else max(2, budget // (32 * MIB))
     return RenderMemory(budget, count)
 
 

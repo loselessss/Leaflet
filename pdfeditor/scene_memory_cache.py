@@ -28,7 +28,7 @@ class SceneMemoryCache:
             self.clear()
             return
         self.poll()
-        while (self.bytes > self.limit or len(self.entries) > 128) and self.entries:
+        while self.bytes > self.limit and self.entries:
             _key, (_metadata, blob) = self.entries.popitem(last=False)
             self.bytes -= len(blob)
         if self.bytes > self.limit and self.job is not None:
@@ -53,7 +53,7 @@ class SceneMemoryCache:
             self.bytes -= len(previous[1])
         self.entries[key] = (metadata, blob)
         self.bytes += len(blob)
-        while (self.bytes > self.limit or len(self.entries) > 128) and self.entries:
+        while self.bytes > self.limit and self.entries:
             _key, (_metadata, old) = self.entries.popitem(last=False)
             self.bytes -= len(old)
 

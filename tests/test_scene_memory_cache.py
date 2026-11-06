@@ -40,6 +40,17 @@ class SceneMemoryCacheTests(unittest.TestCase):
         self.assertTrue(future.cancelled())
         self.assertEqual(archive.bytes, 0)
 
+    def test_packed_ram_retains_more_than_128_pages_when_bytes_fit(self):
+        archive = SceneMemoryCache()
+        archive.trim(MIB)
+        for page in range(140):
+            self.assertTrue(archive.store((page, 1., False), self.scene()))
+            archive.poll(wait=True)
+        self.assertEqual(len(archive.entries), 140)
+        self.assertLess(archive.bytes, archive.limit)
+        archive.trim(0)
+        self.assertEqual(len(archive.entries), 0)
+
     def test_pressure_and_clear_discard_pending_results_and_density_is_respected(self):
         archive = SceneMemoryCache()
         archive.trim(MIB)
