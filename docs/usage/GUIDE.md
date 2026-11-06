@@ -1,10 +1,14 @@
 # Leaflet usage guide
 
+**Right-click the moon** to choose document inclusion. Use the **View → Command bar** checkbox to hide or restore the ribbon.
+
 Use the ribbon's **moon icon** to switch light/dark mode immediately. **View → Dark mode** offers
-**Light mode / Dark mode / Follow Windows settings**. Your choice is remembered;
+**Light mode / Dark mode (include document) / Dark mode (exclude document) / Follow Windows settings**. Your choice is remembered;
 the PDF's original colors stay unchanged. The reader ribbon's **magic wand** opens the editor.
 
-**View → Dark mode → Dark document** is an independent, optional display setting.
+**Dark mode (include document)** darkens the app and document together; **exclude document** darkens only the app.
+Light mode restores original document colors. The moon remembers the last inclusion choice.
+Following Windows settings also switches document colors with the app, using that choice. Documents are included by default.
 It adjusts bright paper and text while preserving pictures and dark areas when possible.
 Paper-like scans can also be adjusted; complex or uncertain artwork may stay original.
 Turn the option off for reference colors. Saving, printing and exporting remain unchanged.

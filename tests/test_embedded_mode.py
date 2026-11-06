@@ -727,6 +727,21 @@ class EmbeddedModeTests(unittest.TestCase):
                         self.assertFalse(button.icon().isNull())
                         from PyQt5.QtCore import Qt
                         self.assertEqual(button.toolButtonStyle(), Qt.ToolButtonIconOnly)
+                        bar = tab._interaction_toolbar
+                        self.assertEqual(bar.contextMenuPolicy(), Qt.PreventContextMenu)
+                        self.assertFalse(bar.toggleViewAction().isVisible())
+                        restore = tab._command_bar_act
+                        self.assertTrue(restore.isChecked())
+                        restore.trigger()
+                        self.assertTrue(bar.isHidden())
+                        self.assertFalse(restore.isChecked())
+                        restore.trigger()
+                        self.assertFalse(bar.isHidden())
+                        self.assertTrue(restore.isChecked())
+                        bar.hide()
+                        self.assertFalse(restore.isChecked())
+                        restore.trigger()
+                        self.assertFalse(bar.isHidden())
                         if mode == 'reader':
                             self.assertIn(tab._open_editor_act, tab._interaction_toolbar.actions())
                             self.assertNotIn(tab._back_view_act, tab._interaction_toolbar.actions())

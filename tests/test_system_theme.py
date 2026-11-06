@@ -141,6 +141,20 @@ class AppearanceTests(unittest.TestCase):
             self.app.removeNativeEventFilter(controller.native_filter)
             controller.deleteLater()
 
+    def test_moon_right_click_opens_appearance_without_toggling_or_hiding(self):
+        from PyQt5.QtCore import QPoint
+        from PyQt5.QtGui import QContextMenuEvent
+        button = self.button()
+        checked = button.isChecked()
+        event = QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), QPoint(10, 10))
+        with patch.object(button.appearance_menu, 'exec_') as popup:
+            self.app.sendEvent(button, event)
+            popup.assert_called_once_with(QPoint(10, 10))
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(button.isChecked(), checked)
+        self.assertIn('dark', button.mode_actions)
+        self.assertIn('dark_ui', button.mode_actions)
+
     def test_view_menu_and_ribbon_keep_the_same_appearance_settings(self):
         from PyQt5.QtWidgets import QMenu
         from pdfeditor.appearance import add_appearance_menu
@@ -154,23 +168,43 @@ class AppearanceTests(unittest.TestCase):
             self.assertTrue(button.isChecked())
             button.click()
             self.assertTrue(menu.mode_actions['light'].isChecked())
-            menu.document_action.trigger()
-            self.assertTrue(settings.document_night())
-            self.assertTrue(button.document_action.isChecked())
+            menu.mode_actions['dark_ui'].trigger()
+            self.assertFalse(settings.document_night())
+            self.assertTrue(button.mode_actions['dark_ui'].isChecked())
+            self.assertTrue(button.isChecked())
         finally:
             view.deleteLater()
 
-    def test_document_colors_are_independent_of_ui_theme_and_sync_buttons(self):
+    def test_document_colors_follow_theme_and_remember_inclusion_across_toggles(self):
         from pdfeditor import settings
+        from pdfeditor.reader_view import ReaderPageView
         first, second = self.button(), self.button()
-        self.assertFalse(settings.document_night())
-        first.document_action.trigger()
         self.assertTrue(settings.document_night())
-        self.assertTrue(second.document_action.isChecked())
-        self.assertFalse(self.app.property('leafletDark'))
-        second.document_action.trigger()
-        self.assertFalse(settings.document_night())
-        self.assertFalse(first.document_action.isChecked())
+        reader = ReaderPageView(use_opengl=False, document_colors=True)
+        try:
+            self.assertFalse(reader._document_night_enabled)
+            first.click()
+            self.assertTrue(reader._document_night_enabled)
+            first.mode_actions['dark_ui'].trigger()
+            self.assertTrue(self.app.property('leafletDark'))
+            self.assertFalse(reader._document_night_enabled)
+            self.assertTrue(second.mode_actions['dark_ui'].isChecked())
+            second.click()
+            first.click()
+            self.assertFalse(reader._document_night_enabled)
+            first.mode_actions['dark'].trigger()
+            self.assertTrue(reader._document_night_enabled)
+            first.mode_actions['system'].trigger()
+            self.assertFalse(reader._document_night_enabled)
+            self.windows.return_value = True
+            first.controller.refresh()
+            self.assertTrue(reader._document_night_enabled)
+            self.windows.return_value = False
+            first.controller.refresh()
+            self.assertFalse(reader._document_night_enabled)
+        finally:
+            reader.close()
+            reader.deleteLater()
 
     def test_invalid_theme_values_keep_system_default_and_preserve_settings(self):
         from pdfeditor import settings

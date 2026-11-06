@@ -119,7 +119,9 @@ class DocumentNightTests(unittest.TestCase):
     def test_embedded_reader_keeps_reference_colors_without_explicit_opt_in(self):
         from unittest.mock import patch
         from pdfeditor.reader_view import ReaderPageView
-        with patch('pdfeditor.settings.document_night',return_value=True):
+        with patch('pdfeditor.settings.document_night',return_value=True), \
+                patch.object(self.app, 'property', return_value=True), \
+                patch.object(self.app, '_leaflet_theme_controller', None, create=True):
             embedded = ReaderPageView(use_opengl=False)
             standalone = ReaderPageView(use_opengl=False,document_colors=True)
         try:

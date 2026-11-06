@@ -39,6 +39,7 @@ class SystemThemeController(QObject):
         self.app = app
         self.dark = None
         self.mode = None
+        self.document_night = None
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(50)
@@ -50,13 +51,15 @@ class SystemThemeController(QObject):
 
     def refresh(self):
         from .theme import apply_theme_colors
-        from .settings import theme_mode
+        from .settings import theme_mode, document_night
         mode = theme_mode()
         dark = windows_dark_mode() if mode == 'system' else mode == 'dark'
-        if dark == self.dark and mode == self.mode:
+        document = document_night()
+        if dark == self.dark and mode == self.mode and document == self.document_night:
             return
         self.mode = mode
         self.dark = dark
+        self.document_night = document
         apply_theme_colors(self.app, dark)
         for widget in self.app.topLevelWidgets():
             self._titlebar(widget)

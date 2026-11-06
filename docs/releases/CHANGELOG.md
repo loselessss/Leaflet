@@ -4,10 +4,11 @@
 
 ### 새 기능
 
-- Add optional document night mode under View → Dark mode. Darken bright paper and lighten text while preserving pictures and already-dark areas when possible, without changing the PDF file.
+- Offer include/exclude document choices directly under View → Dark mode. Document colors follow the app theme and the ribbon moon remembers inclusion. Darken bright paper and lighten text while preserving pictures and already-dark areas when possible, without changing the PDF file.
 
 ### 개선
 
+- Right-click the moon to choose document inclusion. Remove accidental command-bar hiding from the default context menu; toggle the command bar with its checkbox in View.
 - Add an icon-only Dark mode button to the reader and editor ribbon. Switch immediately between light, dark and Windows appearance, and remember the choice.
 - Put the editor's magic wand on the reader ribbon and remove its back/forward navigation buttons.
 - Keep custom title bars, document tabs and window controls readable in light and dark mode.

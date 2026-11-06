@@ -167,7 +167,7 @@ def theme_mode():
 
 
 def document_night():
-    return _load().get("document_night", False) is True
+    return _load().get("document_night", True) is True
 
 
 def set_document_night(enabled):
@@ -176,11 +176,13 @@ def set_document_night(enabled):
     _save(data)
 
 
-def set_theme_mode(mode):
+def set_theme_mode(mode, *, document=None):
     if mode not in ("system", "light", "dark"):
         return False
     data = _load()
     data["theme_mode"] = mode
+    if document is not None:
+        data['document_night'] = bool(document)
     _save(data)
     return True
 

@@ -2,7 +2,8 @@
 
 ## Unreleased (1.39.0)
 
-- Enable Dark document from View → Dark mode for easier night reading. Bright paper and text are adjusted while pictures and dark areas are preserved when possible. Your PDF file stays unchanged.
+- Right-click the moon to choose document inclusion. Toggle the command bar from View.
+- Choose include/exclude document directly from View → Dark mode. Document colors follow the app theme and the moon remembers inclusion. Pictures and dark areas are preserved when possible. Your PDF file stays unchanged.
 
 - Switch light/dark mode from the centered ribbon moon. View → Dark mode also offers following Windows settings, with full menu labels. Your choice is remembered.
 - Switch between Reader and Editor directly from the home screen.

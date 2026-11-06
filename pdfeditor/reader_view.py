@@ -142,7 +142,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._night_gpu_masks = {}
         self._night_display = None
         self._document_colors_allowed = bool(document_colors)
-        self._document_night_enabled = bool(document_colors and settings.document_night())
+        self._document_night_enabled = bool(document_colors and settings.document_night()
+            and QApplication.instance().property('leafletDark'))
         self._appearance_controller = None
         self._vector_pages = {}
         self._vector_viewport_pages = {}
@@ -213,7 +214,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._document_colors_changed()
 
     def _document_colors_changed(self):
-        self._document_night_enabled = bool(self._document_colors_allowed and settings.document_night())
+        self._document_night_enabled = bool(self._document_colors_allowed and settings.document_night()
+            and self._appearance_controller.dark)
         if not self._document_night_enabled:
             self._night_display = None
             self._release_night_masks()

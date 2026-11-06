@@ -753,6 +753,16 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             self.view.bind_appearance_controller(self._theme_button.controller)
         self.addToolBar(Qt.TopToolBarArea, tool_bar)
         self._interaction_toolbar = tool_bar
+        # Do not expose Qt's toolbar-hiding popup on accidental right-clicks.
+        tool_bar.setContextMenuPolicy(Qt.PreventContextMenu)
+        tool_bar.toggleViewAction().setVisible(False)
+        self._command_bar_act = self._act(
+            v, localize('Command bar', '명령 모음'), None,
+            lambda: tool_bar.setVisible(tool_bar.isHidden()), 'settings')
+        self._command_bar_act.setCheckable(True)
+        self._command_bar_act.setChecked(not tool_bar.isHidden())
+        tool_bar.visibilityChanged.connect(lambda _visible:
+            self._command_bar_act.setChecked(not tool_bar.isHidden()))
 
         h = self.menuBar().addMenu("도움말(&H)")
         self._act(h, "사용법", "F1", self.show_help, "help")

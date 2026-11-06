@@ -18,7 +18,7 @@ See [release notes](docs/releases/RELEASE_NOTES.md) for recent improvements.
 
 - **Read:** Zoom up to 3200%, pan smoothly, search, use bookmarks and two-page view, and detach tabs into separate windows.
 - **Appearance:** Use the ribbon's Dark mode button or follow Windows settings while preserving the PDF's original colors.
-- **Appearance:** Use View → Dark mode for light/dark/Windows appearance and optional Dark document colors. The ribbon moon toggles light/dark mode; the home screen switches between Reader and Editor. Document colors never change the PDF file.
+- **Appearance:** View → Dark mode offers include/exclude document choices. Document colors follow the app theme; the ribbon moon remembers inclusion. The home screen switches between Reader and Editor. Display colors never change the PDF file.
 - **Copy in reading order:** Press Ctrl+Shift+C to analyze the selected text or current page locally. Model memory is released after each job.
 - **Annotate:** Highlight text, add notes, and manage annotations in one window.
 - **Edit:** Change text and add or adjust images and shapes.

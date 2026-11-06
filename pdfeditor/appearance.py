@@ -20,19 +20,13 @@ class AppearanceMenu(QMenu):
         for mode, label in (
                 ('system', localize('Follow Windows settings', 'Windows 설정 따르기')),
                 ('light', localize('Light mode', '밝은 모드')),
-                ('dark', localize('Dark mode', '다크 모드'))):
+                ('dark', localize('Dark mode (include document)', '다크 모드 (문서 포함)')),
+                ('dark_ui', localize('Dark mode (exclude document)', '다크 모드 (문서 제외)'))):
             action = menu.addAction(label)
             action.setCheckable(True)
             group.addAction(action)
             action.triggered.connect(lambda _checked, mode=mode: self._select(mode))
             self.mode_actions[mode] = action
-        menu.addSeparator()
-        self.document_action = menu.addAction(localize('Dark document', '문서도 어둡게'))
-        self.document_action.setCheckable(True)
-        self.document_action.setToolTip(localize(
-            'Darken bright paper and text for viewing; keep pictures and dark areas when possible.',
-            '밝은 종이와 글자를 읽기 편하게 바꿉니다. 사진과 어두운 영역은 가능한 한 유지합니다.'))
-        self.document_action.triggered.connect(self._select_document)
         from .theme import apply_fluent_theme
         app = QApplication.instance()
         if getattr(app, '_leaflet_theme_controller', None) is None:
@@ -42,21 +36,17 @@ class AppearanceMenu(QMenu):
         self._sync()
 
     def _sync(self):
-        self.mode_actions[self.controller.mode or 'system'].setChecked(True)
-        self.document_action.setChecked(settings.document_night())
-
-    def _select_document(self, enabled):
-        try:
-            settings.set_document_night(enabled)
-        except OSError as error:
-            QMessageBox.warning(self, localize('Appearance', '화면 테마'), str(error))
-            self._sync()
-            return
-        self.controller.appearance_changed.emit()
+        mode = self.controller.mode or 'system'
+        if mode == 'dark' and not settings.document_night():
+            mode = 'dark_ui'
+        self.mode_actions[mode].setChecked(True)
 
     def _select(self, mode):
         try:
-            settings.set_theme_mode(mode)
+            if mode in ('dark', 'dark_ui'):
+                settings.set_theme_mode('dark', document=mode == 'dark')
+            else:
+                settings.set_theme_mode(mode)
         except OSError as error:
             QMessageBox.warning(self, localize('Appearance', '화면 테마'), str(error))
             self._sync()
@@ -80,14 +70,21 @@ class ThemeButton(QToolButton):
         self.appearance_menu = AppearanceMenu(self)
         self.controller = self.appearance_menu.controller
         self.mode_actions = self.appearance_menu.mode_actions
-        self.document_action = self.appearance_menu.document_action
         self.clicked.connect(lambda checked:
-            self.appearance_menu._select('dark' if checked else 'light'))
+            self.appearance_menu._select(
+                ('dark' if settings.document_night() else 'dark_ui') if checked else 'light'))
         self.controller.appearance_changed.connect(self._sync)
         self._sync()
 
     def _sync(self):
         self.setChecked(bool(self.controller.dark))
+        choice = localize('include document', '문서 포함') if settings.document_night() else localize('exclude document', '문서 제외')
+        self.setToolTip(localize('Dark mode (%s). Right-click to choose include/exclude document.',
+            '다크 모드 (%s). 우클릭으로 문서 포함·제외 선택') % choice)
+
+    def contextMenuEvent(self, event):
+        self.appearance_menu.exec_(event.globalPos())
+        event.accept()
 
 
 def add_appearance_menu(parent):
