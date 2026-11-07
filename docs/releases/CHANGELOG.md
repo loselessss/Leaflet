@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.39.1)
+
+### 성능 개선
+
+- Reduce repeated GPU preparation and transparency-effect setup while zooming and panning complex pages. Skip larger off-screen vector ranges during sharp rendering. Release idle pixel buffers and scene resources when no longer needed.
+
 ## 1.39.0 - 2026-11-06
 
 ### 새 기능

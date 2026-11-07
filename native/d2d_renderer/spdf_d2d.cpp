@@ -1386,7 +1386,8 @@ public:
                 // SOURCE_COPY preserves translucent alpha and untouched pixels.
                 ComPtr<ID2D1Effect> inside, outside, combined;
                 if (SUCCEEDED(result) && mask_lerp_available_) {
-                    if (SUCCEEDED(d2d_context_->CreateEffect(CLSID_SpdfMaskLerp, &combined))) {
+                    if (worker_context_) combined = std::move(free_mask_effect_);
+                    if (combined || SUCCEEDED(d2d_context_->CreateEffect(CLSID_SpdfMaskLerp, &combined))) {
                         combined->SetInput(0, backdrop.Get());
                         combined->SetInput(1, capture.source.Get());
                         combined->SetInput(2, capture.mask.Get());
@@ -1436,6 +1437,7 @@ public:
                         combined.Get(), capture.destination_origin,
                         D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
                         D2D1_COMPOSITE_MODE_SOURCE_COPY);
+                    if (worker_context_ && mask_lerp_available_) pending_mask_effect_ = combined;
                     if (capture.cropped) {
                         d2d_context_->PopAxisAlignedClip();
                     }
@@ -1918,6 +1920,7 @@ public:
         }
         drawing_ = false;
         auto result = d2d_context_->EndDraw();
+        if (SUCCEEDED(result)) recycle_mask_effect();
         if (result == D2DERR_RECREATE_TARGET) {
             if (!swap_chain_) return result;
             d2d_context_->SetTarget(nullptr);
@@ -2062,6 +2065,7 @@ public:
     bool refining() const noexcept { return static_cast<bool>(cancel_token_); }
     bool cancelled() const noexcept { return cancel_token_ && cancel_token_->load(); }
     HRESULT initialize_worker(const Surface& parent, UINT32 width, UINT32 height) noexcept {
+        worker_context_ = true;
         d3d_device_ = parent.d3d_device_;
         dxgi_device_ = parent.dxgi_device_;
         d2d_factory_ = parent.d2d_factory_;
@@ -2096,6 +2100,15 @@ public:
         return result;
     }
     void set_cancel_token(std::shared_ptr<std::atomic<bool>> token) { cancel_token_ = std::move(token); }
+    void park_worker() noexcept {
+        d2d_context_->SetTarget(nullptr);
+        target_.Reset();
+        storage_.clear();
+        storage_bytes_ = 0;
+        trim_scratch(0); // Retain bindings/context, not idle pixel surfaces.
+        free_mask_effect_.Reset();
+        pending_mask_effect_.Reset();
+    }
 
 private:
     bool sharp_pending() const noexcept;
@@ -2209,6 +2222,13 @@ private:
     };
     std::vector<ScratchEntry> scratch_pool_;
     std::uint64_t scratch_bytes_ = 0;
+    bool worker_context_ = false;
+    ComPtr<ID2D1Effect> free_mask_effect_, pending_mask_effect_;
+    void recycle_mask_effect() noexcept {
+        if (!pending_mask_effect_) return;
+        for (UINT i = 0; i < 3; ++i) pending_mask_effect_->SetInput(i, nullptr);
+        free_mask_effect_ = std::move(pending_mask_effect_);
+    }
 
     HRESULT copy_composite_pixels(ID2D1Bitmap1* destination, ID2D1Bitmap1* source,
             D2D1_POINT_2U origin = D2D1::Point2U()) noexcept {
@@ -2221,6 +2241,9 @@ private:
         // rather than adding texture-sampling draws for every small capture.
         auto result = d2d_context_->Flush();
         if (FAILED(result)) return result;
+        // Submitted bitmap draws no longer depend on mutable effect inputs.
+        // Command-list recording never participates in this worker-only pool.
+        recycle_mask_effect();
         d2d_context_->SetTarget(nullptr);
         result = destination->CopyFromBitmap(nullptr, source, &pixels);
         d2d_context_->SetTarget(previous.Get());
@@ -2468,6 +2491,7 @@ struct SceneBinding {
 
 struct Scene {
     Surface* owner = nullptr;
+    std::weak_ptr<SharpQueue> worker_queue;
     std::shared_ptr<char> identity = std::make_shared<char>();
     std::shared_ptr<const SceneData> data;
     std::vector<SceneBinding> bindings;
@@ -2493,6 +2517,8 @@ struct Scene {
         // Complete sibling scopes/draws only, with mask transitions as barriers.
         std::vector<std::uint32_t> cull_block_at;
         std::vector<RasterGroup> cull_blocks;
+        // Aligned, complete command ranges; unknown state is never skipped.
+        std::vector<std::vector<RasterGroup>> spatial_ranges;
     };
     std::shared_ptr<const ReplayIndex> replay;
 };
@@ -2820,6 +2846,36 @@ struct TilePlan {
     std::vector<std::uint32_t> commands;
 };
 
+void prepare_spatial_ranges(const Scene* scene, Scene::ReplayIndex& replay) {
+    if (scene->needs_backdrop_recovery) return;
+    const auto count = scene->data->commands.size();
+    for (std::size_t span = 512; span <= 32768 && span <= count; span *= 8) {
+        std::vector<Scene::RasterGroup> ranges;
+        for (std::size_t start = 0; start < count; start += span) {
+            const auto end = (std::min)(start + span, count);
+            auto bounds = D2D1::RectF(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
+            bool valid = true;
+            for (auto i = start; i < end; ++i) {
+                auto item = replay.command_bounds[i];
+                const auto scope = replay.scope_at[i];
+                if (scope != UINT32_MAX) {
+                    const auto& group = replay.scopes[scope];
+                    if (group.end >= end) { valid = false; break; }
+                    item = group.bounds;
+                    i = group.end;
+                }
+                if (!(item.left <= item.right && item.top <= item.bottom)) { valid = false; break; }
+                bounds.left = (std::min)(bounds.left, item.left);
+                bounds.top = (std::min)(bounds.top, item.top);
+                bounds.right = (std::max)(bounds.right, item.right);
+                bounds.bottom = (std::max)(bounds.bottom, item.bottom);
+            }
+            ranges.push_back({valid ? end - 1 : SIZE_MAX, bounds});
+        }
+        replay.spatial_ranges.push_back(std::move(ranges));
+    }
+}
+
 // Compile one tile at a time. Unknown bounds and state transitions stay live;
 // all retained openers/closers remain balanced and in PDF paint order.
 bool compile_tile_plan(Surface* surface, const Scene& scene,
@@ -2836,6 +2892,18 @@ bool compile_tile_plan(Surface* surface, const Scene& scene,
         plan.commands.reserve((std::min)(commands.size(), std::size_t{4096}));
         for (std::size_t index = 0; index < commands.size(); ++index) {
             if ((index & 63) == 0 && surface->cancelled()) return false;
+            bool skipped = false;
+            for (std::size_t level = (index & 511) ? 0 : replay->spatial_ranges.size(); level > 0; --level) {
+                const auto span = std::size_t{512} << (3 * (level - 1));
+                if (index % span) continue;
+                const auto& range = replay->spatial_ranges[level - 1][index / span];
+                if (range.end != SIZE_MAX && !surface->command_visible(range.bounds, page)) {
+                    index = range.end;
+                    skipped = true;
+                    break;
+                }
+            }
+            if (skipped) continue;
             const auto block = replay->cull_block_at[index];
             if (block != UINT32_MAX && !surface->command_visible(replay->cull_blocks[block].bounds, page)) {
                 index = replay->cull_blocks[block].end;
@@ -3572,6 +3640,10 @@ struct SharpQueue {
     std::mutex mutex;
     std::condition_variable changed;
     std::shared_ptr<SharpJob> pending, active;
+    std::unique_ptr<Surface> idle_renderer;
+    std::unique_ptr<Scene> idle_scene;
+    std::weak_ptr<char> idle_identity;
+    float idle_dpi = 0;
     bool stop = false;
 };
 
@@ -3643,13 +3715,22 @@ void run_sharp_queue(const std::shared_ptr<SharpQueue>& queue) noexcept {
                 } catch (...) { job->result = E_OUTOFMEMORY; break; }
             }
         }
+        {
+            std::lock_guard<std::mutex> lock(queue->mutex);
+            if (!queue->stop && SUCCEEDED(job->result) && !job->cancelled->load() && !job->identity.expired()) {
+                // One context-owned scene only. Never share mutable brushes
+                // between an active job and the foreground thread.
+                job->renderer->park_worker();
+                queue->idle_scene = std::move(job->scene);
+                queue->idle_renderer = std::move(job->renderer);
+                queue->idle_identity = job->identity;
+                queue->idle_dpi = job->dpi;
+            }
+            queue->active.reset();
+        }
         job->scene.reset();
         job->renderer.reset();
         job->ready.store(true, std::memory_order_release);
-        {
-            std::lock_guard<std::mutex> lock(queue->mutex);
-            queue->active.reset();
-        }
     }
     if (SUCCEEDED(initialized)) CoUninitialize();
 }
@@ -3674,6 +3755,21 @@ void Surface::cancel_sharp() noexcept {
         if (sharp_queue_->active) sharp_queue_->active->cancelled->store(true);
         if (sharp_queue_->pending) sharp_queue_->pending->cancelled->store(true);
         sharp_queue_->pending.reset();
+    }
+}
+
+void forget_worker_scene(const Scene* scene) noexcept {
+    const auto queue = scene->worker_queue.lock();
+    if (!queue) return;
+    std::lock_guard<std::mutex> lock(queue->mutex);
+    if (queue->active && queue->active->identity.lock() == scene->identity)
+        queue->active->cancelled->store(true);
+    if (queue->pending && queue->pending->identity.lock() == scene->identity)
+        queue->pending->cancelled->store(true);
+    if (queue->idle_identity.lock() == scene->identity) {
+        queue->idle_scene.reset();
+        queue->idle_renderer.reset();
+        queue->idle_identity.reset();
     }
 }
 
@@ -3916,16 +4012,29 @@ HRESULT Surface::request_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept
             sharp_job_ = job;
             return S_OK;
         }
-        job->renderer = std::make_unique<Surface>();
-        auto result = job->renderer->initialize_worker(*this, 1, 1);
-        if (FAILED(result)) return result;
-        job->scene = make_worker_scene(job->renderer.get(), *scene);
+        if (sharp_queue_) {
+            std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
+            if (sharp_queue_->idle_identity.lock() == scene->identity && sharp_queue_->idle_dpi == dpi_) {
+                job->renderer = std::move(sharp_queue_->idle_renderer);
+                job->scene = std::move(sharp_queue_->idle_scene);
+            } else {
+                sharp_queue_->idle_scene.reset();
+                sharp_queue_->idle_renderer.reset();
+            }
+        }
+        if (!job->renderer) {
+            job->renderer = std::make_unique<Surface>();
+            const auto result = job->renderer->initialize_worker(*this, 1, 1);
+            if (FAILED(result)) return result;
+            job->scene = make_worker_scene(job->renderer.get(), *scene);
+        }
         if (!job->scene) return E_FAIL;
         cancel_sharp();
         if (!sharp_queue_) {
             sharp_queue_ = std::make_shared<SharpQueue>();
             std::thread(run_sharp_queue, sharp_queue_).detach();
         }
+        scene->worker_queue = sharp_queue_;
         sharp_job_ = job;
         {
             std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
@@ -4643,6 +4752,7 @@ std::int32_t spdf_d2d_create_scene(
             prepare_raster_groups(created.get(), *replay);
             if(created->needs_backdrop_recovery)created->raster_groups.clear();
             prepare_cull_blocks(created.get(), *replay);
+            prepare_spatial_ranges(created.get(), *replay);
             for (std::size_t index = 0; index < replay->scope_at.size(); ++index)
                 if (replay->scope_at[index] != UINT32_MAX) replay->replay_roles[index] |= Scene::Scope;
             for (const auto& group : created->raster_groups) replay->replay_roles[group.first] |= Scene::Raster;
@@ -4777,7 +4887,9 @@ void spdf_d2d_destroy_stroke_style(void* stroke_style) noexcept {
 }
 
 void spdf_d2d_destroy_scene(void* scene) noexcept {
-    delete static_cast<Scene*>(scene);
+    auto* retained = static_cast<Scene*>(scene);
+    if (retained) forget_worker_scene(retained);
+    delete retained;
 }
 
 void spdf_d2d_destroy_surface(void* surface) noexcept {

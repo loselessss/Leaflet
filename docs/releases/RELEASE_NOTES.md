@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.39.1)
+
+- Improve GPU preparation while zooming and panning complex pages.
+
 ## 1.39.0 - 2026-11-06
 
 - Prepare more nearby pages using available memory and keep compressed vector scenes in RAM to reduce repeated preparation when revisiting pages.

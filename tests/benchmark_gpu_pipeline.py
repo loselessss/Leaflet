@@ -102,6 +102,10 @@ def main():
                         help="Repeat to interleave builds in alternating order.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=15)
+    parser.add_argument("--repeated-zoom", action="store_true",
+                        help="Keep each scene and vary scale per sample, preventing pixel-cache hits.")
+    parser.add_argument("--rust-scene", action="store_true",
+                        help="Use the production Rust compiler and native packet importer.")
     parser.add_argument("--mode", choices=("direct", "sharp", "request", "scene", "completed"), default="sharp")
     parser.add_argument("--no-alpha-fusion", action="store_true",
                         help="Keep separate raster alpha masks for a baseline comparison.")
@@ -124,6 +128,8 @@ def main():
         parser.error("library names must be unique")
     if args.repeats < 2:
         parser.error("--repeats must be at least 2")
+    if args.repeated_zoom and args.mode not in ("sharp", "completed"):
+        parser.error("--repeated-zoom requires sharp or completed mode")
     if not math.isfinite(args.raster_scale) or args.raster_scale < 1:
         parser.error("--raster-scale must be finite and at least 1")
     if not 0 < args.poll_ms <= 1000:
@@ -151,21 +157,28 @@ def main():
                    "sharp": "fresh scene request to complete sharp atlas (ms)",
                    "completed": "fresh scene render to synchronized readback and end_frame; worker or direct (ms)",
                    "direct": "begin + fresh exact replay + synchronized BGRA readback (ms)"}[args.mode],
-               "snapshot_reuse": False, "documents": []}
+               "snapshot_reuse": False, "repeated_zoom": args.repeated_zoom, "documents": []}
+    if args.repeated_zoom:
+        results["metric"] = "same scene, distinct scales: request to complete atlas, readback and end_frame (ms)"
     for filename in args.pdf:
         started = time.perf_counter()
         with pymupdf.open(filename) as pdf:
             page = pdf[0]
             page_width, page_height = page.rect.width, page.rect.height
-            scene = vector_page_from_pymupdf(page, raster_scale=args.raster_scale,
-                                           fuse_alpha=not args.no_alpha_fusion,
-                                           stream_alpha=not args.no_alpha_stream)
+            if args.rust_scene:
+                from pdfeditor.rust_scene_compiler import compile_vector_page
+                scene = compile_vector_page(page, raster_scale=args.raster_scale)
+            else:
+                scene = vector_page_from_pymupdf(page, raster_scale=args.raster_scale,
+                                               fuse_alpha=not args.no_alpha_fusion,
+                                               stream_alpha=not args.no_alpha_stream)
         extraction_ms = (time.perf_counter() - started) * 1000
         if not scene.supported:
             raise RuntimeError(f"{filename}: {scene.reason}")
         record = {"file": filename.name, "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
                   "page_size": [page_width, page_height], "extraction_ms": extraction_ms,
-                  "commands": dict(Counter(type(item).__name__ for item in scene.drawables)),
+                  "commands": scene.command_count if args.rust_scene else dict(Counter(type(item).__name__ for item in scene.drawables)),
+                  "rust_scene": args.rust_scene,
                   "features": scene.features, "runs": []}
         lanes = []
         try:
@@ -182,8 +195,11 @@ def main():
                 view._d2d_surface = surface
                 view._page_sizes = {0: (page_width, page_height)}
                 started = time.perf_counter()
-                view._native_vector_draws(0, scene)
-                lane["draws"] = view._d2d_vector_paths[0][1]
+                if not args.rust_scene:
+                    view._native_vector_draws(0, scene)
+                    lane["draws"] = view._d2d_vector_paths[0][1]
+                lane["make_scene"] = (lambda s=surface: s.create_rust_scene(scene, page_width, page_height)) if args.rust_scene else (
+                    lambda s=surface, lane=lane: s.create_scene(page_width, page_height, lane["draws"]))
                 lane["result"] = {"name": name, "upload_ms": (time.perf_counter() - started) * 1000,
                     "adapter": surface.info.adapter_name, "driver": surface.info.driver, "cases": []}
                 if library is not None:
@@ -199,6 +215,8 @@ def main():
                     lane["case"] = {"name": name, "scale": scale, "samples_ms": [],
                                     "submission_ms": [], "first_tile_ms": []}
                     lane["result"]["cases"].append(lane["case"])
+                    if args.repeated_zoom:
+                        lane["retained"] = lane["make_scene"]()
                 for index in range(args.repeats + 3):
                     # Rotate/reverse order to reduce clock/thermal/order bias.
                     rotation = (index // 2) % len(lanes)
@@ -212,9 +230,12 @@ def main():
                         surface = lane["surface"]
                         # A fresh identity prevents page, group and tile reuse.
                         started = time.perf_counter()
-                        retained = surface.create_scene(page_width, page_height, lane["draws"])
+                        retained = lane["retained"] if args.repeated_zoom else lane["make_scene"]()
                         scene_ms = (time.perf_counter() - started) * 1000
                         transform = (scale, 0, 0, scale, dx, dy)
+                        if args.repeated_zoom:
+                            zoom = scale * (1 + index * .013)
+                            transform = (zoom, 0, 0, zoom, (width-page_width*zoom)/2, (height-page_height*zoom)/2)
                         time.sleep(.025)  # Drain Present outside the timer.
                         try:
                             if args.mode == "scene":
@@ -222,8 +243,9 @@ def main():
                             else:
                                 elapsed, submitted, first_tile, pixels = render_sample(
                                     surface, retained, transform, width, height, args.mode, args.poll_ms / 1000)
-                            if index == 0 and pixels is not None:
+                            if index in (0, args.repeats + 2) and pixels is not None:
                                 image = args.output / lane["name"] / f"{filename.stem}-{name}.bgra"
+                                if index: image = image.with_stem(image.stem + "-last")
                                 image.write_bytes(pixels)
                             if index >= 3:
                                 case["samples_ms"].append(elapsed)
@@ -233,8 +255,11 @@ def main():
                         except (OSError, RuntimeError, TimeoutError) as error:
                             case["error"] = str(error)
                         finally:
-                            retained.close()
+                            if not args.repeated_zoom:
+                                retained.close()
                 for lane in lanes:
+                    if args.repeated_zoom:
+                        lane.pop("retained").close()
                     case = lane["case"]
                     if "error" not in case:
                         case["median_ms"] = statistics.median(case["samples_ms"])
@@ -246,6 +271,9 @@ def main():
         finally:
             record["process_memory"] = process_memory()
             for lane in lanes:
+                retained = lane.pop("retained", None)
+                if retained is not None:
+                    retained.close()
                 lane["view"]._release_d2d_surface()
                 lane["view"].close()
                 lane["view"].deleteLater()

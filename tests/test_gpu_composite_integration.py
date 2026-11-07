@@ -384,7 +384,7 @@ class CompositeIntegrationTests(unittest.TestCase):
         # Build/apply runs have enough siblings to form independent cull blocks.
         # Some scopes lie wholly outside each tile; others straddle its border.
         for origin in (0, 128, 256):
-            for index in range(144):
+            for index in range(1536):
                 matrix = (1, 0, 0, 1, origin + index % 12 * 8, index // 12 * 8)
                 operations.append(("path", box, 0x80ffffff, None, 1, matrix, None))
         operations.append(("composite_mask_end", ()))
@@ -400,7 +400,8 @@ class CompositeIntegrationTests(unittest.TestCase):
         try:
             for dpi in (96, 144):
                 self.surface.resize(64, 64, dpi)
-                for transform in ((1, 0, 0, 1, 0, 0), (1, 0, 0, 1, -128, 0),
+                for transform in ((1, 0, 0, 1, 0, 0), (1.25, 0, 0, 1.25, -128, 0),
+                                  (2, 0, 0, 2, -256, -32),
                                   (0, 1, -1, 0, 80, -128),
                                   (1, .25, .125, 1, -128, -24)):
                     with self.subTest(dpi=dpi, transform=transform):
