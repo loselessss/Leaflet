@@ -1,8 +1,10 @@
 # Leaflet Release Notes
 
-## Unreleased (1.39.1)
+## 1.39.1 - 2026-11-08
 
+- Keep up to 50 recent files.
 - Improve GPU preparation while zooming and panning complex pages.
+- Reduce temporary memory use for some complex transparency effects.
 
 ## 1.39.0 - 2026-11-06
 

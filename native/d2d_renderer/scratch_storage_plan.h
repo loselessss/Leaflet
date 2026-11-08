@@ -12,6 +12,7 @@ bool prepare_storage_plan(Surface *surface, Scene *scene, const SpdfD2DTransform
         D2D1_MATRIX_3X2_F previous;
         D2D1_POINT_2F origin{};
         bool cropped = false, building = false, isolated = false;
+        bool mask = false;
         D2D1_PRIMITIVE_BLEND blend = D2D1_PRIMITIVE_BLEND_SOURCE_OVER;
         std::size_t key = SIZE_MAX;
         UINT targets = 0, plain = 0;
@@ -114,6 +115,13 @@ bool prepare_storage_plan(Surface *surface, Scene *scene, const SpdfD2DTransform
                 const auto f = stack.back();
                 stack.pop_back();
                 if (f.key != SIZE_MAX) {
+                    // A mask borrows its backdrop input only while closing.
+                    // Nested masks need not reserve these plain inputs together.
+                    if (f.mask) {
+                        auto& count = counts[f.key];
+                        count.need.plain = (std::max)(count.need.plain, count.live_plain + 1);
+                        ++count.uses;
+                    }
                     counts[f.key].live_target -= f.targets;
                     counts[f.key].live_plain -= f.plain;
                 }
@@ -234,11 +242,12 @@ bool prepare_storage_plan(Surface *surface, Scene *scene, const SpdfD2DTransform
                     }
                 }
                 f.building = mask;
+                f.mask = mask;
                 f.isolated = isolated;
                 if (!passthrough && (mode != 0 || clip || mask || nonisolated)) {
                     const UINT targets = mask ? 3 : (isolated ? 0 : (clip ? 2 : 1));
                     const UINT plain =
-                        isolated || (nonisolated && (c.values[0] == 0 || c.values[0] == 1)) ? 0 : 1;
+                        mask || isolated || (nonisolated && (c.values[0] == 0 || c.values[0] == 1)) ? 0 : 1;
                     add(f, targets, plain);
                 }
                 stack.push_back(f);

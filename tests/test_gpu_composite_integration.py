@@ -530,6 +530,86 @@ class CompositeIntegrationTests(unittest.TestCase):
             self.surface.cancel_sharp()
             scene.close()
 
+    def test_mask_storage_plan_preserves_backdrop_and_nested_blends(self):
+        box = self.surface.create_path([
+            ("move", 4.25, 3.75), ("line", 59, 6), ("line", 56, 60),
+            ("line", 3, 55), ("close",)])
+        def paint(color):
+            return ("path", box, color, None, 1, None, None)
+        bitmap = self.surface.create_bitmap_bgra(
+            bytes((32, 64, 96, 128, 24, 48, 72, 96, 0, 0, 0, 0, 80, 40, 20, 160)), 2, 2)
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(64, 64, dpi)
+                for luminosity, transfer in ((False, ()), (False, (1, .25, 0)), (True, (0, .2, 1))):
+                    for context in ("normal", "copy", "mask-build", "nonisolated-child", "partial-opacity", "image"):
+                        before = [("composite_push", 0, .73, context == "copy", True),
+                                  paint(0x804080c0)]
+                        after = [("composite_pop", None)]
+                        if context == "mask-build":
+                            before = [("composite_mask_begin", (0, 0, 64, 64), False, 0)] + before
+                            after += [("composite_mask_end", (0, .1, 1)), paint(0xff204080), ("clip_group_pop", None)]
+                        operations = before + [
+                            ("composite_mask_begin", (2.25, 1.75, 61, 62), luminosity, 0),
+                            ("linear_gradient", box, (0, 0), (64, 64), ((0, 0x304020ff), (1, 0xf0e0b050)), None),
+                            ("composite_mask_end", transfer),
+                            ("composite_push", 0, .6 if context == "partial-opacity" else 1, False,
+                             context != "nonisolated-child"),
+                            paint(0x9040c080), ("composite_push", 1, .7, False, True),
+                            paint(0xc0c05030), ("composite_pop", None),
+                            ("composite_pop", None), ("clip_group_pop", None),
+                            paint(0x503050e0)] + after
+                        if context == "image":
+                            start = len(before) + 3
+                            operations[start:start + 6] = [
+                                ("image", bitmap, .73, (50, 0, 0, 50, 5, 5), True)]
+                        scene = self.surface.create_scene(64, 64, operations)
+                        try:
+                            for transform in ((1, 0, 0, 1, .25, .5), (0, 1, -1, 0, 63.25, .5)):
+                                with self.subTest(dpi=dpi, context=context, luminosity=luminosity,
+                                                  transfer=transfer, transform=transform):
+                                    expected = self._draw_retained_pixels(scene, transform)
+                                    actual = self._render_sharp_operations(operations, transform)
+                                    delta = [abs(a-b) for a,b in zip(actual, expected)]
+                                    # The unchanged tiled renderer differs from
+                                    # direct replay by up to 8 at fractional
+                                    # HiDPI mask edges in these source scenes.
+                                    self.assertLessEqual(max(delta), 8)
+                                    self.assertLess(sum(delta)/len(delta), .25)
+                        finally:
+                            scene.close()
+        finally:
+            bitmap.close()
+            box.close()
+
+    def test_sibling_masked_images_keep_generated_mask_before_pool_overwrite(self):
+        images = [self.surface.create_bitmap_bgra(bytes(pixel) * 16, 4, 4)
+                  for pixel in ((30, 80, 180, 255), (160, 60, 20, 255))]
+        masks = [self.surface.create_bitmap_bgra(bytes((a, a, a, 255)) * 16, 4, 4)
+                 for a in (48, 224)]
+        operations = []
+        for i in range(16):
+            operations += [
+                ("composite_mask_begin", (0, 0, 64, 64), True, 0),
+                ("image", masks[i % 2], 1, (64, 0, 0, 64, 0, 0), False),
+                ("composite_mask_end", ()),
+                ("image", images[i % 2], .7, (32, 0, 0, 32, (i % 4) * 8, (i // 4) * 8), False),
+                ("clip_group_pop", None)]
+        scene = self.surface.create_scene(64, 64, operations)
+        try:
+            for dpi in (96, 144):
+                self.surface.resize(64, 64, dpi)
+                transform = (1, 0, 0, 1, .25, .5)
+                expected = self._draw_retained_pixels(scene, transform)
+                actual = self._render_sharp_operations(operations, transform)
+                delta = [abs(a-b) for a,b in zip(actual, expected)]
+                self.assertLessEqual(max(delta), 3)
+                self.assertLess(sum(delta)/len(delta), .25)
+        finally:
+            scene.close()
+            for bitmap in images + masks:
+                bitmap.close()
+
     def test_empty_native_layers_preserve_nested_state(self):
         clip = self.surface.create_path([
             ("move", 7.25, 5.75), ("line", 45.75, 8.25),

@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased (1.39.1)
+## 1.39.1 - 2026-11-08
+
+### 개선
+
+- Increase recent-file history from 10 to 50 entries on the home screen and in the Recent Files menu.
 
 ### 성능 개선
 
+- Plan mask backdrop inputs only at scope closure, avoiding simultaneous reservation across nested masks and reducing unused temporary GPU storage.
 - Reduce repeated GPU preparation and transparency-effect setup while zooming and panning complex pages. Skip larger off-screen vector ranges during sharp rendering. Release idle pixel buffers and scene resources when no longer needed.
 
 ## 1.39.0 - 2026-11-06

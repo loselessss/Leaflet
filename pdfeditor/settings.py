@@ -9,7 +9,7 @@ from .zoom_limits import MAX_SAVED_ZOOM
 
 PATH = os.path.expanduser("~/.spdf.json")
 _OLD_PATH = os.path.expanduser("~/.pdfeditor.json")  # 이전 설정 경로(호환용)
-MAX_RECENT = 10
+MAX_RECENT = 50
 DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 96
 MAX_THUMBNAIL_WIDTH = 480
