@@ -1,5 +1,9 @@
 # Leaflet Release Notes
 
+## Unreleased (1.39.2)
+
+- Prepare nearby pages concurrently for smoother navigation in multi-page documents.
+
 ## 1.39.1 - 2026-11-08
 
 - Keep up to 50 recent files.

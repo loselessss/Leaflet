@@ -8,6 +8,8 @@ from .render_memory import render_memory, vector_gpu_budget, MIB
 from .zoom_limits import MAX_PREFETCH_RASTER_SCALE
 
 _log = logging.getLogger(__name__)
+MAX_PREFETCH_WORKERS = 4
+PREFETCH_WORKER_RESERVE = 128 * MIB
 
 
 class ReaderPrefetchMixin:
@@ -16,6 +18,7 @@ class ReaderPrefetchMixin:
         self._prefetch_anchor = None
         self._prefetch_ready = {}
         self._prefetch_failures = {}
+        self._prefetch_jobs = {}
         self._page_switch_started = None
         self._prefetch_metrics = {
             "scene_prepare_ms": 0.0, "prefetch_hit": 0,
@@ -28,7 +31,47 @@ class ReaderPrefetchMixin:
             self._document._gpu_vector_cache_bytes if self._document else 0),
             packed_pages=len(packed.entries) if packed else 0,
             packed_bytes=packed.bytes if packed else 0,
-            packed_hits=packed.hits if packed else 0)
+            packed_hits=packed.hits if packed else 0,
+            active_workers=len(self._prefetch_jobs),
+            worker_reserved_bytes=self._prefetch_worker_bytes())
+
+    def _prefetch_worker_bytes(self):
+        return sum(job.get("reservation", PREFETCH_WORKER_RESERVE)
+                   for job in self._prefetch_jobs.values())
+
+    def _prefetch_worker_room(self):
+        return (len(self._prefetch_jobs) < MAX_PREFETCH_WORKERS and
+                self._prefetch_worker_bytes() + PREFETCH_WORKER_RESERVE <= render_memory().scene_bytes)
+
+    def _stop_prefetch_workers(self):
+        for page in tuple(self._prefetch_jobs):
+            self._cancel_prefetch_worker(page)
+
+    def _cancel_prefetch_worker(self, page):
+        job = self._prefetch_jobs.pop(page, None)
+        if job is not None:
+            self._prefetch_metrics["cancelled_jobs"] += 1
+            self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
+            self._dispose_vector_refine_job(job["process"], job)
+
+    def _trim_prefetch_workers(self):
+        from .render_memory import process_memory_bytes
+        nearby = self._nearby_prefetch_pages()
+        enabled = self._document is not None and self._prefetch_enabled() and self.isVisible()
+        for page, job in tuple(self._prefetch_jobs.items()):
+            if (not enabled or job["document"] is not self._document or
+                    job["generation"] != self._document.render_generation or page not in nearby):
+                self._cancel_prefetch_worker(page)
+                continue
+            job["reservation"] = max(job["reservation"],
+                process_memory_bytes(job["process"]) + 32 * MIB)
+        # The worker allowance is separate from the bounded hot/packed cache.
+        # Together these use at most twice the adaptive scene budget.
+        limit = render_memory().scene_bytes if render_memory().prefetch_pages else 0
+        for page in reversed(tuple(self._prefetch_jobs)):
+            if self._prefetch_worker_bytes() <= limit:
+                break
+            self._cancel_prefetch_worker(page)
 
     def _prefetch_enabled(self):
         return os.environ.get("LEAFLET_SCENE_PREFETCH", "1").lower() not in (
@@ -102,11 +145,11 @@ class ReaderPrefetchMixin:
         return [page for page in candidates if 0 <= page < self._document.page_count
                 and page not in self._page_sizes][:count]
 
-    def _schedule_page_prefetch(self):
+    def _schedule_page_prefetch(self, delay=180):
         self._prefetch_timer.stop()
         if (self._prefetch_enabled() and self._document is not None and
                 self._d2d_requested and self.isVisible()):
-            self._prefetch_timer.start(180)
+            self._prefetch_timer.start(delay)
 
     def _pause_page_prefetch(self):
         # Scrolling alone does not invalidate preparation of the next page.
@@ -118,6 +161,7 @@ class ReaderPrefetchMixin:
         if (not self._prefetch_enabled() or document is None or
                 not self.isVisible() or not self._d2d_requested):
             return
+        self._trim_prefetch_workers()
         document.reserve_gpu_scene_memory(32 * MIB, self._page_sizes)
         document.trim_gpu_scene_memory(self._page_sizes)
         self._trim_nearby_native_pages()
@@ -164,8 +208,10 @@ class ReaderPrefetchMixin:
                         self._schedule_page_prefetch()
                         return
                 continue
-            if key in self._prefetch_attempted or page in self._prefetch_failures:
+            if page in self._prefetch_jobs or key in self._prefetch_attempted or page in self._prefetch_failures:
                 continue
+            if not self._prefetch_worker_room():
+                return
             self._prefetch_attempted.add(key)
             self._vector_refine_scale = scale
             self._start_vector_refine_worker(page, speculative=True)

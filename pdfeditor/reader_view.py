@@ -537,6 +537,11 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def _start_vector_refine_worker(self, page, *, speculative=False):
         if self._document is None or self._vector_refine_process is not None:
             return
+        if speculative:
+            if page in self._prefetch_jobs or not self._prefetch_worker_room():
+                return
+        else:
+            self._stop_prefetch_workers()
         started = time.perf_counter()
         scale = self._vector_refine_scale
         generation = getattr(self._document, "render_generation", 0)
@@ -558,6 +563,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             arguments = [snapshot_path, result_path, "--scale", str(scale),
                          "--page", str(worker_page),
                          "--timeout", str(DEFERRED_GPU_SCENE_TIMEOUT_SECONDS)]
+            if speculative:
+                arguments.extend(("--transfer-workers", "1"))
             if region is not None:
                 arguments.extend(["--viewport", *(str(v) for v in region)])
             cache_key = (None if region is not None else
@@ -610,8 +617,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             if self._vector_refine_pages:
                 self._vector_refine_timer.start(0)
             return
-        self._vector_refine_process = process
-        self._vector_refine_job = {
+        job = {
             "document": self._document, "generation": generation,
             "page": page, "scale": scale, "directory": directory,
             "viewport": region,
@@ -621,14 +627,26 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             "started": started,
             "deadline": time.monotonic() + GPU_SCENE_WORKER_TIMEOUT_SECONDS,
         }
+        if speculative:
+            from .reader_prefetch import PREFETCH_WORKER_RESERVE
+            job.update(process=process, reservation=PREFETCH_WORKER_RESERVE)
+            self._prefetch_jobs[page] = job
+            self._schedule_page_prefetch(15)
+        else:
+            self._vector_refine_process = process
+            self._vector_refine_job = job
         self._vector_refine_poll_timer.start(30)
 
     def _poll_vector_refine_worker(self):
-        process = self._vector_refine_process
-        job = self._vector_refine_job
-        if process is None or job is None:
+        self._trim_prefetch_workers()
+        if self._vector_refine_process is not None and self._vector_refine_job is not None:
+            self._poll_vector_refine_job(self._vector_refine_process, self._vector_refine_job)
+        for job in tuple(self._prefetch_jobs.values()):
+            self._poll_vector_refine_job(job["process"], job)
+        if self._vector_refine_process is None and not self._prefetch_jobs:
             self._vector_refine_poll_timer.stop()
-            return
+
+    def _poll_vector_refine_job(self, process, job):
         if process.poll() is None:
             if job.get("speculative"):
                 from .render_memory import render_memory, MIB
@@ -638,7 +656,10 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                         not self._prefetch_enabled() or not self.isVisible() or
                         render_memory().prefetch_pages == 0 or
                         document.gpu_scene_memory_budget() - document._gpu_vector_cache_bytes < 32 * MIB):
-                    self._stop_vector_refine_worker()
+                    if job.get("page") in self._prefetch_jobs:
+                        self._cancel_prefetch_worker(job["page"])
+                    else:
+                        self._stop_vector_refine_worker()
                     return
             if time.monotonic() < job["deadline"]:
                 return
@@ -670,9 +691,11 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             if not reader.done():
                 return
             scene, failure_reason = reader.take()
-        self._vector_refine_poll_timer.stop()
-        self._vector_refine_process = None
-        self._vector_refine_job = None
+        if self._prefetch_jobs.get(job.get("page")) is job:
+            self._prefetch_jobs.pop(job["page"])
+        else:
+            self._vector_refine_process = None
+            self._vector_refine_job = None
         document = job["document"]
         if "started" in job:
             self._prefetch_metrics["scene_prepare_ms"] = (
@@ -684,6 +707,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     job["page"] in self._nearby_prefetch_pages() and
                     isinstance(scene, VectorPage)):
                 if scene.supported:
+                    from .core import _gpu_scene_cost
+                    document.reserve_gpu_scene_memory(_gpu_scene_cost(scene), self._page_sizes)
                     installed = document.install_gpu_vector_page(
                         job["page"], scene, persist=False, speculative=True)
                     if installed is not None:
@@ -755,6 +780,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self.viewport().update()
 
     def _stop_vector_refine_worker(self):
+        self._stop_prefetch_workers()
         self._vector_refine_poll_timer.stop()
         process = self._vector_refine_process
         job = self._vector_refine_job
@@ -763,6 +789,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._prefetch_attempted.discard((job["generation"], job["page"], job["scale"]))
         self._vector_refine_process = None
         self._vector_refine_job = None
+        self._dispose_vector_refine_job(process, job)
+
+    def _dispose_vector_refine_job(self, process, job):
         if job is not None and job.get("result_reader") is not None:
             # The background reader owns its files until decoding finishes.
             job["result_reader"].cancel()
@@ -1381,6 +1410,15 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
 
     def render_document(self, document, pages, active_page):
         pages = list(pages)
+        if self._vector_refine_process is None:
+            for page in pages:
+                pending = self._prefetch_jobs.get(page)
+                if (pending and pending["document"] is document and
+                        pending["generation"] == document.render_generation):
+                    self._prefetch_jobs.pop(page)
+                    self._vector_refine_process = pending["process"]
+                    self._vector_refine_job = pending
+                    break
         job = self._vector_refine_job
         promote = bool(job and job.get("document") is document and
             job.get("generation") == document.render_generation and job.get("page") in pages)
@@ -1760,6 +1798,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._refine_timer.stop()
         self._tile_timer.stop()
         self._vector_refine_timer.stop()
+        self._stop_prefetch_workers()
         if not keep_vector_refine_worker:
             self._stop_vector_refine_worker()
         if not keep_zoom_animation:

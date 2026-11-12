@@ -266,6 +266,94 @@ class ReaderViewTests(unittest.TestCase):
             self.assertIs(self.view._gpu_vector_page(self.doc, 1), scene)
         self.view._d2d_requested = False
 
+    def _start_fake_prefetch_pool(self, count=4, budget=1024):
+        from pdfeditor.render_memory import RenderMemory, MIB
+        self.view._d2d_requested = True
+        self.view._vector_refine_scale = 1.
+        self.enterContext(patch('pdfeditor.reader_prefetch.render_memory',
+            return_value=RenderMemory(budget * MIB, 16)))
+        self.enterContext(patch('pdfeditor.render_memory.process_memory_bytes', return_value=0))
+        self.spawn = self.enterContext(patch('pdfeditor.reader_view.subprocess.Popen',
+            side_effect=lambda *a, **kw: Mock(poll=Mock(return_value=None))))
+        for page in range(1, count + 1):
+            self.view._start_vector_refine_worker(page, speculative=True)
+
+    def test_parallel_prefetch_caps_four_and_releases_all_jobs_on_close(self):
+        self._start_fake_prefetch_pool(6)
+        self.assertEqual(list(self.view._prefetch_jobs), [1, 2, 3, 4])
+        jobs = list(self.view._prefetch_jobs.values())
+        self.view.clear()
+        self.assertFalse(self.view._prefetch_jobs)
+        for job in jobs:
+            job['process'].terminate.assert_called_once()
+            self.assertFalse(Path(job['directory']).exists())
+
+    def test_parallel_prefetch_reserves_memory_and_sheds_later_jobs_on_growth(self):
+        from pdfeditor.render_memory import MIB
+        self._start_fake_prefetch_pool(4, budget=256)
+        self.assertEqual(list(self.view._prefetch_jobs), [1, 2])
+        second = self.view._prefetch_jobs[2]['process']
+        with patch('pdfeditor.render_memory.process_memory_bytes', return_value=160 * MIB):
+            self.view._trim_prefetch_workers()
+        self.assertEqual(list(self.view._prefetch_jobs), [1])
+        second.terminate.assert_called_once()
+        self.assertEqual(self.view.prefetch_diagnostic()['worker_reserved_bytes'], 192 * MIB)
+
+    def test_page_turn_promotes_one_parallel_worker_without_restarting_it(self):
+        self._start_fake_prefetch_pool()
+        selected = self.view._prefetch_jobs[2]
+        others = [j for p, j in self.view._prefetch_jobs.items() if p != 2]
+        self.view.render_document(self.doc, [2], 2)
+        self.assertIs(self.view._vector_refine_process, selected['process'])
+        self.assertFalse(selected['speculative'])
+        self.assertFalse(self.view._prefetch_jobs)
+        self.assertEqual(self.spawn.call_count, 4)
+        selected['process'].terminate.assert_not_called()
+        for job in others:
+            job['process'].terminate.assert_called_once()
+
+    def test_foreground_preparation_preempts_parallel_workers(self):
+        self._start_fake_prefetch_pool()
+        jobs = list(self.view._prefetch_jobs.values())
+        self.view._start_vector_refine_worker(0)
+        self.assertFalse(self.view._prefetch_jobs)
+        self.assertIsNotNone(self.view._vector_refine_process)
+        for job in jobs:
+            job['process'].terminate.assert_called_once()
+
+    def test_document_revision_cancels_every_parallel_worker(self):
+        self._start_fake_prefetch_pool()
+        jobs = list(self.view._prefetch_jobs.values())
+        self.doc.invalidate_render(0)
+        self.view._poll_vector_refine_worker()
+        self.assertFalse(self.view._prefetch_jobs)
+        self.assertEqual(self.view.prefetch_diagnostic()['worker_reserved_bytes'], 0)
+        for job in jobs:
+            job['process'].terminate.assert_called_once()
+
+    def test_parallel_results_complete_out_of_order_without_overwriting_visible_page(self):
+        from pdfeditor.gpu_raster import VectorPage
+        self._start_fake_prefetch_pool()
+        visible = dict(self.view._vector_pages)
+        jobs = dict(self.view._prefetch_jobs)
+        results = {}
+        for page in (3, 1, 4, 2):
+            scene = VectorPage(True, raster_scale=1.)
+            results[page] = scene
+            job = jobs[page]
+            job['process'].poll.return_value = 0
+            job['result_reader'] = Mock(done=Mock(return_value=True),
+                                        take=Mock(return_value=(scene, None)))
+            self.view._poll_vector_refine_worker()
+            self.assertNotIn(page, self.view._prefetch_jobs)
+            self.assertIs(self.doc.cached_gpu_vector_page(page, 1, memory_only=True), scene)
+        self.assertEqual(self.view._vector_pages, visible)
+        self.assertFalse(self.view._vector_refine_poll_timer.isActive())
+        for job in jobs.values():
+            # The mocked result reader replaces the real file cleanup owner.
+            import shutil
+            shutil.rmtree(job['directory'], ignore_errors=True)
+
     def test_prefetch_order_follows_page_turn_direction(self):
         from pdfeditor.render_memory import RenderMemory, MIB
         with patch("pdfeditor.reader_prefetch.render_memory",
@@ -523,15 +611,19 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_requested = True
         visible = dict(self.view._vector_pages)
         with patch("pdfeditor.reader_prefetch.render_memory",
-                   return_value=RenderMemory(512 * MIB, 2)):
-            self.view._prefetch_next_page()
-            self.assertIsNotNone(self.view._vector_refine_process)
-            self.assertTrue(self.view._vector_refine_job["speculative"])
+                   return_value=RenderMemory(1024 * MIB, 4)):
+            for _ in range(4):
+                self.view._prefetch_next_page()
+            self.assertEqual(len(self.view._prefetch_jobs), 4)
+            self.assertIsNone(self.view._vector_refine_process)
+            self.assertTrue(all(j["speculative"] for j in self.view._prefetch_jobs.values()))
             deadline = time.monotonic() + 15
-            while self.view._vector_refine_process is not None and time.monotonic() < deadline:
+            while self.view._prefetch_jobs and time.monotonic() < deadline:
                 self.view._poll_vector_refine_worker()
                 time.sleep(.01)
-            self.assertIsNone(self.view._vector_refine_process)
+            self.assertFalse(self.view._prefetch_jobs)
+            for page in range(1, 5):
+                self.assertTrue(self.doc.cached_gpu_vector_page(page, 1, memory_only=True).supported)
             prepared = self.doc.cached_gpu_vector_page(1, 1, memory_only=True)
             self.assertIsNotNone(prepared)
             self.assertTrue(prepared.supported)

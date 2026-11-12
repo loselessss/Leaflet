@@ -49,6 +49,28 @@ def invalidate_render_memory():
     _last_sample = 0.0
 
 
+def process_memory_bytes(process):
+    """Sample an owned Windows worker without opening another process handle."""
+    if os.name != "nt":
+        return 0
+    try:
+        handle = int(process._handle)
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_uint32), ("faults", ctypes.c_uint32)] + [
+                (name, ctypes.c_size_t) for name in (
+                    "peak", "resident", "peak_paged", "paged", "peak_nonpaged",
+                    "nonpaged", "commit", "peak_commit", "private")]
+        counters = Counters()
+        counters.cb = ctypes.sizeof(counters)
+        read = ctypes.WinDLL("psapi").GetProcessMemoryInfo
+        read.argtypes = [ctypes.c_void_p, ctypes.POINTER(Counters), ctypes.c_uint32]
+        if read(handle, ctypes.byref(counters), counters.cb):
+            return max(counters.resident, counters.private)
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+    return 0
+
+
 def render_memory():
     global _last_sample, _cached
     now = time.monotonic()

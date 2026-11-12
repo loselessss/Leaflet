@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (1.39.2)
+
+### 성능 개선
+
+- Prepare up to four nearby vector pages concurrently with short-lived native workers. Cache completed scenes in RAM, prioritize the visible page, and limit ongoing work by available memory.
+
 ## 1.39.1 - 2026-11-08
 
 ### 개선
