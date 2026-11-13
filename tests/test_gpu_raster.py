@@ -707,7 +707,7 @@ class GpuRasterSceneTests(unittest.TestCase):
                                               "--base-scene", str(recipe_path)]), 0)
             result = pickle.loads(result_path.read_bytes())
             self.assertTrue(result.supported, result.reason)
-            self.assertTrue(result.compiled_packet.startswith(b'LFSC\x02'))
+            self.assertTrue(result.compiled_packet.startswith(b'LFSC\x03'))
             self.assertEqual(result.raster_scale, expected.raster_scale)
             self.assertFalse(Path(str(result_path) + ".tmp").exists())
 
@@ -1391,7 +1391,7 @@ class GpuRasterSceneTests(unittest.TestCase):
             with result_path.open("rb") as stream:
                 scene = pickle.load(stream)
         self.assertTrue(scene.supported, scene.reason)
-        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x02'))
+        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x03'))
         self.assertGreater(scene.command_count, 0)
 
     def test_original_font_cmap_can_recover_missing_glyph_id(self):

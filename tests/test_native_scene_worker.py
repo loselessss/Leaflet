@@ -56,6 +56,17 @@ class NativeSceneWorkerTests(unittest.TestCase):
                 self.assertTrue(actual.supported,actual.reason)
                 self.assertEqual(actual,expected)
 
+    def test_jpeg_packet_survives_native_worker_transfer_and_sqlite_cache(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        self.input.write_bytes(jpeg_pdf())
+        with pymupdf.open(self.input) as doc:
+            expected = compile_vector_page(doc[0])
+        self.assertIn('jpeg-ycbcr', expected.features)
+        options = ('--disk-cache-key', 'jpeg', '--cache-db', str(self.root / 'jpeg.db'),
+                   '--cache-limit', str(100 * 1024 * 1024))
+        self.assertEqual(self.invoke(*options), expected)
+        self.assertEqual(self.invoke(*options), expected)
+
     def test_page_rotation_crop_and_high_zoom_viewport(self):
         with pymupdf.open() as doc:
             doc.new_page(width=240,height=300)

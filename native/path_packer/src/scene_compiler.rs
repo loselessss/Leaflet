@@ -20,7 +20,7 @@ const COMMAND_LIMIT:usize=1_048_576;
 const DEPTH_LIMIT:usize=4096;
 
 #[derive(Serialize,Clone)]
-enum Resource { Path(Vec<u8>), Image{pixels:Vec<u8>,width:u32,height:u32,stride:u32}, Mesh(Vec<u8>) }
+enum Resource { Path(Vec<u8>), Image{pixels:Vec<u8>,width:u32,height:u32,stride:u32}, Mesh(Vec<u8>), Jpeg{bytes:Vec<u8>,width:u32,height:u32,target_width:u32,target_height:u32} }
 
 #[derive(Serialize,Clone)]
 struct Stroke {start:u32,dash:u32,end:u32,join:u32,miter:f64,phase:f64,dashes:Vec<f64>}
@@ -133,9 +133,10 @@ impl Scene {
     fn new()->Self {Self{resources:Vec::new(),commands:Vec::new(),resource_bytes:0,image_bytes:0,preparation:0}}
     fn intern(&mut self,resource:Resource,index:&mut HashMap<u64,Vec<u32>>)->CompileResult<u32> {
         let (kind,bytes,dimensions)=match &resource {
-            Resource::Path(data)=>(1u8,data.as_slice(),[0,0,0]),
-            Resource::Image{pixels,width,height,stride}=>(2,pixels.as_slice(),[*width,*height,*stride]),
-            Resource::Mesh(data)=>(3,data.as_slice(),[0,0,0]),
+            Resource::Path(data)=>(1u8,data.as_slice(),[0,0,0,0]),
+            Resource::Image{pixels,width,height,stride}=>(2,pixels.as_slice(),[*width,*height,*stride,0]),
+            Resource::Mesh(data)=>(3,data.as_slice(),[0,0,0,0]),
+            Resource::Jpeg{bytes,width,height,target_width,target_height}=>(4,bytes.as_slice(),[*width,*height,*target_width,*target_height]),
         };
         let mut hash=std::collections::hash_map::DefaultHasher::new();kind.hash(&mut hash);dimensions.hash(&mut hash);bytes.hash(&mut hash);
         let hash=hash.finish();
@@ -144,6 +145,7 @@ impl Scene {
                 let equal=match (&self.resources[*id as usize],&resource) {
                     (Resource::Path(a),Resource::Path(b))=>a==b,
                     (Resource::Mesh(a),Resource::Mesh(b))=>a==b,
+                    (Resource::Jpeg{bytes:a,width:aw,height:ah,target_width:atw,target_height:ath},Resource::Jpeg{bytes:b,width:bw,height:bh,target_width:btw,target_height:bth})=>a==b&&aw==bw&&ah==bh&&atw==btw&&ath==bth,
                     (Resource::Image{pixels:a,width:aw,height:ah,stride:ast},Resource::Image{pixels:b,width:bw,height:bh,stride:bst})=>a==b&&aw==bw&&ah==bh&&ast==bst,
                     _=>false,
                 };
@@ -152,7 +154,11 @@ impl Scene {
         }
         self.resource_bytes=self.resource_bytes.checked_add(bytes.len()).ok_or_else(||invalid("resource overflow"))?;
         if self.resource_bytes>LIMIT{return Err(invalid("compiler resource budget exceeded"));}
-        if kind==2 {self.image_bytes+=bytes.len();if self.image_bytes>IMAGE_LIMIT{return Err(invalid("compiler image budget exceeded"));}}
+        if kind==2||kind==4 {
+            // Encoded storage is small, but decoded GPU memory remains bounded.
+            let cost=if kind==4{dimensions[2] as usize*dimensions[3] as usize*4}else{bytes.len()};
+            self.image_bytes+=cost;if self.image_bytes>IMAGE_LIMIT{return Err(invalid("compiler image budget exceeded"));}
+        }
         let id=self.resources.len() as u32;self.resources.push(resource);index.entry(hash).or_default().push(id);Ok(id)
     }
     fn analyse(mut self)->CompileResult<Self> {
@@ -422,7 +428,7 @@ impl RustCompiledScene {
             .map_err(|error|invalid(&error.to_string()))?;
         let size=usize::try_from(size).map_err(|_|invalid("compiler packet size overflow"))?;
         PyBytes::new_with(py,size+8,|packet| {
-            packet[..8].copy_from_slice(b"LFSC\x02\0\0\0");
+            packet[..8].copy_from_slice(b"LFSC\x03\0\0\0");
             let mut target=&mut packet[8..];
             py.detach(||options.serialize_into(&mut target,&self.scene))
                 .map_err(|error|invalid(&error.to_string()))
@@ -457,7 +463,15 @@ pub fn compile_scene(py:Python<'_>,scene:&Bound<'_,PyAny>)->CompileResult<RustCo
 impl RustCompiledScene {
     pub fn feature_names(&self)->Vec<String>{
         let mut features=vec!["rust-compiler".to_string()];
-        if self.scene.image_bytes>0{features.extend(["image".into(),"image-downsample".into()]);}
+        if self.scene.image_bytes>0{features.push("image".into());}
+        // Full-size JPEG sources need no new preparation at higher zoom.
+        // Raw raster regions have no such guarantee and retain refinement.
+        if self.scene.resources.iter().any(|r|match r {
+            Resource::Image{..}=>true,
+            Resource::Jpeg{width,height,target_width,target_height,..}=>target_width<width||target_height<height,
+            _=>false,
+        }){features.push("image-downsample".into());}
+        if self.scene.resources.iter().any(|r|matches!(r,Resource::Jpeg{..})){features.push("jpeg-ycbcr".into());}
         if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mesh{..})){features.push("vector-mesh".into());}
         if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mask{..})){features.push("gpu-mask".into());}
         if self.scene.commands.iter().any(|c|matches!(c.op,Operation::Mask{luminosity:true,..})){features.push("gpu-luminosity".into());}
@@ -479,7 +493,7 @@ impl RustCompiledScene {
         let options=bincode::DefaultOptions::new().with_fixint_encoding().with_little_endian().with_limit(512*1024*1024);
         let size=options.serialized_size(&self.scene).map_err(|e|invalid(&e.to_string()))? as usize;
         if size>512*1024*1024-8{return Err(invalid("compiler packet byte budget exceeded"));}
-        let mut bytes=Vec::with_capacity(size+8);bytes.extend_from_slice(b"LFSC\x02\0\0\0");
+        let mut bytes=Vec::with_capacity(size+8);bytes.extend_from_slice(b"LFSC\x03\0\0\0");
         options.serialize_into(&mut bytes,&self.scene).map_err(|e|invalid(&e.to_string()))?;Ok(bytes)
     }
 }

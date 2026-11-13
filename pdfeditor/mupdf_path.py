@@ -33,7 +33,7 @@ def _library():
             library.leaflet_glyph_walk.restype = ctypes.c_void_p
         if hasattr(library, 'leaflet_scene_collect'):
             library.leaflet_scene_abi.restype = ctypes.c_uint32
-            if library.leaflet_scene_abi()!=3:
+            if library.leaflet_scene_abi()!=4:
                 return None
             outputs = [ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_size_t)]
             library.leaflet_scene_collect.argtypes = [ctypes.c_void_p, ctypes.c_double, *outputs]

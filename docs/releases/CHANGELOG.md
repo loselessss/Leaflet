@@ -4,6 +4,7 @@
 
 ### 성능 개선
 
+- Keep eligible JPEG images, including small previews, compressed through page preparation and caching, and use GPU-assisted YCbCr display. Reuse native-resolution scenes across zoom levels without preparing them again. Preserve the existing decoder for color-managed images, masks and bounded high-zoom crops.
 - Prepare up to four nearby vector pages concurrently with short-lived native workers. Cache completed scenes in RAM, prioritize the visible page, and limit ongoing work by available memory.
 
 ## 1.39.1 - 2026-11-08

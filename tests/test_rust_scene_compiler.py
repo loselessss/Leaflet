@@ -32,7 +32,7 @@ class RustSceneCompilerTests(unittest.TestCase):
         self.assertEqual(compiled.resource_count,2)
         self.assertEqual(compiled.image_bytes,4)
         wire=compiled.to_bytes()
-        self.assertTrue(wire.startswith(b'LFSC\x02\0\0\0'))
+        self.assertTrue(wire.startswith(b'LFSC\x03\0\0\0'))
         del source;gc.collect()
         self.assertEqual(compiled.to_bytes(),wire)
 

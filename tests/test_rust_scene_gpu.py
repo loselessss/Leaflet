@@ -72,8 +72,82 @@ class RustSceneGpuTests(unittest.TestCase):
             requires_luminosity=False
             def __init__(self,data):self.data=data
             def to_bytes(self):return self.data
-        for packet in (b'',b'bad header',b'LFSC\x01\0\0\0'+b'\xff'*8):
+        for packet in (b'',b'bad header',b'LFSC\x01\0\0\0'+b'\xff'*8,
+                       b'LFSC\x02\0\0\0'+b'\xff'*8):
             with self.subTest(packet=packet),self.assertRaises(OSError):
                 self.surface.create_rust_scene(Invalid(packet),100.,100.)
         valid=compile_scene(g.VectorPage(True,items=(g.VectorPath(g._rect_commands(0.,0.,50.,50.),fill_argb=0xff112233),)))
         scene=self.surface.create_rust_scene(valid,100.,100.);scene.close()
+
+    def test_invalid_jpeg_and_image_totals_leave_surface_usable(self):
+        import struct
+        from pdfeditor._path_packer import compile_native_scene
+        payload = struct.pack('<6d4IQ', 100., 0., 0., 100., 0., 0., 16, 16, 16, 16, 4) + b'\xff\xd8xx'
+        broken = compile_native_scene(struct.pack('<IQ', 24, len(payload)) + payload)
+        with self.assertRaises(OSError):
+            self.surface.create_rust_scene(broken, 100., 100.)
+        import pymupdf
+        from pdfeditor.mupdf_path import compile_page
+        from tests.jpeg_fixtures import jpeg_pdf
+        with pymupdf.open(stream=jpeg_pdf(), filetype='pdf') as doc:
+            valid = compile_page(doc[0])
+            packet = valid.to_bytes()
+            corrupt = packet[:-8] + (int.from_bytes(packet[-8:], 'little') + 1).to_bytes(8, 'little')
+            from pdfeditor.gpu_raster import VectorPage
+            with self.assertRaises(OSError):
+                self.surface.create_rust_scene(VectorPage(True, compiled_packet=corrupt), 256., 256.)
+            scene = self.surface.create_rust_scene(valid, 256., 256.)
+            scene.close()
+
+    def test_jpeg_ycbcr_draws_match_cpu_decode_with_bounded_color_difference(self):
+        import pymupdf
+        from pdfeditor.mupdf_path import compile_page
+        from tests.jpeg_fixtures import jpeg_bytes, jpeg_pdf
+        from tests.benchmark_gpu_pipeline import render_sample
+        for sampling, progressive, rotation in ((0, False, 0), (1, False, 90),
+                                               (2, False, 180), (2, True, 270)):
+            with self.subTest(sampling=sampling, progressive=progressive, rotation=rotation), \
+                    pymupdf.open(stream=jpeg_pdf(jpeg_bytes(subsampling=sampling, progressive=progressive),
+                                               rotation=rotation), filetype='pdf') as doc:
+                compiled = compile_page(doc[0], 2.)
+                self.assertIn('jpeg-ycbcr', compiled.features)
+                scene = self.surface.create_rust_scene(compiled, 256., 256.)
+                try:
+                    # Both direct and retained worker contexts consume the JPEG.
+                    for mode in ('direct', 'completed'):
+                        pixels = render_sample(self.surface, scene, (1., 0., 0., 1., 0., 0.),
+                                               256, 256, mode, .001)[3]
+                        reference = doc[0].get_pixmap(alpha=False).samples
+                        error = sum(abs(pixels[i * 4 + channel] - reference[i * 3 + 2 - channel])
+                                    for i in range(256 * 256) for channel in range(3)) / (256 * 256 * 3)
+                        self.assertLess(error, 3.)
+                        self.assertTrue(all(pixels[i] == 255 for i in range(3, len(pixels), 4)))
+                finally:
+                    scene.close()
+
+    def test_native_size_jpeg_keeps_same_gpu_scene_across_zoom_and_pan(self):
+        import pymupdf
+        from unittest.mock import Mock, patch
+        from pdfeditor.rust_scene_compiler import compile_vector_page
+        from tests.jpeg_fixtures import jpeg_pdf
+        from tests.benchmark_gpu_pipeline import render_sample
+        with pymupdf.open(stream=jpeg_pdf(), filetype='pdf') as doc:
+            prepared = compile_vector_page(doc[0])
+            self.assertNotIn('image-downsample', prepared.features)
+            self.view._page_sizes = {0: (256., 256.)}
+            self.view._vector_pages[0] = prepared
+            self.view._document = Mock()
+            self.view._native_vector_draws(0, prepared)
+            retained = self.view._d2d_vector_paths[0][3]
+            try:
+                with patch.object(self.surface, 'create_rust_scene', side_effect=AssertionError('duplicate GPU upload')):
+                    for zoom in (1., 4., 8., 2.):
+                        self.assertIs(self.view._refresh_vector_page_for_zoom(0), prepared)
+                        self.view._native_vector_draws(0, prepared)
+                        self.assertIs(self.view._d2d_vector_paths[0][3], retained)
+                        transform = (zoom, 0., 0., zoom, 128. - 128. * zoom, 128. - 120. * zoom)
+                        pixels = render_sample(self.surface, retained, transform, 256, 256, 'completed', .001)[3]
+                        self.assertNotEqual(pixels, b'\xff' * len(pixels))
+                self.view._document.gpu_vector_page.assert_not_called()
+            finally:
+                self.view._document = None

@@ -1,4 +1,4 @@
-// Thin, checked LFSC v2 upload adapter. Scene policy and validation live in Rust.
+// Thin, checked LFSC v3 upload adapter. Scene policy and validation live in Rust.
 #include <array>
 #include <map>
 #include <optional>
@@ -12,7 +12,7 @@ struct Reader {
     size_t count(size_t limit){auto v=value<uint64_t>();if(v>limit)throw std::runtime_error("scene count limit");return static_cast<size_t>(v);}
     float number(){const auto result=static_cast<float>(value<double>());if(!std::isfinite(result))throw std::runtime_error("non-finite GPU value");return result;}
 };
-struct Resource {uint32_t kind=0,w=0,h=0,stride=0;const uint8_t* bytes=nullptr;size_t size=0;};
+struct Resource {uint32_t kind=0,w=0,h=0,stride=0,target_w=0,target_h=0;const uint8_t* bytes=nullptr;size_t size=0;};
 struct Program {
     void* surface;std::vector<Resource> resources;
     std::vector<void*> paths,bitmaps,styles;
@@ -36,7 +36,11 @@ struct Program {
         paths.push_back(result);path_index[key]=result;return result;
     }
     void* bitmap(uint32_t index){auto found=image_index.find(index);if(found!=image_index.end())return found->second;
-        const auto& resource=get(index,1);void* result=nullptr;check(spdf_d2d_create_bitmap(surface,resource.bytes,resource.w,resource.h,resource.stride,&result));
+        if(index>=resources.size())throw std::runtime_error("invalid image index");
+        const auto& resource=resources[index];void* result=nullptr;
+        if(resource.kind==1)check(spdf_d2d_create_bitmap(surface,resource.bytes,resource.w,resource.h,resource.stride,&result));
+        else if(resource.kind==3)check(static_cast<Surface*>(surface)->create_jpeg(resource.bytes,resource.size,resource.w,resource.h,resource.target_w,resource.target_h,reinterpret_cast<Surface::Bitmap**>(&result)));
+        else throw std::runtime_error("invalid image resource");
         bitmaps.push_back(result);image_index[index]=result;return result;
     }
     void* style(Reader& reader){if(!reader.boolean())return nullptr;
@@ -51,12 +55,18 @@ struct Program {
     }
     void load(Reader& reader,float width,float height){
         const auto count=reader.count(1048576);resources.reserve(count);size_t total=0,images=0;
-        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>2)throw std::runtime_error("invalid resource type");
+        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>3)throw std::runtime_error("invalid resource type");
             resource.size=reader.count(256*1024*1024);resource.bytes=reader.take(resource.size);
             total+=resource.size;if(total>256*1024*1024)throw std::runtime_error("resource budget");
             if(resource.kind==1){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();resource.stride=reader.value<uint32_t>();
                 if(resource.w==0||resource.h==0||uint64_t(resource.w)*4>resource.stride||uint64_t(resource.h)*resource.stride!=resource.size)throw std::runtime_error("invalid image");
                 images+=resource.size;if(images>128*1024*1024)throw std::runtime_error("image budget");}
+            if(resource.kind==3){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();
+                resource.target_w=reader.value<uint32_t>();resource.target_h=reader.value<uint32_t>();
+                if(!resource.w||!resource.h||resource.w>8192||resource.h>8192||uint64_t(resource.w)*resource.h>16*1024*1024||
+                    !resource.target_w||!resource.target_h||resource.target_w>resource.w||resource.target_h>resource.h||
+                    resource.size<4||resource.size>32*1024*1024||resource.bytes[0]!=255||resource.bytes[1]!=216)throw std::runtime_error("invalid JPEG");
+                images+=size_t(resource.target_w)*resource.target_h*4;if(images>128*1024*1024)throw std::runtime_error("image budget");}
             resources.push_back(resource);
         }
         SpdfD2DSceneCommand clear{};clear.type=1;clear.values[2]=width;clear.values[3]=height;clear.uint_values[0]=0xffffffff;commands.push_back(clear);
@@ -111,7 +121,8 @@ struct Program {
             if(command.type)commands.push_back(command);
             if(stroke_color){command.type=16;command.uint_values[0]=*stroke_color;commands.push_back(command);}
         }
-        reader.value<uint64_t>();reader.value<uint64_t>();if(reader.left)throw std::runtime_error("trailing scene bytes");
+        if(reader.value<uint64_t>()!=total||reader.value<uint64_t>()!=images)throw std::runtime_error("invalid resource totals");
+        if(reader.left)throw std::runtime_error("trailing scene bytes");
     }
 };
 }
@@ -121,7 +132,7 @@ extern "C" __declspec(dllexport) int32_t spdf_d2d_import_rust_scene(void* surfac
     *output=nullptr;
     try {
         leaflet_rust_upload::Reader reader{static_cast<const uint8_t*>(bytes),size};
-        if(std::memcmp(reader.take(8),"LFSC\x02\0\0\0",8)!=0)return static_cast<int32_t>(E_INVALIDARG);
+        if(std::memcmp(reader.take(8),"LFSC\x03\0\0\0",8)!=0)return static_cast<int32_t>(E_INVALIDARG);
         leaflet_rust_upload::Program program(surface);program.load(reader,width,height);
         return spdf_d2d_create_scene(surface,program.commands.data(),static_cast<uint32_t>(program.commands.size()),output);
     } catch(...){return static_cast<int32_t>(E_INVALIDARG);}

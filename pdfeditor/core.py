@@ -48,6 +48,20 @@ def _gpu_scene_cost(scene):
     return total
 
 
+def _gpu_scene_upload_cost(scene):
+    """Charge decoded images separately from the smaller encoded RAM packet."""
+    total = _gpu_scene_cost(scene)
+    packet = scene.compiled_packet
+    if ('jpeg-ycbcr' in scene.features and len(packet) >= 24
+            and packet.startswith(b'LFSC\x03\0\0\0')):
+        # The native importer validates this Rust serializer footer against
+        # the resources. JPEGs are charged conservatively at BGRA size.
+        images = int.from_bytes(packet[-8:], 'little')
+        if images <= 128 * 1024 * 1024:
+            total += images
+    return total
+
+
 def configure_antialiasing(tools=None):
     """MuPDF 텍스트·그래픽 렌더링을 최고 품질 AA로 고정한다.
 

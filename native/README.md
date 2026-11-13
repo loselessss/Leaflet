@@ -34,10 +34,27 @@ compilation. Background reader jobs use the standalone Rust executable
 `scene_compiler/native_input.rs` validates scope nesting, selects bounded raster
 regions, folds alpha-image scopes, assigns image density across the page budget,
 normalizes strokes/pixels and compiles the owned scene. `rust_scene_import.h`
-uploads LFSC v2 in one native call. Python never constructs per-drawing objects
+uploads LFSC v3 in one native call. Python never constructs per-drawing objects
 on this path. Stroked/text-clipping glyphs remain vector; shades, tiles and
 complex alpha coverage can use SDK rasters. Missing native support or invalid
 input returns CPU fallback, not the old Python compiler.
+
+Renderer ABI 27 / native-input ABI 4 / LFSC v3 add encoded JPEG resources.
+Eligible opaque RGB JPEGs (DeviceRGB or the exact engine sRGB profile) retain
+their original bytes through Rust, RAM/LZ4 and SQLite storage. WIC supplies a
+bounded-size planar-capable scaler to Direct2D's image source; YCbCr upsampling
+and RGB conversion use the GPU where supported, with WIC BGRA upload otherwise.
+Entropy decoding and IDCT remain on the CPU during native resource upload.
+Finished screen sources release WIC/encoded scratch copies and are shared by
+the device's retained-scene workers. Native packet validation and speculative
+GPU retention account for decoded sizes, not only compressed packet lengths.
+Small previews use the JPEG path even if their encoded source is larger than a
+BGRA thumbnail. Scenes containing only native-resolution JPEGs and vectors need
+no image refinement across zoom levels; downscaled JPEGs and raw raster regions
+still refine. Cache identity 25 invalidates the earlier preview selection and
+refinement metadata. Non-sRGB/CMYK/gray/Decode/masked images, sources over 16MP
+or 8192 pixels per axis, and partial-image crops retain the bounded MuPDF path.
+No JPEG is re-encoded.
 
 Build the Rust extension and standalone worker with `python native/build_path_packer.py`, the MuPDF
 adapter with `python native/build_mupdf_path.py`, and the renderer with the batch
@@ -151,7 +168,7 @@ native upload adapter used by normal application rendering.
 See `docs/architecture/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
 
 Compiled scenes persist through `pdfeditor.scene_cache_packet` as a bounded
-binary envelope around unchanged LFSC v2 bytes. SHA-256 covers metadata and the
+binary envelope around unchanged LFSC v3 bytes. SHA-256 covers metadata and the
 uncompressed packet. Up to four independent 64MiB chunks use the existing Rust
 LZ4 codec; incompressible chunks remain raw. Restoration validates lengths and
 budgets before decoding, without JSON/Base64 or executable-object loading.

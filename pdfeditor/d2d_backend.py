@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 
-ABI_VERSION = 26
+ABI_VERSION = 27
 DRIVER_NAMES = {0: "none", 1: "hardware", 2: "warp"}
 
 

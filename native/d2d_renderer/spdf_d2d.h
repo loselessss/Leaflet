@@ -9,7 +9,7 @@
 #define SPDF_D2D_API extern "C" __declspec(dllimport)
 #endif
 
-constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 26;
+constexpr std::uint32_t SPDF_D2D_ABI_VERSION = 27;
 constexpr std::uint32_t SPDF_D2D_ADAPTER_NAME_LENGTH = 128;
 
 // Optional additive query; the existing scene ABI and info layout are unchanged.

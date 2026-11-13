@@ -27,6 +27,7 @@
 #include <dxgi1_2.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#include <wincodec.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -251,9 +252,19 @@ public:
             return false;
         }
     }
+    struct JpegImage {
+        // WIC streams borrow this memory. It must outlive every decoder/source.
+        std::vector<unsigned char> bytes;
+        ComPtr<IWICStream> stream;
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<ID2D1ImageSourceFromWic> source;
+        UINT width=0,height=0;
+    };
     struct Bitmap {
         Surface* owner;
         ComPtr<ID2D1Bitmap1> resource;
+        std::shared_ptr<JpegImage> jpeg{};
     };
 
     struct Path {
@@ -500,6 +511,60 @@ public:
         }
         *bitmap = result_bitmap;
         return S_OK;
+    }
+
+    HRESULT create_jpeg(const unsigned char* bytes,size_t size,UINT width,UINT height,UINT target_w,UINT target_h,Bitmap** bitmap) noexcept {
+        if(!bytes||!bitmap||size<4||size>32*1024*1024||!width||!height||width>8192||height>8192||
+            uint64_t(width)*height>16*1024*1024||!target_w||!target_h||target_w>width||target_h>height)return E_INVALIDARG;
+        *bitmap=nullptr;
+        // WIC is free-threaded. Keep this thread's COM initialization alive for
+        // the lifetime of its sources (Qt may already have initialized STA).
+        struct Apartment {HRESULT result=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+            ~Apartment(){if(SUCCEEDED(result))CoUninitialize();}};
+        thread_local Apartment apartment;
+        if(FAILED(apartment.result)&&apartment.result!=RPC_E_CHANGED_MODE)return apartment.result;
+        try {
+            auto jpeg=std::make_shared<JpegImage>();jpeg->bytes.assign(bytes,bytes+size);
+            jpeg->width=target_w;jpeg->height=target_h;
+            ComPtr<IWICImagingFactory2> factory;
+            auto result=CoCreateInstance(CLSID_WICImagingFactory2,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory));
+            if(SUCCEEDED(result))result=factory->CreateStream(&jpeg->stream);
+            if(SUCCEEDED(result))result=jpeg->stream->InitializeFromMemory(jpeg->bytes.data(),static_cast<DWORD>(size));
+            if(SUCCEEDED(result))result=factory->CreateDecoderFromStream(jpeg->stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&jpeg->decoder);
+            if(SUCCEEDED(result))result=jpeg->decoder->GetFrame(0,&jpeg->frame);
+            UINT w=0,h=0;if(SUCCEEDED(result))result=jpeg->frame->GetSize(&w,&h);
+            if(FAILED(result))return result;if(w!=width||h!=height)return E_INVALIDARG;
+            ComPtr<IWICBitmapSource> source;result=jpeg->frame.As(&source);
+            ComPtr<IWICBitmapScaler> scaler;
+            if(SUCCEEDED(result)&&(target_w!=width||target_h!=height)){
+                result=factory->CreateBitmapScaler(&scaler);
+                if(SUCCEEDED(result))result=scaler->Initialize(source.Get(),target_w,target_h,WICBitmapInterpolationModeFant);
+                if(SUCCEEDED(result))result=scaler.As(&source);
+            }
+            if(FAILED(result))return result;
+            auto created=std::make_unique<Bitmap>();created->owner=this;
+            ComPtr<ID2D1DeviceContext2> context;
+            result=d2d_context_.As(&context);
+            if(SUCCEEDED(result))result=context->CreateImageSourceFromWic(source.Get(),
+                D2D1_IMAGE_SOURCE_LOADING_OPTIONS_RELEASE_SOURCE,D2D1_ALPHA_MODE_IGNORE,&jpeg->source);
+            if(SUCCEEDED(result)){
+                // The screen image is fully cached. Drop WIC CPU buffers and
+                // the temporary encoded copy; immutable GPU planes are shared.
+                source.Reset();scaler.Reset();jpeg->frame.Reset();jpeg->decoder.Reset();jpeg->stream.Reset();
+                std::vector<unsigned char>().swap(jpeg->bytes);created->jpeg=std::move(jpeg);
+            }
+            else {
+                // Older/unsupported drivers keep the page on the GPU by using
+                // WIC's ordinary BGRA upload, without another lossy encoding.
+                ComPtr<IWICFormatConverter> converter;result=factory->CreateFormatConverter(&converter);
+                if(SUCCEEDED(result))result=converter->Initialize(source.Get(),GUID_WICPixelFormat32bppPBGRA,
+                    WICBitmapDitherTypeNone,nullptr,0.,WICBitmapPaletteTypeCustom);
+                const auto props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+                if(SUCCEEDED(result))result=d2d_context_->CreateBitmapFromWicBitmap(converter.Get(),&props,&created->resource);
+            }
+            if(SUCCEEDED(result))*bitmap=created.release();return result;
+        }catch(...){return E_OUTOFMEMORY;}
     }
 
     HRESULT create_path(
@@ -1741,10 +1806,23 @@ public:
         float bottom,
         float opacity, bool interpolate) noexcept {
         if (!drawing_ || bitmap == nullptr || bitmap->owner != this ||
-                !bitmap->resource || right <= left || bottom <= top) {
+                (!bitmap->resource&&!bitmap->jpeg) || right <= left || bottom <= top) {
             return E_INVALIDARG;
         }
         const auto destination = D2D1::RectF(left, top, right, bottom);
+        if(bitmap->jpeg){
+            D2D1_MATRIX_3X2_F current;d2d_context_->GetTransform(&current);
+            const auto& jpeg=*bitmap->jpeg;
+            if(opacity<1){const auto layer=D2D1::LayerParameters1(destination,nullptr,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                D2D1::Matrix3x2F::Identity(),std::clamp(opacity,0.f,1.f));d2d_context_->PushLayer(layer,nullptr);}
+            const auto transform=D2D1::Matrix3x2F::Scale((right-left)/jpeg.width,(bottom-top)/jpeg.height)*
+                D2D1::Matrix3x2F::Translation(left,top)* *D2D1::Matrix3x2F::ReinterpretBaseType(&current);
+            d2d_context_->SetTransform(transform);
+            const auto source=D2D1::RectF(0,0,float(jpeg.width),float(jpeg.height));
+            d2d_context_->DrawImage(jpeg.source.Get(),nullptr,&source,
+                interpolate?D2D1_INTERPOLATION_MODE_LINEAR:D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            d2d_context_->SetTransform(current);if(opacity<1)d2d_context_->PopLayer();return S_OK;
+        }
         d2d_context_->DrawBitmap(
             bitmap->resource.Get(),
             &destination,
@@ -2463,6 +2541,7 @@ struct SceneCommand {
     // Immutable device resources, with no Surface owner or mutable brush.
     // Worker contexts belong to this same D2D device.
     ComPtr<ID2D1Bitmap1> bitmap;
+    std::shared_ptr<Surface::JpegImage> jpeg;
     ComPtr<ID2D1Geometry> geometry;
     ComPtr<ID2D1GeometryRealization> fill_realization;
     ComPtr<ID2D1StrokeStyle1> stroke_style;
@@ -2535,8 +2614,8 @@ HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nu
         const auto& stored = scene->data->commands[index];
         if (stored.binding_index == UINT32_MAX || scene->bindings[stored.binding_index].ready()) continue;
         SceneBinding binding;
-        if (stored.bitmap) binding.bitmap = std::make_unique<Surface::Bitmap>(
-            Surface::Bitmap{scene->owner, stored.bitmap});
+        if (stored.bitmap||stored.jpeg) binding.bitmap = std::make_unique<Surface::Bitmap>(
+            Surface::Bitmap{scene->owner, stored.bitmap, stored.jpeg});
         if (stored.geometry) binding.path = std::make_unique<Surface::Path>(Surface::Path{
             scene->owner, stored.geometry, stored.fill_realization, stored.rectangle});
         if (stored.stroke_style) binding.stroke_style = std::make_unique<Surface::StrokeStyle>(
@@ -4679,10 +4758,12 @@ std::int32_t spdf_d2d_create_scene(
             if(type==SPDF_D2D_SCENE_COVERAGE_BEGIN||type==SPDF_D2D_SCENE_COVERAGE_END){created->recordable=false;created->needs_backdrop_recovery=true;}
             if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP) {
                 const auto* source = static_cast<Surface::Bitmap*>(commands[index].resource);
-                if (source == nullptr || source->owner != created->owner || !source->resource) {
+                if (source == nullptr || source->owner != created->owner || (!source->resource&&!source->jpeg)||
+                    (type==SPDF_D2D_SCENE_BACKDROP_BITMAP&&!source->resource)) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
                 }
                 stored.bitmap = source->resource;
+                stored.jpeg = source->jpeg;
             } else if (type == SPDF_D2D_SCENE_CLIP_PUSH ||
                     type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
                     type == SPDF_D2D_SCENE_PATH_FILL ||
@@ -4739,7 +4820,7 @@ std::int32_t spdf_d2d_create_scene(
         compact_empty_layers(*data);
         for (std::size_t index = 0; index < data->commands.size(); ++index) {
             auto& stored = data->commands[index];
-            if (!stored.bitmap && !stored.geometry && !stored.stroke_style && stored.mesh_vertices.empty()) continue;
+            if (!stored.bitmap && !stored.jpeg && !stored.geometry && !stored.stroke_style && stored.mesh_vertices.empty()) continue;
             stored.binding_index = static_cast<std::uint32_t>(data->binding_commands.size());
             data->binding_commands.push_back(static_cast<std::uint32_t>(index));
         }

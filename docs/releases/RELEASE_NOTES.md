@@ -2,6 +2,8 @@
 
 ## Unreleased (1.39.2)
 
+- Reduce preparation time and cache size for some PDFs containing JPEG photos.
+- Use the GPU path for small JPEG previews and avoid repeated preparation when full-resolution images are already ready.
 - Prepare nearby pages concurrently for smoother navigation in multi-page documents.
 
 ## 1.39.1 - 2026-11-08

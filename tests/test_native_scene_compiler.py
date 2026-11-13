@@ -13,6 +13,121 @@ from tests import test_gpu_raster as fixtures
 
 
 class NativeSceneCompilerTests(unittest.TestCase):
+    def test_jpeg_original_survives_compilation_and_cache_roundtrip(self):
+        from tests.jpeg_fixtures import jpeg_bytes, jpeg_pdf
+        from pdfeditor.scene_cache_packet import encode, decode
+        for subsampling, progressive in ((0, False), (1, False), (2, False), (2, True)):
+            data = jpeg_bytes(subsampling=subsampling, progressive=progressive)
+            with self.subTest(subsampling=subsampling, progressive=progressive), \
+                    pymupdf.open(stream=jpeg_pdf(data), filetype='pdf') as doc:
+                scene = compile_vector_page(doc[0])
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertIn('jpeg-ycbcr', scene.features)
+                self.assertNotIn('image-downsample', scene.features)
+                self.assertIn(data, scene.compiled_packet)
+                self.assertLess(len(scene.compiled_packet), 192 * 160 * 4)
+                self.assertEqual(decode(encode(scene)), scene)
+                from pdfeditor.core import _gpu_scene_cost, _gpu_scene_upload_cost
+                self.assertEqual(_gpu_scene_upload_cost(scene) - _gpu_scene_cost(scene), 192 * 160 * 4)
+
+    def test_jpeg_pdf_color_and_mask_semantics_retain_existing_decoder(self):
+        from tests.jpeg_fixtures import jpeg_bytes, jpeg_pdf
+        cases = (jpeg_pdf(decode=True), jpeg_pdf(alpha=True), jpeg_pdf(color_transform=0),
+                 jpeg_pdf(jpeg_bytes(mode='CMYK')), jpeg_pdf(jpeg_bytes(mode='L')))
+        for data in cases:
+            with self.subTest(case=cases.index(data)), pymupdf.open(stream=data, filetype='pdf') as doc:
+                scene = compile_vector_page(doc[0])
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertNotIn('jpeg-ycbcr', scene.features)
+                self.assertIn('image', scene.features)
+
+    def test_jpeg_allows_exact_srgb_profile_but_retains_other_icc_conversion(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        from PIL import ImageCms
+        with pymupdf.open(stream=jpeg_pdf(device_rgb=False), filetype='pdf') as doc:
+            scene = compile_vector_page(doc[0])
+            self.assertIn('jpeg-ycbcr', scene.features)
+            image = doc[0].get_images()[0][0]
+            profile = doc.get_new_xref()
+            doc.update_object(profile, '<< /N 3 >>')
+            doc.update_stream(profile, ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes())
+            doc.xref_set_key(image, 'ColorSpace', f'[/ICCBased {profile} 0 R]')
+            scene = compile_vector_page(doc.reload_page(doc[0]))
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertNotIn('jpeg-ycbcr', scene.features)
+
+    def test_tiny_display_of_large_jpeg_uses_gpu_source_and_keeps_refinement(self):
+        from tests.jpeg_fixtures import jpeg_bytes, jpeg_pdf
+        with pymupdf.open(stream=jpeg_pdf(jpeg_bytes((1600, 1200))), filetype='pdf') as doc:
+            small = compile_vector_page(doc[0])
+            large = compile_vector_page(doc[0], 4.)
+            self.assertTrue(small.supported, small.reason)
+            self.assertIn('jpeg-ycbcr', small.features)
+            self.assertIn('image-downsample', small.features)
+            self.assertIn('jpeg-ycbcr', large.features)
+            self.assertIn('image-downsample', large.features)
+            self.assertEqual(small.compiled_packet.count(jpeg_bytes((1600, 1200))), 1)
+
+    def test_full_resolution_jpeg_reuses_scene_at_3200_percent(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        from pdfeditor.core import Document
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'jpeg.pdf'
+            path.write_bytes(jpeg_pdf())
+            document = Document(path)
+            try:
+                with patch.object(document, '_load_disk_gpu_scene', return_value=None), \
+                        patch.object(document, '_save_disk_gpu_scene'):
+                    first = document.gpu_vector_page(0)
+                self.assertTrue(first.supported, first.reason)
+                self.assertIn('jpeg-ycbcr', first.features)
+                self.assertNotIn('image-downsample', first.features)
+                with patch('pdfeditor.core.compile_vector_page', side_effect=AssertionError('unnecessary JPEG preparation')):
+                    self.assertIs(document.gpu_vector_page(0, 32.), first)
+                    self.assertIs(document.cached_gpu_vector_page(0, 32.), first)
+            finally:
+                document.close()
+
+    def test_full_resolution_jpeg_with_raw_raster_still_refines(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        with pymupdf.open(stream=jpeg_pdf(), filetype='pdf') as doc:
+            # A second, decoded image makes this a mixed-resolution scene.
+            pixmap = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 8, 8), False)
+            pixmap.clear_with(100)
+            doc[0].insert_image((2, 2, 18, 18), pixmap=pixmap)
+            scene = compile_vector_page(doc[0])
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertIn('jpeg-ycbcr', scene.features)
+            self.assertIn('image-downsample', scene.features)
+
+    def test_high_zoom_jpeg_crop_keeps_bounded_region_decoder(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        with pymupdf.open(stream=jpeg_pdf(), filetype='pdf') as doc:
+            scene = compile_vector_page(doc[0], 32., viewport=(90., 90., 110., 110.))
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertNotIn('jpeg-ycbcr', scene.features)
+            self.assertLess(len(scene.compiled_packet), 192 * 160 * 4)
+
+    def test_page_crop_does_not_upload_or_draw_hidden_jpeg_pixels(self):
+        from tests.jpeg_fixtures import jpeg_pdf
+        with pymupdf.open(stream=jpeg_pdf(), filetype='pdf') as doc:
+            page = doc[0]
+            page.set_cropbox((80, 80, 180, 180))
+            scene = compile_vector_page(page, 4.)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertNotIn('jpeg-ycbcr', scene.features)
+
+    def test_oversize_jpeg_keeps_page_gpu_supported_with_bounded_decoder(self):
+        import io
+        from PIL import Image
+        from tests.jpeg_fixtures import jpeg_pdf
+        data = io.BytesIO()
+        Image.new('RGB', (4097, 4097), '#3879ad').save(data, 'JPEG')
+        with pymupdf.open(stream=jpeg_pdf(data.getvalue()), filetype='pdf') as doc:
+            scene = compile_vector_page(doc[0], 4.)
+            self.assertTrue(scene.supported, scene.reason)
+            self.assertNotIn('jpeg-ycbcr', scene.features)
+
     def test_single_gradient_opacity_folds_but_protects_knockout_masks_and_overlap(self):
         from pdfeditor._path_packer import compile_scene
         from pdfeditor.gpu_raster import (VectorPage, VectorLinearGradient, VectorPath,
@@ -127,7 +242,7 @@ class NativeSceneCompilerTests(unittest.TestCase):
                 with self.subTest(name=name),pymupdf.open(stream=getattr(fixtures,name)(),filetype='pdf') as doc:
                     compiled=compile_page(doc[0])
                     packet=compiled.to_bytes()
-                    self.assertTrue(packet.startswith(b'LFSC\x02\0\0\0'))
+                    self.assertTrue(packet.startswith(b'LFSC\x03\0\0\0'))
                     self.assertLessEqual(compiled.image_bytes,64*1024*1024)
                     self.assertGreater(compiled.command_count,0)
                 gc.collect()

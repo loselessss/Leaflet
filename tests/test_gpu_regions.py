@@ -173,7 +173,7 @@ class ComplexIllustrationTests(unittest.TestCase):
             scene = pickle.loads(target.read_bytes())
         self.assertTrue(scene.supported, scene.reason)
         self.assertIn("rust-compiler", scene.features)
-        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x02'))
+        self.assertTrue(scene.compiled_packet.startswith(b'LFSC\x03'))
         self.assertGreater(scene.command_count, 0)
 
 

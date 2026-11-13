@@ -208,6 +208,57 @@ void raster(Job& job,Result& out,uint32_t start,uint32_t end,uint32_t mode,fz_re
     event(out,mode==7?23u:9u,p);
     if(mode==2||mode==3)mask_end_event(out);
 }
+bool jpeg_rgb(fz_colorspace* cs) {
+    auto* rgb=mupdf::ll_fz_device_rgb();if(cs==rgb)return true;
+#if FZ_ENABLE_ICC
+    // An explicit copy of the engine's sRGB profile is also an identity
+    // conversion. Other RGB profiles must retain MuPDF color management.
+    return cs&&cs->type==FZ_COLORSPACE_RGB&&(cs->flags&FZ_COLORSPACE_IS_ICC)&&
+        (rgb->flags&FZ_COLORSPACE_IS_ICC)&&!std::memcmp(cs->u.icc.md5,rgb->u.icc.md5,16);
+#else
+    return false;
+#endif
+}
+// Only unmodified, opaque RGB DCT images may bypass MuPDF decoding.
+// PDF Decode arrays, masks, CMYK and non-sRGB profiles use the old path.
+bool jpeg_image(Job& job,Result& out,const Record& r,uint32_t start,size_t fallback_bytes,double coverage,uint32_t target_w,uint32_t target_h) {
+    const auto* im=r.image;
+    if(r.kind!=9||r.alpha!=1||im->n!=3||im->bpc!=8||im->mask||im->imagemask||im->use_colorkey||im->use_decode||
+        !jpeg_rgb(im->colorspace)||im->w<=0||im->h<=0||im->w>8192||im->h>8192||
+        uint64_t(im->w)*im->h>16*1024*1024||coverage<.999999)return false;
+    const uint64_t decoded=uint64_t(target_w)*target_h*4;
+    if(decoded>64*1024*1024||decoded>fallback_bytes)return false;
+    auto* compressed=mupdf::ll_fz_compressed_image_buffer(r.image);
+    if(!compressed||compressed->params.type!=FZ_IMAGE_JPEG||compressed->params.u.jpeg.color_transform==0)return false;
+    unsigned char* bytes=nullptr;const auto size=mupdf::ll_fz_buffer_storage(compressed->buffer,&bytes);
+    // Keep the native JPEG path even when a tiny BGRA preview is smaller.
+    // The original compressed source remains available for subsequent zooms.
+    if(size<4||size>32*1024*1024||bytes[0]!=255||bytes[1]!=216)return false;
+    // Reject RGB-coded JPEGs and malformed/mismatched headers before choosing
+    // the WIC YCbCr path. WIC and PDF use the same encoded sampling grid.
+    bool frame=false;
+    for(size_t at=2;at+4<=size;){
+        if(bytes[at++]!=255)return false;
+        while(at<size&&bytes[at]==255)++at;if(at>=size)return false;
+        const auto marker=bytes[at++];if(marker==0xda)break;
+        if(marker==0xd9||marker==0||at+2>size)return false;
+        const size_t length=size_t(bytes[at])*256+bytes[at+1];if(length<2||length>size-at)return false;
+        if(marker==0xc0||marker==0xc2){
+            if(length!=17||bytes[at+2]!=8||int(bytes[at+3])*256+bytes[at+4]!=im->h||
+                int(bytes[at+5])*256+bytes[at+6]!=im->w||bytes[at+7]!=3||
+                bytes[at+8]!=1||bytes[at+11]!=2||bytes[at+14]!=3)return false;
+            frame=true;
+        }else if(marker==0xee&&length>=14&&!std::memcmp(bytes+at+2,"Adobe",5)&&bytes[at+13]!=1)return false;
+        at+=length;
+    }
+    if(!frame)return false;
+    bool defaults_ok=true;
+    for(uint32_t i=0;i<start;++i)if(job.records[i]->kind==20){
+        auto* cs=mupdf::ll_fz_default_rgb(job.records[i]->defaults);defaults_ok=!cs||jpeg_rgb(cs);}
+    if(!defaults_ok)return false;
+    Result p;matrix(p,r.matrix);put(p,uint32_t(im->w));put(p,uint32_t(im->h));put(p,target_w);put(p,target_h);put(p,uint64_t(size));blob(p,bytes,size);
+    event(out,24,p);return true;
+}
 // Images stay in their own sampling grid. Rasterizing a 2x2 source in page
 // coordinates would add transparent borders and blur pixels when magnified.
 void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,double density) {
@@ -232,6 +283,10 @@ void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,
     const int y1=int(std::ceil(std::clamp(double(local.y1),0.,1.)*th));
     const int w=x1-x0,h=y1-y0;if(w<=0||h<=0)return;
     if(w>32768||h>32768||int64_t(w)*h>16*1024*1024)throw std::runtime_error("native image budget");
+    if(start==end){
+        const bool complete=area.x0<=image->area.x0&&area.y0<=image->area.y0&&area.x1>=image->area.x1&&area.y1>=image->area.y1;
+        if(complete&&jpeg_image(job,out,*image,start,size_t(w)*h*4,std::max(0.,span_x)*std::max(0.,span_y),uint32_t(std::ceil(tw)),uint32_t(std::ceil(th))))return;
+    }
     const fz_matrix scale={float(tw),0,0,float(th),0,0};
     std::unique_ptr<fz_pixmap,PixDrop> pix(mupdf::ll_fz_new_pixmap_with_bbox(mupdf::ll_fz_device_rgb(),fz_irect{x0,y0,x1,y1},nullptr,1));
     mupdf::ll_fz_clear_pixmap(pix.get());
@@ -561,7 +616,7 @@ extern "C" __declspec(dllexport) int leaflet_scene_probe(fz_page* page,uint64_t*
 }
 
 extern "C" __declspec(dllexport) void leaflet_scene_drop(leaflet_scene::Job* job) noexcept {delete job;}
-extern "C" __declspec(dllexport) uint32_t leaflet_scene_abi() noexcept{return 3;}
+extern "C" __declspec(dllexport) uint32_t leaflet_scene_abi() noexcept{return 4;}
 extern "C" __declspec(dllexport) leaflet_scene::Job* leaflet_scene_collect(fz_page* page,double timeout,const unsigned char** data,size_t* size) noexcept {
     using namespace leaflet_scene;
     try {

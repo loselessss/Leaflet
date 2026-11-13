@@ -96,7 +96,7 @@ class ReaderPrefetchMixin:
             _log.debug("reader prefetch %s", self.prefetch_diagnostic())
 
     def _trim_nearby_native_pages(self):
-        from .core import _gpu_scene_cost
+        from .core import _gpu_scene_upload_cost
         video = None
         surface = self._d2d_surface
         if surface is not None and getattr(type(surface), 'supports_video_memory_query', False):
@@ -108,7 +108,7 @@ class ReaderPrefetchMixin:
             cached = self._d2d_vector_paths[page]
             if page in self._page_sizes:
                 continue
-            cost = _gpu_scene_cost(cached[0])
+            cost = _gpu_scene_upload_cost(cached[0])
             current = (self._vector_viewport_pages.get(page)
                        if getattr(self, '_document_generation', None) == self._document.render_generation else None)
             if current is not cached[0]:
@@ -193,11 +193,11 @@ class ReaderPrefetchMixin:
             if prepared is not None:
                 # Upload one page per idle turn, including complex posters.
                 # Actual RAM/VRAM budgets replace command-count/page-count caps.
-                from .core import _gpu_scene_cost
-                resident = sum(_gpu_scene_cost(cached[0]) for p, cached in self._d2d_vector_paths.items()
+                from .core import _gpu_scene_upload_cost
+                resident = sum(_gpu_scene_upload_cost(cached[0]) for p, cached in self._d2d_vector_paths.items()
                                if p not in self._page_sizes)
                 if (self._d2d_surface is not None and prepared.compiled_packet and
-                        resident + _gpu_scene_cost(prepared) <= self._native_retention_budget and
+                        resident + _gpu_scene_upload_cost(prepared) <= self._native_retention_budget and
                         page not in self._d2d_vector_paths):
                     try:
                         self._native_vector_draws(page, prepared)

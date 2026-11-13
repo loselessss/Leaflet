@@ -197,6 +197,17 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
         let kind=reader.u32()?;let len=reader.u64()?;let mut p=Reader{data:reader.take(len)?,at:0};
         let mut matrix=IDENTITY;let mut bounds=None;let mut axis_clip=None;
         let op=match kind{
+            24=>{
+                matrix=p.matrix()?;let width=p.u32()?;let height=p.u32()?;let target_width=p.u32()?;let target_height=p.u32()?;let n=p.u64()?;
+                if width==0||height==0||width>8192||height>8192||width as u64*height as u64>16*1024*1024||n<4||n>32*1024*1024||
+                    target_width==0||target_height==0||target_width>width||target_height>height{
+                    return Err(invalid("invalid native JPEG"));
+                }
+                let bytes=p.take(n)?;
+                if !bytes.starts_with(&[255,216]){return Err(invalid("invalid JPEG header"));}
+                let resource=scene.intern(Resource::Jpeg{bytes:bytes.to_vec(),width,height,target_width,target_height},&mut index)?;
+                Operation::Image{resource,opacity:1.,interpolate:true}
+            },
             8=>{gradient_input(&mut p,&mut scene,&mut index)?;continue;},
             0..=3=>{
                 matrix=p.matrix()?;let even_odd=p.u32()?!=0;let groupable=p.u32()?!=0;
