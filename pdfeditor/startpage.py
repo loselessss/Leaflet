@@ -366,7 +366,8 @@ class StartPage(QWidget):
 
     def _schedule_previews(self, *_args):
         if self.isVisible():
-            self._preview_timer.start(80)
+            remaining = self._preview_timer.remainingTime()
+            self._preview_timer.start(min(80, remaining) if remaining >= 0 else 80)
 
     def _prepare_visible(self):
         if self.isVisible():
@@ -379,7 +380,7 @@ class StartPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._schedule_previews()
+        self._preview_timer.start(0)
 
     def hideEvent(self, event):
         self._preview_timer.stop()

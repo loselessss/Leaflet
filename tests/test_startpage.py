@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pymupdf
@@ -176,6 +178,143 @@ class HomePreviewTests(unittest.TestCase):
         self.assertLessEqual(image.height(), 221)
         with patch.object(pymupdf.Page, "get_pixmap", side_effect=AssertionError("Must reuse disk thumbnail")):
             self.assertEqual(preview(self.path), result)
+
+    def test_fresh_home_reads_disk_thumbnail_without_starting_pdf_worker(self):
+        settings.set_disk_cache_mb(0)
+        preview(self.path)
+        cache = HomePreviews()
+        self.addCleanup(cache.stop)
+        with patch.object(cache._process, "start", side_effect=AssertionError("Cached PNG must not start PDF worker")):
+            cache.request([self.path])
+            deadline = time.monotonic() + 5
+            while cache.lookup(self.path)[1] == "pending" and time.monotonic() < deadline:
+                self.app.processEvents()
+                QTest.qWait(5)
+            self.assertEqual(cache.lookup(self.path)[1], "ready")
+            self.assertIsNotNone(cache.lookup(self.path)[0])
+            self.assertIsNone(cache._resources["temporary"])
+
+    def test_cold_process_restores_thumbnail_without_importing_pdf_engine(self):
+        preview(self.path)
+        script = self.root / "cold-cache.py"
+        script.write_text('''
+import os,sys,time
+sys.path.insert(0, %r)
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtTest import QTest,QSignalSpy
+from pdfeditor import paths
+from pdfeditor.home_previews import HomePreviews
+assert 'pymupdf' not in sys.modules
+paths.user_data_dir=lambda: %r
+app=QApplication([])
+cache=HomePreviews()
+starts=QSignalSpy(cache._process.started)
+cache.request([%r])
+deadline=time.monotonic()+5
+while cache.lookup(%r)[1]=='pending' and time.monotonic()<deadline:
+    app.processEvents(); QTest.qWait(5)
+assert cache.lookup(%r)[1]=='ready'
+assert not starts
+assert 'pymupdf' not in sys.modules
+cache.stop()
+os._exit(0)
+''' % (str(Path(__file__).resolve().parents[1]), str(self.root), self.path, self.path, self.path), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(script)], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+
+    def test_cache_hit_survives_busy_lru_timestamp_update(self):
+        import sqlite3
+        from unittest.mock import MagicMock
+        from pdfeditor import scene_disk_cache as disk
+        from pdfeditor.home_previews import _read_cached_previews, _renderer_version
+        preview(self.path)
+        with disk._connect() as database:
+            row = database.execute("SELECT key,data FROM scenes").fetchone()
+        database.close()
+        connection = MagicMock()
+        connection.execute.return_value.fetchall.return_value = [row]
+        connection.executemany.side_effect = sqlite3.OperationalError("database is locked")
+        key = (self.path, HomePreviews._revision(self.path))
+        with patch("pdfeditor.home_previews.sqlite3.connect", return_value=connection):
+            restored = _read_cached_previews(self.root / "cache/gpu-scenes.sqlite3", [key], _renderer_version())
+        self.assertIn(key, restored)
+        self.assertFalse(restored[key].isNull())
+
+    def test_evicted_ram_thumbnail_is_restored_from_disk_without_pdf_worker(self):
+        preview(self.path)
+        cache = HomePreviews()
+        self.addCleanup(cache.stop)
+        with patch.object(cache._process, "start", side_effect=AssertionError("Disk hit must not start PDF worker")):
+            for _ in range(2):
+                cache.request([self.path])
+                deadline = time.monotonic() + 5
+                while cache.lookup(self.path)[1] == "pending" and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    QTest.qWait(5)
+                self.assertEqual(cache.lookup(self.path)[1], "ready")
+                cache._discard(self.path)
+
+    def test_small_ram_budget_does_not_loop_over_evicted_disk_hits(self):
+        preview(self.path)
+        other = str(self.root / "other.pdf")
+        Path(other).write_bytes(Path(self.path).read_bytes())
+        settings.push_recent(other)
+        preview(other)
+        cache = HomePreviews()
+        self.addCleanup(cache.stop)
+        cache.MAX_BYTES = 1
+        with patch.object(cache._process, "start", side_effect=AssertionError("Evicted PNG must not render PDF")):
+            cache.request([self.path, other])
+            deadline = time.monotonic() + 5
+            while cache._disk_future is not None and time.monotonic() < deadline:
+                self.app.processEvents()
+                QTest.qWait(5)
+            self.assertIsNone(cache._disk_future)
+            self.assertIsNone(cache._active)
+            self.assertFalse(cache._pending)
+            self.assertEqual(cache._bytes, 0)
+
+    def test_cached_cards_are_restored_before_a_missing_preview_renders(self):
+        preview(self.path)
+        missing = str(self.root / "uncached.pdf")
+        cache = HomePreviews()
+        self.addCleanup(cache.stop)
+        with patch.object(cache._process, "start") as start:
+            cache.request([missing, self.path])
+            deadline = time.monotonic() + 5
+            while not start.called and time.monotonic() < deadline:
+                self.app.processEvents()
+                QTest.qWait(5)
+            self.assertTrue(start.called)
+            self.assertEqual(cache.lookup(self.path)[1], "ready")
+            self.assertIsNotNone(cache.lookup(self.path)[0])
+            self.assertEqual(cache._active[0], missing)
+
+    def test_disk_restore_rejects_oversized_png_header(self):
+        import struct
+        from pdfeditor.home_previews import _read_cached_previews, _renderer_version
+        from pdfeditor import scene_disk_cache as disk
+        preview(self.path)
+        with disk._connect() as database:
+            database.execute("UPDATE scenes SET data=?", (
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", 50000, 50000),))
+        database.close()
+        key = (self.path, HomePreviews._revision(self.path))
+        with patch.object(QImage, "fromData", side_effect=AssertionError("Oversized PNG must not be decoded")):
+            self.assertEqual(_read_cached_previews(self.root / "cache/gpu-scenes.sqlite3", [key], _renderer_version()), {})
+
+    def test_hidden_home_does_not_apply_late_disk_results(self):
+        from concurrent.futures import Future
+        cache = HomePreviews()
+        future = Future()
+        future.set_running_or_notify_cancel()
+        cache._disk_future = future
+        key = (self.path, cache._revision(self.path))
+        cache._disk_keys = (key,)
+        cache.stop()
+        future.set_result({key: QImage(10, 10, QImage.Format_RGB32)})
+        cache._poll_disk()
+        self.assertEqual(cache.lookup(self.path)[1], "pending")
 
     def test_modified_pdf_regenerates_preview(self):
         first = preview(self.path)

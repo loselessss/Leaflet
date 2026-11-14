@@ -702,11 +702,36 @@ class ReaderViewTests(unittest.TestCase):
             for features in (("image", "image-downsample"),
                              ("image", "alpha-image-fusion", "clip-mask", "vector-shading")):
                 text, tip = _render_diagnostic_summary({"mode": "composite", "features": features})
-                self.assertEqual(text, "GPU rendering (composited)")
+                self.assertEqual(text, "GPU rendering")
                 self.assertNotIn("shading bitmap preparation", tip)
+                self.assertIn("image decoding and pixel preparation", tip.splitlines()[0])
+                self.assertIn("image drawing", tip.splitlines()[1])
             for feature in ('raster-pattern', 'text-raster-fallback'):
                 text, _tip = _render_diagnostic_summary({"mode": "composite", "features": (feature,)})
                 self.assertEqual(text, "CPU+GPU rendering")
+        finally:
+            set_language(previous)
+
+    def test_gpu_image_diagnostic_labels_match_in_both_languages(self):
+        from pdfeditor.app import _render_diagnostic_summary
+        from pdfeditor.i18n import language, set_language
+        previous = language()
+        try:
+            for locale, expected, cpu_label in (("en", "GPU rendering", "CPU+GPU rendering"),
+                                               ("ko", "GPU 렌더링", "CPU+GPU 렌더링")):
+                set_language(locale)
+                for mode in ("direct", "composite"):
+                    with self.subTest(locale=locale, mode=mode):
+                        text, tip = _render_diagnostic_summary({"mode": mode, "features": (
+                            "image", "jpeg-ycbcr", "gpu-color-management", "gpu-image-mask", "gpu-mask", "gpu-pattern")})
+                        self.assertEqual(text, expected)
+                        gpu_tip = tip.splitlines()[1]
+                        for label in (("image drawing", "image color conversion", "transparency mask composition", "repeating pattern drawing")
+                                      if locale == "en" else ("이미지 그리기", "이미지 색상 변환", "투명 마스크 합성", "반복 무늬 그리기")):
+                            self.assertIn(label, gpu_tip)
+                        for feature in ("cpu-island", "raster-shading", "raster-pattern", "text-raster-fallback"):
+                            text, _ = _render_diagnostic_summary({"mode": mode, "features": ("image", feature)})
+                            self.assertEqual(text, cpu_label)
         finally:
             set_language(previous)
 
@@ -1066,7 +1091,15 @@ class ReaderViewTests(unittest.TestCase):
                           features=("vector",)),
         }
         self.assertEqual(self.view.render_diagnostic(0)["mode"], "direct")
-        self.assertEqual(self.view.render_diagnostic(1)["mode"], "composite")
+        self.assertEqual(self.view.render_diagnostic(1)["mode"], "direct")
+        for features in (("image", "image-downsample"), ("stencil", "clip-mask"),
+                         ("image", "gpu-color-management", "gpu-image-mask", "gpu-mask"),
+                         ("image", "jpeg-ycbcr"), ("gpu-pattern",)):
+            self.view._vector_pages[1] = VectorPage(True, features=features)
+            self.assertEqual(self.view.render_diagnostic(1)["mode"], "direct")
+        for feature in ("raster-shading", "cpu-island", "text-raster-fallback", "raster-pattern"):
+            self.view._vector_pages[1] = VectorPage(True, features=("image", feature))
+            self.assertEqual(self.view.render_diagnostic(1)["mode"], "composite")
         fallback = self.view.render_diagnostic(2)
         self.assertEqual(fallback["mode"], "fallback")
         self.assertEqual(fallback["reason"], "unsupported operation: begin-mask")

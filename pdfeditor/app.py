@@ -80,8 +80,7 @@ def _render_diagnostic_summary(info):
     features = tuple(info.get("features", ()))
     labels = {
         "direct": localize("GPU rendering", "GPU 렌더링"),
-        "composite": localize(
-            "GPU rendering (composited)", "GPU 렌더링(합성)"),
+        "composite": localize("GPU rendering", "GPU 렌더링"),
         "fallback": localize("CPU rendering", "CPU 렌더링"),
         "pending": localize(
             "CPU now · GPU preparing", "현재 CPU · GPU 준비 중"),
@@ -106,7 +105,7 @@ def _render_diagnostic_summary(info):
     if reason == "OpenGL CPU tiles":
         text = localize("CPU rendering · OpenGL composition",
                         "CPU 렌더링 · OpenGL 합성")
-    if mode == "composite" and {"raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"}.intersection(features):
+    if mode in ("direct", "composite") and {"raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"}.intersection(features):
         text = localize("CPU+GPU rendering", "CPU+GPU 렌더링")
     if mode == "fallback" and short_reason:
         text += " · " + short_reason
@@ -156,7 +155,15 @@ def _render_diagnostic_summary(info):
             gpu_tasks.append(localize("text drawing", "글자 그리기"))
         if {"vector-shading", "gradient-primitive", "vector-mesh"}.intersection(features):
             gpu_tasks.append(localize("gradient drawing", "그라데이션 그리기"))
-        if {"image", "stencil", "raster-shading", "raster-pattern",
+        if {"image", "stencil"}.intersection(features):
+            gpu_tasks.append(localize("image drawing", "이미지 그리기"))
+        if "gpu-color-management" in features:
+            gpu_tasks.append(localize("image color conversion", "이미지 색상 변환"))
+        if {"gpu-image-mask", "gpu-mask"}.intersection(features):
+            gpu_tasks.append(localize("transparency mask composition", "투명 마스크 합성"))
+        if "gpu-pattern" in features:
+            gpu_tasks.append(localize("repeating pattern drawing", "반복 무늬 그리기"))
+        if {"raster-shading", "raster-pattern",
                 "text-raster-fallback", "cpu-island"}.intersection(features):
             gpu_tasks.append(localize("bitmap display", "비트맵 표시"))
         gpu_tasks.append(localize("clipping and composition", "클리핑·합성"))

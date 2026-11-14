@@ -26,7 +26,7 @@ class DevelopmentStartupTests(unittest.TestCase):
         package.mkdir()
         (package / '__init__.py').write_text('', encoding='utf-8')
         shutil.copy2(ROOT / 'pdfeditor/dev_startup.py', package / 'dev_startup.py')
-        for entry in ('run.py', 'run.pyw'):
+        for entry in ('run.py', 'run.pyw', 'run_cpu.py'):
             shutil.copy2(ROOT / entry, cls.root / entry)
         # The fake GUI records the real interpreter chosen by the copied entry
         # point. No mocks replace prefix selection or process startup.
@@ -39,6 +39,7 @@ def main(*,allow_residency=True):
     temporary.write_text(json.dumps({
         'prefix':sys.prefix,'executable':sys.executable,'args':sys.argv[1:],'pid':os.getpid(),
         'allow_residency':allow_residency,'ignore_environment':sys.flags.ignore_environment,
+        'render_backend':os.environ.get('LEAFLET_RENDER_BACKEND'),
         'no_user_site':sys.flags.no_user_site,'pythonpath':os.environ.get('PYTHONPATH'),
         'native_imported':any(n.startswith(('pymupdf','PyQt5')) for n in sys.modules)
     }),encoding='utf-8')
@@ -93,7 +94,7 @@ def main(*,allow_residency=True):
         else:
             self.assertEqual(ctypes.get_last_error(), 87)  # The child already exited.
         self.assertTrue(Path(value['prefix']).samefile(self.root / '.venv'))
-        self.assertEqual(value['args'], args)
+        self.assertEqual(value['args'], args + (['--workspace', 'reader'] if entry == 'run_cpu.py' else []))
         self.assertFalse(value['native_imported'])
         return value
 
@@ -115,6 +116,17 @@ def main(*,allow_residency=True):
         value = self.invoke('run.pyw', already_in_venv=True)
         self.assertTrue(Path(value['executable']).samefile(self.root / '.venv/Scripts/python.exe'))
         self.assertEqual(value['ignore_environment'], 0)
+        self.assertFalse(value['allow_residency'])
+
+    def test_cpu_launcher_uses_project_python_and_opens_a_fresh_cpu_reader(self):
+        value = self.invoke('run_cpu.py')
+        self.assertEqual(value['render_backend'], 'cpu')
+        self.assertFalse(value['allow_residency'])
+        self.assertTrue(Path(value['executable']).samefile(self.root / '.venv/Scripts/python.exe'))
+
+    def test_cpu_launcher_also_works_inside_project_environment(self):
+        value = self.invoke('run_cpu.py', already_in_venv=True)
+        self.assertEqual(value['render_backend'], 'cpu')
         self.assertFalse(value['allow_residency'])
 
 

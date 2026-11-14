@@ -44,6 +44,7 @@ class EditorWorkspaceTests(unittest.TestCase):
         self.original = self.path.read_bytes()
         self.dialogs = []
         self.patchers = [patch.object(settings, "PATH", str(root / "settings.json")),
+                         patch("pdfeditor.paths.user_data_dir", return_value=str(root)),
                          patch.object(settings, "_OLD_PATH", str(root / "absent")),
                          patch.object(settings, "_installer_ui_language", return_value="en"),
                          patch.object(app, "_app_windows", [])]
@@ -53,11 +54,19 @@ class EditorWorkspaceTests(unittest.TestCase):
     def tearDown(self):
         for dialog in self.dialogs:
             dialog.close()
-        for window in list(self.module._app_windows):
+        windows = list(self.module._app_windows)
+        for window in windows:
             for index in range(window._tabs.count()):
                 window._tabs.widget(index)._dirty = False
             window.close()
         self.settle()
+        from PyQt5.QtCore import QCoreApplication, QEvent
+        from PyQt5.QtTest import QTest
+        QTest.qWait(25)
+        for window in windows:
+            window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.application.processEvents()
         for patcher in reversed(self.patchers):
             patcher.stop()
         self.directory.cleanup()

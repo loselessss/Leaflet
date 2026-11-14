@@ -1037,6 +1037,21 @@ class EmbeddedModeTests(unittest.TestCase):
                 self.assertIn('Display Renderer', [a.text() for a in window.findChildren(QAction)])
                 self.assertIsNone(window._update_service)
 
+    def test_cpu_comparison_session_opens_reader_without_gpu_or_saved_setting_changes(self):
+        from pdfeditor import settings
+        with self.document_windows() as (module, source):
+            settings.set_render_backend("gpu")
+            original = Path(settings.PATH).read_bytes()
+            with patch.dict(os.environ, {"LEAFLET_RENDER_BACKEND": "cpu"}):
+                window = module.new_window(str(source), workspace_mode="reader")
+                self.settle()
+                view = window._tabs.currentWidget().view
+                self.assertEqual(view._render_mode, "cpu")
+                self.assertFalse(view._d2d_requested)
+                self.assertIsNone(view._gpu_surface)
+                self.assertEqual(view.render_device, "cpu")
+            self.assertEqual(Path(settings.PATH).read_bytes(), original)
+
     def test_home_workspace_switch_and_view_appearance_stay_out_of_embedded_windows(self):
         from PyQt5.QtWidgets import QMenu
         with self.document_windows() as (module, source):

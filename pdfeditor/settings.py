@@ -222,6 +222,9 @@ def set_startup_workspace(mode):
 
 
 def render_backend():
+    override = os.environ.get("LEAFLET_RENDER_BACKEND", "").lower()
+    if override in RENDER_BACKENDS:
+        return override
     mode = str(_load().get("render_backend", DEFAULT_RENDER_BACKEND)).lower()
     return mode if mode in RENDER_BACKENDS else DEFAULT_RENDER_BACKEND
 
@@ -241,6 +244,10 @@ def set_render_backend(mode):
     normalized = str(mode).lower()
     if normalized not in RENDER_BACKENDS:
         return False
+    if os.environ.get("LEAFLET_RENDER_BACKEND", "").lower() in RENDER_BACKENDS:
+        # A comparison launcher keeps renderer choices local to its process.
+        os.environ["LEAFLET_RENDER_BACKEND"] = normalized
+        return True
     data = _load()
     data["render_backend"] = normalized
     _save(data)

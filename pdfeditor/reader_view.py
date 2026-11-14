@@ -337,8 +337,10 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                             "features": scene.features}
                 return {"mode": "fallback", "reason": scene.reason,
                         "features": scene.features}
-            bitmap_features = {"image", "stencil", "raster-shading", "clip-mask", "cpu-island", "text-raster-fallback", "raster-pattern"}
-            mode = ("composite" if bitmap_features.intersection(scene.features)
+            # Decoding a source image does not rasterize PDF page content.
+            # Only actual CPU-prepared drawing regions indicate mixed rendering.
+            cpu_raster_features = {"raster-shading", "cpu-island", "text-raster-fallback", "raster-pattern"}
+            mode = ("composite" if cpu_raster_features.intersection(scene.features)
                     else "direct")
             return {"mode": mode, "reason": "",
                     "features": scene.features}

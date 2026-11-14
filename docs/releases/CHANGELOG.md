@@ -1,17 +1,23 @@
 # Changelog
 
-## Unreleased (1.39.2)
+## 1.39.2 - 2026-11-17
 
 ### 개선
 
 - Show first-page PDF preview cards on the home screen, with columns adapting to window width. Stack Favorites and Recent in one scroll area; show up to two favorite rows (one on short windows) with an expansion button. Keep the latest 30 recent files.
 - Reuse home thumbnails across launches within the shared disk-cache budget. Scene-cache Off still retains up to 16 MB of thumbnails. Remove thumbnails when files leave both Recent and Favorites; prepare visible previews outside the GUI process with bounded RAM.
+- Label GPU scenes containing ordinary images or masks as GPU rendering. Reserve CPU+GPU rendering for actual CPU-rasterized regions, and clarify GPU image drawing, color conversion, and mask composition in the responsibility tooltip.
 
 ### 성능 개선
 
+- Restore saved home thumbnails together without launching the PDF engine, reducing delayed, sequential card updates after restarting.
 - Use GPU preparation for supported ICC/CMYK image color conversion and alpha masks. Render independent vector patterns with a retained GPU pattern instead of duplicating cell commands. Keep bounded decoding and regional fallbacks.
 - Keep eligible JPEG images, including small previews, compressed through page preparation and caching, and use GPU-assisted YCbCr display. Reuse native-resolution scenes across zoom levels without preparing them again.
 - Prepare up to four nearby vector pages concurrently with short-lived native workers. Cache completed scenes in RAM, prioritize the visible page, and limit ongoing work by available memory.
+
+### 기타
+
+- Add `run_cpu.py` for local comparisons. Open a fresh Reader process using CPU rendering without changing saved renderer preferences or joining the resident tray process.
 
 ## 1.39.1 - 2026-11-08
 

@@ -130,6 +130,24 @@ class AutomaticUpdateScheduleTests(unittest.TestCase):
         with patch.object(settings, "_load", return_value={"render_backend": "bad"}):
             self.assertEqual(settings.render_backend(), "auto")
 
+    def test_session_renderer_override_keeps_saved_choice_unchanged(self):
+        settings.set_render_backend("gpu")
+        original = Path(self.settings_path).read_bytes()
+        with patch.dict(os.environ, {"LEAFLET_RENDER_BACKEND": "cpu"}):
+            self.assertEqual(settings.render_backend(), "cpu")
+            with patch.object(settings, "_save", side_effect=AssertionError("Must not save session renderer")):
+                self.assertTrue(settings.set_render_backend("auto"))
+                self.assertEqual(settings.render_backend(), "auto")
+                self.assertFalse(settings.set_render_backend("invalid"))
+                self.assertEqual(settings.render_backend(), "auto")
+        self.assertEqual(Path(self.settings_path).read_bytes(), original)
+        self.assertEqual(settings.render_backend(), "gpu")
+
+    def test_invalid_session_override_uses_saved_renderer(self):
+        settings.set_render_backend("gpu")
+        with patch.dict(os.environ, {"LEAFLET_RENDER_BACKEND": "invalid"}):
+            self.assertEqual(settings.render_backend(), "gpu")
+
     def test_vector_page_cache_defaults_to_auto_and_validates_sizes(self):
         self.assertEqual(settings.render_cache_mb(), 0)
         settings.set_render_cache_mb(2048)

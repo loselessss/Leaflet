@@ -1,8 +1,10 @@
 # Leaflet Release Notes
 
-## Unreleased (1.39.2)
+## 1.39.2 - 2026-11-17
 
 - Find PDFs from home-screen previews. Favorites and the latest 30 recent files share one scrollable screen that adapts to window width. Saved previews reopen quickly and are removed when files leave both lists.
+- Show saved home previews more quickly after restarting the app.
+- Clearly label GPU-rendered documents containing images and distinguish pages that include CPU-rendered regions.
 - Improve GPU preparation for color-managed images, transparency masks, and repeating patterns.
 - Reduce preparation time and cache size for some PDFs containing JPEG photos.
 - Use the GPU path for small JPEG previews and avoid repeated preparation when full-resolution images are already ready.
