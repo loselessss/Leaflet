@@ -2,6 +2,11 @@ import sys
 
 
 def main(*, allow_residency=True):
+    if "--home-preview-worker" in sys.argv:
+        from .home_preview_worker import main as preview_main
+        index = sys.argv.index("--home-preview-worker")
+        sys.exit(preview_main(sys.argv[index + 1:]))
+
     if "--pdf-layout-worker" in sys.argv:
         from .layout_worker import main as layout_main
         index = sys.argv.index("--pdf-layout-worker")

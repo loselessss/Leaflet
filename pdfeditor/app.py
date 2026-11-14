@@ -1868,6 +1868,9 @@ class AppWindow(QMainWindow, WindowWorkspaceMixin, TabLifecycleMixin, FileHistor
             action = cache_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(settings.disk_cache_mb() == size)
+            action.setToolTip(localize(
+                "Vector pages and home thumbnails share this limit. Off keeps only home thumbnails (up to 16 MB).",
+                "벡터 페이지와 홈 썸네일에 함께 적용합니다. 사용 안 함에서도 홈 썸네일은 최대 16MB 보관합니다."))
             cache_group.addAction(action)
             action.triggered.connect(
                 lambda _checked=False, selected=size: self._set_disk_cache_size(selected))

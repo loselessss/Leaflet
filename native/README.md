@@ -34,12 +34,13 @@ compilation. Background reader jobs use the standalone Rust executable
 `scene_compiler/native_input.rs` validates scope nesting, selects bounded raster
 regions, folds alpha-image scopes, assigns image density across the page budget,
 normalizes strokes/pixels and compiles the owned scene. `rust_scene_import.h`
-uploads LFSC v3 in one native call. Python never constructs per-drawing objects
+uploads LFSC v4 in one native call. Python never constructs per-drawing objects
 on this path. Stroked/text-clipping glyphs remain vector; shades, tiles and
 complex alpha coverage can use SDK rasters. Missing native support or invalid
 input returns CPU fallback, not the old Python compiler.
 
-Renderer ABI 27 / native-input ABI 4 / LFSC v3 add encoded JPEG resources.
+Renderer ABI 28 / native-input ABI 5 / LFSC v4 support encoded JPEG resources,
+deduplicated ICC profiles, separate masks/native color planes and vector patterns.
 Eligible opaque RGB JPEGs (DeviceRGB or the exact engine sRGB profile) retain
 their original bytes through Rust, RAM/LZ4 and SQLite storage. WIC supplies a
 bounded-size planar-capable scaler to Direct2D's image source; YCbCr upsampling
@@ -51,9 +52,25 @@ GPU retention account for decoded sizes, not only compressed packet lengths.
 Small previews use the JPEG path even if their encoded source is larger than a
 BGRA thumbnail. Scenes containing only native-resolution JPEGs and vectors need
 no image refinement across zoom levels; downscaled JPEGs and raw raster regions
-still refine. Cache identity 25 invalidates the earlier preview selection and
-refinement metadata. Non-sRGB/CMYK/gray/Decode/masked images, sources over 16MP
-or 8192 pixels per axis, and partial-image crops retain the bounded MuPDF path.
+still refine. Preview selection and refinement metadata were revised in cache
+identity 25. Eligible RGB/CMYK ICC images now decode/resample into their
+native components without CPU color conversion. Rust packs RGB planes and interns
+profiles; Direct2D converts ICC color at the source sampling grid into an immutable
+GPU bitmap. A bounded profile/effect cache shares color transforms. Completed
+uploads release their effect inputs; the cache never retains large source textures.
+Image-mask clips transfer one-channel coverage instead of painted BGRA pixels,
+then prepare GPU mask textures while preserving PDF interpolation. Attached masks
+already emitted as MuPDF clips are never applied a second time. Decoding, resampling
+and matte/spot/indexed/oversize exceptions retain native CPU handling. Original JPEG
+streams are used only when no PDF-specific color transform is required.
+
+Independent, nonoverlapping vector pattern cells become one retained command-list
+brush, recorded without geometry realizations on a separate D2D context so high
+zoom keeps vector edges. The original tile program remains available for bounded
+CPU escape scopes, including translated Type3 glyph placements. Overlapping cells, image-dependent or nested mask/group patterns
+retain expansion/raster fallbacks. Pattern templates reject image/nested-pattern
+resources before recursive native upload. Cache identity 26 invalidates older
+scene layouts; mask GPU budgets charge their resolved BGRA size, not transfer bytes.
 No JPEG is re-encoded.
 
 Build the Rust extension and standalone worker with `python native/build_path_packer.py`, the MuPDF
@@ -168,7 +185,7 @@ native upload adapter used by normal application rendering.
 See `docs/architecture/RUST_SCENE_COMPILER_REWRITE.md` for actual completion status.
 
 Compiled scenes persist through `pdfeditor.scene_cache_packet` as a bounded
-binary envelope around unchanged LFSC v3 bytes. SHA-256 covers metadata and the
+binary envelope around unchanged LFSC v4 bytes. SHA-256 covers metadata and the
 uncompressed packet. Up to four independent 64MiB chunks use the existing Rust
 LZ4 codec; incompressible chunks remain raw. Restoration validates lengths and
 budgets before decoding, without JSON/Base64 or executable-object loading.
@@ -244,8 +261,9 @@ images, colored stencil masks, and bounded shading bitmaps on the CPU. Supported
 page scenes, exact glyph clips, and ordinary isolated transparency groups are
 rasterized or composed through Direct2D; unsupported page features keep the
 bounded 512 px CPU-tile path.
-Native resources are released with the tab, and page image scene data is capped
-at 64 MiB before falling back.
+Native resources are released with the tab. Production Rust scenes cap decoded
+image resources at 128 MiB and total resource bytes at 256 MiB; other GPU caches
+and nearby-page retention have separate bounded budgets.
 Composite captures retain explicit Flush/CopyFromBitmap boundaries for GPU
 backdrop copies, while redundant mask-coverage and scope-ending Flush calls are
 omitted. Later scratch writes follow consuming draws on that context; raw mask

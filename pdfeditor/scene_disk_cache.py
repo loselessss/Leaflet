@@ -1,4 +1,4 @@
-"""Disposable, bounded GPU scene storage. Never deserialize executable objects."""
+"""Disposable scene and home-preview storage sharing one bounded SQLite cache."""
 
 import base64
 from dataclasses import fields, is_dataclass
@@ -11,12 +11,29 @@ import zlib
 
 MAX_DECODED = 512 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 25
+SCENE_FORMAT_VERSION = 26
+THUMBNAIL_ONLY_LIMIT = 16 * 1024 * 1024
 
 
 def _limit():
     from .settings import disk_cache_mb
     return disk_cache_mb() * 1024 * 1024
+
+
+def _storage_limit():
+    return _limit() or THUMBNAIL_ONLY_LIMIT
+
+
+def _thumbnail_path_id(path):
+    normalized = os.path.normcase(os.path.abspath(path))
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def _retained_thumbnail_ids(paths=None):
+    if paths is None:
+        from . import settings
+        paths = settings.recent_files() + settings.favorites()
+    return {_thumbnail_path_id(path) for path in paths}
 
 
 def _types():
@@ -85,7 +102,7 @@ def _connect():
     db = sqlite3.connect(str(root / "gpu-scenes.sqlite3"), timeout=0.1)
     try:
         db.execute("PRAGMA auto_vacuum=FULL")
-        db.execute("PRAGMA max_page_count=%d" % max(4, _limit() // 4096))
+        db.execute("PRAGMA max_page_count=%d" % max(4, _storage_limit() // 4096))
         db.execute("CREATE TABLE IF NOT EXISTS scenes (key TEXT PRIMARY KEY, data BLOB, used REAL)")
     except sqlite3.Error:
         db.close()
@@ -238,15 +255,31 @@ def save(cache_key, scene):
         return
     if cache_key is None or not scene.supported or not _limit():
         return
-    db = None
     try:
         data = _serialize_scene(scene)
+    except (ValueError, TypeError, RecursionError, RuntimeError, MemoryError):
+        return
+    _save_blob(cache_key, data)
+
+
+def _save_blob(cache_key, data):
+    db = None
+    try:
         # Reserve space for SQLite's index and page overhead within 100 MiB.
-        budget = _limit() * 9 // 10
+        budget = _storage_limit() * 9 // 10
         if len(data) > budget:
             return
         db = _connect()
         db.execute("BEGIN IMMEDIATE")
+        if cache_key.startswith("thumbnail-v1:"):
+            # Read history under the same write lock as insertion: removal's
+            # pruning transaction cannot race a late worker result back in.
+            if cache_key.split(":")[1] not in _retained_thumbnail_ids():
+                return
+            db.execute("DELETE FROM scenes WHERE key LIKE ?",
+                       ("thumbnail-v1:" + cache_key.split(":")[1] + ":%",))
+        elif not _limit():
+            return
         db.execute("DELETE FROM scenes WHERE key=?", (cache_key,))
         total = db.execute("SELECT coalesce(sum(length(data)),0) FROM scenes").fetchone()[0]
         while total + len(data) > budget:
@@ -262,13 +295,68 @@ def save(cache_key, scene):
             db.close()
 
 
-def trim():
-    """Apply a reduced budget immediately; disabling discards stored scenes."""
+def load_thumbnail(cache_key):
+    if not cache_key:
+        return None
+    db = None
+    try:
+        db = _connect()
+        row = db.execute("SELECT data FROM scenes WHERE key=? AND length(data)<=524288",
+                         ("thumbnail-v1:" + cache_key,)).fetchone()
+        if row is None or not row[0].startswith(b"\x89PNG\r\n\x1a\n"):
+            return None
+        db.execute("UPDATE scenes SET used=julianday('now') WHERE key=?",
+                   ("thumbnail-v1:" + cache_key,))
+        db.commit()
+        return row[0]
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        if db is not None:
+            db.close()
+
+
+def save_thumbnail(cache_key, png):
+    if (cache_key and len(png) <= 524288 and
+            png.startswith(b"\x89PNG\r\n\x1a\n")):
+        _save_blob("thumbnail-v1:" + cache_key, png)
+
+
+def thumbnail_key(path, revision, renderer):
+    identity = hashlib.sha256(repr((revision, renderer)).encode()).hexdigest()
+    return _thumbnail_path_id(path) + ":" + identity
+
+
+def prune_thumbnails(paths):
+    """Remove all revisions of files absent from both home lists."""
+    from .paths import user_data_dir
+    if not (Path(user_data_dir()) / "cache" / "gpu-scenes.sqlite3").exists():
+        return
     db = None
     try:
         db = _connect()
         db.execute("BEGIN IMMEDIATE")
-        budget = _limit() * 9 // 10
+        retained = _retained_thumbnail_ids(paths)
+        rows = db.execute("SELECT key FROM scenes WHERE key LIKE 'thumbnail-v1:%'").fetchall()
+        db.executemany("DELETE FROM scenes WHERE key=?", [
+            (key,) for key, in rows if key.split(":")[1] not in retained])
+        db.commit()
+    except (OSError, sqlite3.Error):
+        pass
+    finally:
+        if db is not None:
+            db.close()
+
+
+def trim():
+    """Apply the shared budget; scene-cache Off keeps only bounded home previews."""
+    db = None
+    try:
+        db = _connect()
+        db.execute("BEGIN IMMEDIATE")
+        if not _limit():
+            db.execute("DELETE FROM scenes WHERE key NOT LIKE 'thumbnail-v1:%'")
+        budget = _storage_limit() * 9 // 10
         rows = db.execute("SELECT key,length(data) FROM scenes ORDER BY used").fetchall()
         total = sum(size for _, size in rows)
         for cache_key, size in rows:

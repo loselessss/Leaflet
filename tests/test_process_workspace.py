@@ -47,6 +47,7 @@ class ProcessIsolationTests(unittest.TestCase):
         self._reports = {}
         self.bridge = WorkspaceBridge(self.application)
         self.patchers = [patch.object(app, "_app_windows", []),
+                         patch("pdfeditor.paths.user_data_dir", return_value=str(self.root)),
                          patch.object(settings, "PATH", str(self.root / "settings.json")),
                          patch.object(settings, "_OLD_PATH", str(self.root / "absent")),
                          patch.object(self.application, "_spdf_workspace_bridge", self.bridge, create=True),
@@ -83,10 +84,14 @@ class ProcessIsolationTests(unittest.TestCase):
         for channel in list(self.bridge.channels):
             channel.socket.abort()
         self.bridge.server.close()
-        for window in list(app._app_windows):
+        windows = list(set(app._app_windows) | {self.reader})
+        for window in windows:
             window.close()
         QTest.qWait(50)
+        for window in windows:
+            window.deleteLater()
         self.bridge.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         QTest.qWait(10)
         for patcher in reversed(self.patchers):
             patcher.stop()

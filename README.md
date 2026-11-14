@@ -17,6 +17,7 @@ See [release notes](docs/releases/RELEASE_NOTES.md) for recent improvements.
 ## What you can do
 
 - **Read:** Zoom up to 3200%, pan smoothly, search, use bookmarks and two-page view, and detach tabs into separate windows.
+- **Home:** Browse PDF previews with compact favorites and the latest 30 recent files in one responsive, scrollable screen. Previews are saved for the next launch.
 - **Appearance:** Use the ribbon's Dark mode button or follow Windows settings while preserving the PDF's original colors.
 - **Appearance:** View → Dark mode offers include/exclude document choices. Document colors follow the app theme; the ribbon moon remembers inclusion. The home screen switches between Reader and Editor. Display colors never change the PDF file.
 - **Copy in reading order:** Press Ctrl+Shift+C to analyze the selected text or current page locally. Model memory is released after each job.

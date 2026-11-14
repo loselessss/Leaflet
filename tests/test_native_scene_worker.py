@@ -67,6 +67,18 @@ class NativeSceneWorkerTests(unittest.TestCase):
         self.assertEqual(self.invoke(*options), expected)
         self.assertEqual(self.invoke(*options), expected)
 
+    def test_gpu_color_mask_and_pattern_survive_worker_and_sqlite(self):
+        from tests.test_gpu_image_effects import cmyk_mask_pdf, pattern_pdf
+        for index, data in enumerate((cmyk_mask_pdf(), pattern_pdf(size=1024))):
+            self.input.write_bytes(data)
+            with pymupdf.open(self.input) as doc:
+                expected = compile_vector_page(doc[0])
+            self.assertTrue(expected.supported, expected.reason)
+            options = ('--disk-cache-key', f'gpu-effects-{index}', '--cache-db', str(self.root / 'effects.db'),
+                       '--cache-limit', str(100 * 1024 * 1024))
+            self.assertEqual(self.invoke(*options), expected)
+            self.assertEqual(self.invoke(*options), expected)
+
     def test_page_rotation_crop_and_high_zoom_viewport(self):
         with pymupdf.open() as doc:
             doc.new_page(width=240,height=300)

@@ -261,11 +261,36 @@ public:
         ComPtr<ID2D1ImageSourceFromWic> source;
         UINT width=0,height=0;
     };
+    struct ImagePlanes {
+        ComPtr<ID2D1Bitmap1> colors,mask;
+        ComPtr<ID2D1ColorContext> profile,destination;
+        UINT width=0,height=0,intent=0;
+    };
     struct Bitmap {
         Surface* owner;
         ComPtr<ID2D1Bitmap1> resource;
         std::shared_ptr<JpegImage> jpeg{};
+        std::shared_ptr<const ImagePlanes> planes{};
+        ComPtr<ID2D1Effect> color_effect{},mask_effect{};
+        ComPtr<ID2D1Image> image{};
     };
+    struct PatternData {ComPtr<ID2D1CommandList> source;D2D1_RECT_F cell{};};
+    struct Pattern {Surface* owner=nullptr;std::shared_ptr<const PatternData> data;ComPtr<ID2D1ImageBrush> brush;};
+    HRESULT bind_pattern(const std::shared_ptr<const PatternData>& data,std::unique_ptr<Pattern>& output) noexcept {
+        try {auto created=std::make_unique<Pattern>();created->owner=this;created->data=data;
+            const auto props=D2D1::ImageBrushProperties(data->cell,D2D1_EXTEND_MODE_WRAP,D2D1_EXTEND_MODE_WRAP,D2D1_INTERPOLATION_MODE_LINEAR);
+            // Image brushes anchor their source rectangle at the brush origin.
+            // PDF cells keep their BBox origin in pattern space instead.
+            const auto brush_props=D2D1::BrushProperties(1.f,D2D1::Matrix3x2F::Translation(data->cell.left,data->cell.top));
+            const auto result=d2d_context_->CreateImageBrush(data->source.Get(),props,brush_props,&created->brush);
+            if(SUCCEEDED(result))output=std::move(created);return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+    HRESULT draw_pattern(Pattern* pattern,const D2D1_RECT_F& area) noexcept {
+        if(!drawing_||!pattern||pattern->owner!=this||!pattern->brush)return E_INVALIDARG;
+        d2d_context_->FillRectangle(area,pattern->brush.Get());return S_OK;
+    }
+    HRESULT record_pattern(void* scene,const D2D1_RECT_F& view,const D2D1_RECT_F& cell,std::unique_ptr<Pattern>& output) noexcept;
 
     struct Path {
         Surface* owner;
@@ -564,6 +589,135 @@ public:
                 if(SUCCEEDED(result))result=d2d_context_->CreateBitmapFromWicBitmap(converter.Get(),&props,&created->resource);
             }
             if(SUCCEEDED(result))*bitmap=created.release();return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+
+    HRESULT create_profile(const unsigned char* bytes,UINT size,ID2D1ColorContext** context) noexcept {
+        if(!bytes||!context||size<128||size>4*1024*1024)return E_INVALIDARG;
+        try {
+            const std::string key(reinterpret_cast<const char*>(bytes),size);
+            auto found=source_profiles_.find(key);if(found!=source_profiles_.end())return found->second.CopyTo(context);
+            if(source_profiles_.size()>=8){source_profiles_.clear();color_effects_.clear();}
+            ComPtr<ID2D1ColorContext> created;const auto result=d2d_context_->CreateColorContext(D2D1_COLOR_SPACE_CUSTOM,bytes,size,&created);
+            if(SUCCEEDED(result)){source_profiles_.emplace(key,created);return created.CopyTo(context);}return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+    HRESULT upload_context() noexcept {
+        if(upload_context_)return S_OK;
+        const auto result=d2d_device_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&upload_context_);
+        if(SUCCEEDED(result))upload_context_->SetDpi(96,96);return result;
+    }
+    HRESULT create_mask_image(const unsigned char* bytes,UINT width,UINT height,Bitmap** bitmap) noexcept {
+        if(!bytes||!bitmap||!width||!height||uint64_t(width)*height>8*1024*1024)return E_INVALIDARG;*bitmap=nullptr;
+        try {auto created=std::make_unique<Bitmap>();created->owner=this;
+            const auto props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+            ComPtr<ID2D1Bitmap1> source;
+            auto result=d2d_context_->CreateBitmap(D2D1::SizeU(width,height),bytes,width,props,&source);
+            if(SUCCEEDED(result))result=upload_context();
+            const auto target_props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+            if(SUCCEEDED(result))result=upload_context_->CreateBitmap(D2D1::SizeU(width,height),nullptr,0,target_props,&created->resource);
+            ComPtr<ID2D1SolidColorBrush> white;
+            if(SUCCEEDED(result))result=upload_context_->CreateSolidColorBrush(D2D1::ColorF(1,1,1,1),&white);
+            if(SUCCEEDED(result)){
+                const auto area=D2D1::RectF(0,0,float(width),float(height));
+                upload_context_->SetTarget(created->resource.Get());upload_context_->BeginDraw();upload_context_->Clear(D2D1::ColorF(0,0.f));
+                upload_context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                upload_context_->FillOpacityMask(source.Get(),white.Get(),&area,nullptr);
+                result=upload_context_->EndDraw();upload_context_->SetTarget(nullptr);
+            }
+            if(SUCCEEDED(result))*bitmap=created.release();return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+    HRESULT bind_color_image(const std::shared_ptr<const ImagePlanes>& planes,Bitmap** bitmap) noexcept {
+        if(!planes||!bitmap)return E_INVALIDARG;*bitmap=nullptr;
+        try {
+            auto created=std::make_unique<Bitmap>();created->owner=this;created->planes=planes;
+            HRESULT result=S_OK;ComPtr<ID2D1Image> image=planes->colors;
+            if(planes->profile){
+                for(const auto& cached:color_effects_)if(cached.source.Get()==planes->profile.Get()&&cached.intent==planes->intent){created->color_effect=cached.effect;break;}
+                const bool fresh=!created->color_effect;
+                if(fresh)result=d2d_context_->CreateEffect(CLSID_D2D1ColorManagement,&created->color_effect);
+                if(SUCCEEDED(result)){
+                    auto* effect=created->color_effect.Get();effect->SetInput(0,image.Get());
+                    if(fresh)result=effect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_COLOR_CONTEXT,planes->profile.Get());
+                    if(SUCCEEDED(result)&&fresh)result=effect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_COLOR_CONTEXT,planes->destination.Get());
+                    if(SUCCEEDED(result)&&fresh)result=effect->SetValue(D2D1_COLORMANAGEMENT_PROP_ALPHA_MODE,D2D1_COLORMANAGEMENT_ALPHA_MODE_STRAIGHT);
+                    if(SUCCEEDED(result)&&fresh)result=effect->SetValue(D2D1_COLORMANAGEMENT_PROP_SOURCE_RENDERING_INTENT,planes->intent);
+                    if(SUCCEEDED(result)&&fresh)result=effect->SetValue(D2D1_COLORMANAGEMENT_PROP_DESTINATION_RENDERING_INTENT,planes->intent);
+                    if(SUCCEEDED(result))effect->GetOutput(image.ReleaseAndGetAddressOf());
+                    if(SUCCEEDED(result)&&fresh){if(color_effects_.size()>=16)color_effects_.clear();color_effects_.push_back({planes->profile,created->color_effect,planes->intent});}
+                }
+            }
+            if(SUCCEEDED(result)&&planes->mask){
+                result=d2d_context_->CreateEffect(CLSID_D2D1AlphaMask,&created->mask_effect);
+                if(SUCCEEDED(result)){
+                    created->mask_effect->SetInput(0,image.Get());created->mask_effect->SetInput(1,planes->mask.Get());
+                    created->mask_effect->GetOutput(image.ReleaseAndGetAddressOf());
+                }
+            }
+            if(SUCCEEDED(result)){created->image=image;*bitmap=created.release();}return result;
+        }catch(...){return E_OUTOFMEMORY;}
+    }
+    HRESULT create_color_image(const unsigned char* pixels,UINT width,UINT height,UINT channels,ID2D1ColorContext* profile,
+        const unsigned char* mask,UINT mw,UINT mh,UINT intent,Bitmap** bitmap) noexcept {
+        if(!pixels||!bitmap||!width||!height||width>8192||height>8192||uint64_t(width)*height>8*1024*1024||
+            (channels!=3&&channels!=4)||intent>3||(channels==4&&!profile)||(mask&&(mw!=width||mh!=height)))return E_INVALIDARG;
+        try {
+            auto data=std::make_shared<ImagePlanes>();data->width=width;data->height=height;data->intent=intent;data->profile=profile;
+            const auto props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_R8G8B8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+            auto result=d2d_context_->CreateBitmap(D2D1::SizeU(width,height),pixels,width*4,props,&data->colors);
+            if(SUCCEEDED(result)&&profile){
+                if(!destination_profile_)result=d2d_context_->CreateColorContext(D2D1_COLOR_SPACE_SRGB,nullptr,0,&destination_profile_);
+                data->destination=destination_profile_;
+            }
+            if(SUCCEEDED(result)&&mask){
+                const auto mask_props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                    D2D1::PixelFormat(DXGI_FORMAT_A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+                result=d2d_context_->CreateBitmap(D2D1::SizeU(mw,mh),mask,mw,mask_props,&data->mask);
+            }
+            auto colors_only=std::make_shared<ImagePlanes>(*data);colors_only->mask.Reset();
+            Bitmap* bound=nullptr;if(SUCCEEDED(result))result=bind_color_image(colors_only,&bound);
+            std::unique_ptr<Bitmap> created(bound);
+            if(SUCCEEDED(result)){
+                // Resolve ICC and alpha at the source sampling grid once.
+                // Letting transforms interpolate CMYK before conversion gives
+                // different colors and would rerun the effect on every zoom.
+                result=upload_context();ComPtr<ID2D1DeviceContext> context=upload_context_;
+                ComPtr<ID2D1Bitmap1> converted;
+                const auto target_props=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+                if(SUCCEEDED(result))result=context->CreateBitmap(D2D1::SizeU(width,height),nullptr,0,target_props,&converted);
+                if(SUCCEEDED(result)){
+                    context->SetDpi(96,96);context->SetTarget(converted.Get());context->BeginDraw();context->Clear(D2D1::ColorF(0,0.f));
+                    context->DrawImage(created->image.Get());result=context->EndDraw();context->SetTarget(nullptr);
+                }
+                if(SUCCEEDED(result)&&data->mask){
+                    // Keep four color components separate from alpha through
+                    // the ICC pass, before combining independent alpha.
+                    ComPtr<ID2D1Bitmap1> masked;
+                    result=context->CreateBitmap(D2D1::SizeU(width,height),nullptr,0,target_props,&masked);
+                    ComPtr<ID2D1SolidColorBrush> white;
+                    if(SUCCEEDED(result))result=context->CreateSolidColorBrush(D2D1::ColorF(1,1,1,1),&white);
+                    if(SUCCEEDED(result)){
+                        context->SetTarget(masked.Get());context->BeginDraw();context->Clear(D2D1::ColorF(0,0.f));
+                        context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                        const auto area=D2D1::RectF(0,0,float(width),float(height));
+                        context->FillOpacityMask(data->mask.Get(),white.Get(),&area,nullptr);
+                        context->DrawImage(converted.Get(),nullptr,&area,D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,D2D1_COMPOSITE_MODE_SOURCE_IN);
+                        result=context->EndDraw();context->SetTarget(nullptr);converted=masked;
+                    }
+                }
+                if(SUCCEEDED(result)){
+                    if(created->color_effect)created->color_effect->SetInput(0,nullptr);
+                    created->resource=converted;created->image.Reset();created->color_effect.Reset();created->mask_effect.Reset();created->planes.reset();
+                    *bitmap=created.release();
+                }
+            }
+            if(created&&created->color_effect)created->color_effect->SetInput(0,nullptr);
+            return result;
         }catch(...){return E_OUTOFMEMORY;}
     }
 
@@ -1806,20 +1960,28 @@ public:
         float bottom,
         float opacity, bool interpolate) noexcept {
         if (!drawing_ || bitmap == nullptr || bitmap->owner != this ||
-                (!bitmap->resource&&!bitmap->jpeg) || right <= left || bottom <= top) {
+                (!bitmap->resource&&!bitmap->jpeg&&!bitmap->image) || right <= left || bottom <= top) {
             return E_INVALIDARG;
         }
         const auto destination = D2D1::RectF(left, top, right, bottom);
-        if(bitmap->jpeg){
+        if(bitmap->resource&&bitmap->resource->GetPixelFormat().format==DXGI_FORMAT_A8_UNORM){
+            ComPtr<ID2D1SolidColorBrush> white;auto result=create_brush(0xffffffff,&white);if(FAILED(result))return result;
+            const auto previous=d2d_context_->GetAntialiasMode();d2d_context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+            d2d_context_->FillOpacityMask(bitmap->resource.Get(),white.Get(),&destination,nullptr);
+            d2d_context_->SetAntialiasMode(previous);return S_OK;
+        }
+        if(bitmap->jpeg||bitmap->image){
             D2D1_MATRIX_3X2_F current;d2d_context_->GetTransform(&current);
-            const auto& jpeg=*bitmap->jpeg;
+            const auto width=bitmap->jpeg?bitmap->jpeg->width:bitmap->planes->width;
+            const auto height=bitmap->jpeg?bitmap->jpeg->height:bitmap->planes->height;
             if(opacity<1){const auto layer=D2D1::LayerParameters1(destination,nullptr,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                 D2D1::Matrix3x2F::Identity(),std::clamp(opacity,0.f,1.f));d2d_context_->PushLayer(layer,nullptr);}
-            const auto transform=D2D1::Matrix3x2F::Scale((right-left)/jpeg.width,(bottom-top)/jpeg.height)*
+            const auto transform=D2D1::Matrix3x2F::Scale((right-left)/width,(bottom-top)/height)*
                 D2D1::Matrix3x2F::Translation(left,top)* *D2D1::Matrix3x2F::ReinterpretBaseType(&current);
             d2d_context_->SetTransform(transform);
-            const auto source=D2D1::RectF(0,0,float(jpeg.width),float(jpeg.height));
-            d2d_context_->DrawImage(jpeg.source.Get(),nullptr,&source,
+            const auto source=D2D1::RectF(0,0,float(width),float(height));
+            ID2D1Image* image=bitmap->jpeg?static_cast<ID2D1Image*>(bitmap->jpeg->source.Get()):bitmap->image.Get();
+            d2d_context_->DrawImage(image,nullptr,&source,
                 interpolate?D2D1_INTERPOLATION_MODE_LINEAR:D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
             d2d_context_->SetTransform(current);if(opacity<1)d2d_context_->PopLayer();return S_OK;
         }
@@ -2518,6 +2680,11 @@ private:
     ComPtr<ID2D1Multithread> multithread_;
     ComPtr<ID2D1Device> d2d_device_;
     ComPtr<ID2D1DeviceContext> d2d_context_;
+    ComPtr<ID2D1DeviceContext> upload_context_;
+    ComPtr<ID2D1ColorContext> destination_profile_;
+    std::unordered_map<std::string,ComPtr<ID2D1ColorContext>> source_profiles_;
+    struct CachedColorEffect {ComPtr<ID2D1ColorContext> source;ComPtr<ID2D1Effect> effect;UINT intent;};
+    std::vector<CachedColorEffect> color_effects_;
     ComPtr<ID2D1DeviceContext1> d2d_context1_;
     ComPtr<ID2D1Bitmap1> target_;
     ComPtr<IDWriteFactory> dwrite_factory_;
@@ -2542,6 +2709,8 @@ struct SceneCommand {
     // Worker contexts belong to this same D2D device.
     ComPtr<ID2D1Bitmap1> bitmap;
     std::shared_ptr<Surface::JpegImage> jpeg;
+    std::shared_ptr<const Surface::ImagePlanes> planes;
+    std::shared_ptr<const Surface::PatternData> pattern;
     ComPtr<ID2D1Geometry> geometry;
     ComPtr<ID2D1GeometryRealization> fill_realization;
     ComPtr<ID2D1StrokeStyle1> stroke_style;
@@ -2565,7 +2734,8 @@ struct SceneBinding {
     ComPtr<ID2D1LinearGradientBrush> linear_brush;
     ComPtr<ID2D1RadialGradientBrush> radial_brush;
     std::unique_ptr<Surface::Mesh> mesh;
-    bool ready() const noexcept { return bitmap || path || stroke_style || mesh; }
+    std::unique_ptr<Surface::Pattern> pattern;
+    bool ready() const noexcept { return bitmap || path || stroke_style || mesh || pattern; }
 };
 
 struct Scene {
@@ -2622,6 +2792,8 @@ HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nu
             Surface::StrokeStyle{scene->owner, stored.stroke_style});
         const auto& c = stored.command;
         HRESULT result = S_OK;
+        if(stored.planes){Surface::Bitmap* bitmap=nullptr;result=scene->owner->bind_color_image(stored.planes,&bitmap);binding.bitmap.reset(bitmap);}
+        if(SUCCEEDED(result)&&stored.pattern)result=scene->owner->bind_pattern(stored.pattern,binding.pattern);
         if(c.type==SPDF_D2D_SCENE_MESH)result=scene->owner->create_mesh(stored.mesh_vertices,binding.mesh);
         if (c.type == SPDF_D2D_SCENE_LINEAR_GRADIENT)
             result = scene->owner->create_linear_gradient_brush(
@@ -2824,7 +2996,7 @@ void prepare_raster_groups(Scene* scene, Scene::ReplayIndex& replay) {
                 ? stored.geometry->GetWidenedBounds(command.values[0], stored.stroke_style.Get(),
                     &matrix, .25f, &bounds)
                 : stored.geometry->GetBounds(&matrix, &bounds);
-        } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP || type == SPDF_D2D_SCENE_MESH || type == SPDF_D2D_SCENE_FILL_RECT) {
+        } else if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP || type == SPDF_D2D_SCENE_MESH || type == SPDF_D2D_SCENE_FILL_RECT || type == SPDF_D2D_SCENE_PATTERN) {
             bounds = transformed_rect(D2D1::RectF(command.values[0], command.values[1],
                 command.values[2], command.values[3]), matrix);
         } else { if (!stack.empty()) stack.back().valid = false; continue; }
@@ -3263,6 +3435,10 @@ HRESULT replay_scene(
             result=set_item_transform(command);
             if(SUCCEEDED(result))result=surface->draw_mesh(binding->mesh.get());
             break;
+        case SPDF_D2D_SCENE_PATTERN:
+            result=set_item_transform(command);
+            if(SUCCEEDED(result))result=surface->draw_pattern(binding->pattern.get(),D2D1::RectF(command.values[0],command.values[1],command.values[2],command.values[3]));
+            break;
         case SPDF_D2D_SCENE_BACKDROP_BITMAP:
             result=set_item_transform(command);
             if(SUCCEEDED(result))result=surface->draw_backdrop_bitmap(binding->bitmap.get(),command.uint_values[0]!=0);
@@ -3301,6 +3477,32 @@ HRESULT replay_scene(
         if (FAILED(result)) return result;
     }
     return surface->set_transform(page.m11, page.m12, page.m21, page.m22, page.dx, page.dy);
+}
+
+HRESULT Surface::record_pattern(void* input,const D2D1_RECT_F& view,const D2D1_RECT_F& cell,std::unique_ptr<Pattern>& output) noexcept {
+    auto* original=static_cast<Scene*>(input);
+    if(!original||original->owner!=this||!original->recordable)return E_INVALIDARG;
+    try {
+        // Recording uses its own context even during a main-context page clip.
+        Surface recorder;recorder.d2d_device_=d2d_device_;recorder.d2d_factory_=d2d_factory_;
+        recorder.d3d_device_=d3d_device_;recorder.dwrite_factory_=dwrite_factory_;
+        auto result=d2d_device_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&recorder.d2d_context_);
+        if(FAILED(result))return result;
+        recorder.d2d_context_.As(&recorder.d2d_context1_);recorder.d2d_context_->SetDpi(96,96);
+        Scene scene;scene.owner=&recorder;scene.data=original->data;
+        result=bind_scene(&scene);if(FAILED(result))return result;
+        for(auto& binding:scene.bindings)if(binding.path)binding.path->fill_realization.Reset();
+        ComPtr<ID2D1CommandList> commands;result=recorder.d2d_context_->CreateCommandList(&commands);
+        if(FAILED(result))return result;
+        recorder.d2d_context_->SetTarget(commands.Get());recorder.d2d_context_->BeginDraw();recorder.drawing_=true;
+        recorder.d2d_context_->PushAxisAlignedClip(view,D2D1_ANTIALIAS_MODE_ALIASED);
+        result=replay_scene(&recorder,&scene,SpdfD2DTransform{1,0,0,1,0,0});
+        recorder.d2d_context_->PopAxisAlignedClip();const auto ended=recorder.d2d_context_->EndDraw();recorder.drawing_=false;
+        recorder.d2d_context_->SetTarget(nullptr);if(SUCCEEDED(result))result=ended;
+        if(SUCCEEDED(result))result=commands->Close();if(FAILED(result))return result;
+        auto data=std::make_shared<PatternData>();data->source=commands;data->cell=cell;
+        return bind_pattern(data,output);
+    }catch(...){return E_OUTOFMEMORY;}
 }
 
 bool Surface::group_visible(const D2D1_RECT_F& bounds, const SpdfD2DTransform& t) noexcept {
@@ -4741,7 +4943,7 @@ std::int32_t spdf_d2d_create_scene(
             stored.command.stroke_style = nullptr;
             const auto type = commands[index].type;
             if (type < SPDF_D2D_SCENE_FILL_RECT ||
-                    type > SPDF_D2D_SCENE_COVERAGE_END) {
+                    type > SPDF_D2D_SCENE_PATTERN) {
                 return static_cast<std::int32_t>(E_INVALIDARG);
             }
             if (type == SPDF_D2D_SCENE_COMPOSITE_PUSH ||
@@ -4758,12 +4960,17 @@ std::int32_t spdf_d2d_create_scene(
             if(type==SPDF_D2D_SCENE_COVERAGE_BEGIN||type==SPDF_D2D_SCENE_COVERAGE_END){created->recordable=false;created->needs_backdrop_recovery=true;}
             if (type == SPDF_D2D_SCENE_BITMAP || type == SPDF_D2D_SCENE_BACKDROP_BITMAP) {
                 const auto* source = static_cast<Surface::Bitmap*>(commands[index].resource);
-                if (source == nullptr || source->owner != created->owner || (!source->resource&&!source->jpeg)||
+                if (source == nullptr || source->owner != created->owner || (!source->resource&&!source->jpeg&&!source->planes)||
                     (type==SPDF_D2D_SCENE_BACKDROP_BITMAP&&!source->resource)) {
                     return static_cast<std::int32_t>(E_INVALIDARG);
                 }
                 stored.bitmap = source->resource;
                 stored.jpeg = source->jpeg;
+                stored.planes = source->planes;
+            } else if(type==SPDF_D2D_SCENE_PATTERN){
+                const auto* pattern=static_cast<Surface::Pattern*>(commands[index].resource);
+                if(!pattern||pattern->owner!=created->owner||!pattern->data)return static_cast<int32_t>(E_INVALIDARG);
+                stored.pattern=pattern->data;
             } else if (type == SPDF_D2D_SCENE_CLIP_PUSH ||
                     type == SPDF_D2D_SCENE_CLIP_GROUP_PUSH ||
                     type == SPDF_D2D_SCENE_PATH_FILL ||
@@ -4820,7 +5027,7 @@ std::int32_t spdf_d2d_create_scene(
         compact_empty_layers(*data);
         for (std::size_t index = 0; index < data->commands.size(); ++index) {
             auto& stored = data->commands[index];
-            if (!stored.bitmap && !stored.jpeg && !stored.geometry && !stored.stroke_style && stored.mesh_vertices.empty()) continue;
+            if (!stored.bitmap && !stored.jpeg && !stored.planes && !stored.pattern && !stored.geometry && !stored.stroke_style && stored.mesh_vertices.empty()) continue;
             stored.binding_index = static_cast<std::uint32_t>(data->binding_commands.size());
             data->binding_commands.push_back(static_cast<std::uint32_t>(index));
         }

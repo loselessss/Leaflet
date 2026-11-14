@@ -45,17 +45,29 @@ class EmbeddedModeTests(unittest.TestCase):
                 pdf.set_toc([[1, "Start", 1]])
                 pdf.save(source)
             with patch.object(settings, "PATH", str(root / "settings.json")), \
+                    patch("pdfeditor.paths.user_data_dir", return_value=str(root)), \
                     patch.object(settings, "_OLD_PATH", str(root / "absent")), \
                     patch.object(app, "_app_windows", []):
                 try:
                     yield app, source
                 finally:
-                    for window in list(app._app_windows):
+                    windows = list(app._app_windows)
+                    for window in windows:
                         for index in range(window._tabs.count()):
                             window._tabs.widget(index)._dirty = False
                         window.close()
                     for _ in range(4):
                         self.app.processEvents()
+                    # Dispose test-owned windows while Qt is still alive.
+                    # Leaving menu/event-filter cycles to Python GC can crash
+                    # a later case in the same Windows Qt process.
+                    from PyQt5.QtCore import QCoreApplication, QEvent
+                    from PyQt5.QtTest import QTest
+                    QTest.qWait(25)
+                    for window in windows:
+                        window.deleteLater()
+                    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+                    self.app.processEvents()
 
     def test_no_resident_launch_cannot_enable_tray_or_park_and_inherits_to_children(self):
         from PyQt5.QtWidgets import QAction

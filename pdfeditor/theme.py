@@ -12,6 +12,11 @@ QMainWindow, QDialog, QWidget#startPage {
     background: #f3f3f3;
 }
 
+QScrollArea#startFilesScroll, QWidget#startFilesContent {
+    background: transparent;
+    border: 0;
+}
+
 QLabel#heroTitle {
     color: #1a1a1a;
 }
@@ -317,11 +322,12 @@ QListWidget::item:selected, QTreeWidget::item:selected {
 }
 
 QListWidget#startFileList::item {
-    min-height: 38px;
-    padding: 7px 9px;
+    padding: 0;
+    margin: 0;
+    border: 0;
 }
 
-QFrame#startCard QListWidget#startFileList {
+QListWidget#startFileList {
     background: transparent;
     border: 0;
     padding: 0;

@@ -11,16 +11,18 @@ thread_local std::string error;
 constexpr size_t budget=512u*1024*1024;
 const fz_matrix identity={1,0,0,1,0,0};
 constexpr fz_color_params default_params={1,1,0,0};
+struct Job;
 struct Record {
     uint32_t kind=0,flags=0;
     fz_path* path=nullptr; fz_text* text=nullptr; fz_stroke_state* stroke=nullptr;
     fz_image* image=nullptr; fz_shade* shade=nullptr; fz_colorspace* cs=nullptr;
     fz_default_colorspaces* defaults=nullptr; fz_function* function=nullptr;
-    fz_matrix matrix=identity; fz_rect area={},scissor={},view={};
+    fz_matrix matrix=identity,tile_basis=identity; fz_rect area={},scissor={},view={};
     fz_color_params params=default_params;
     float color[FZ_MAX_COLORS]={},alpha=1,xstep=0,ystep=0;
     int isolated=1,knockout=0,blend=0,id=0,doc_id=0,set=0,clear=0;
     bool raster_text=false;
+    std::shared_ptr<Job> tile;
     ~Record() {
         mupdf::ll_fz_drop_path(path);mupdf::ll_fz_drop_text(text);
         mupdf::ll_fz_drop_stroke_state(stroke);mupdf::ll_fz_drop_image(image);
@@ -33,10 +35,11 @@ struct Job {std::vector<std::unique_ptr<Record>> records;Result metadata;bool fa
     fz_document* owned_document=nullptr;fz_page* owned_page=nullptr;
     std::map<std::pair<fz_font*,int>,GlyphOutline> glyphs;size_t glyph_bytes=0;
     size_t record_limit=1048576;
-    fz_cookie cookie={};bool count_only=false;uint64_t score=0,operations=0;
+    fz_cookie cookie={};bool count_only=false,mask_coverage=false;uint64_t score=0,operations=0;
     std::chrono::steady_clock::time_point deadline=std::chrono::steady_clock::time_point::max();
     ~Job(){records.clear();mupdf::ll_fz_drop_page(owned_page);mupdf::ll_fz_drop_document(owned_document);}};
 struct Device {fz_device super;Job* job;};
+std::unique_ptr<Record> placed_record(const Record& source,fz_matrix transform);
 template<class T> void put(Result& out,const T& value) {
     if(out.bytes.size()+sizeof(T)>budget) throw std::runtime_error("native scene budget exceeded");
     auto* p=reinterpret_cast<const unsigned char*>(&value);out.bytes.insert(out.bytes.end(),p,p+sizeof(T));
@@ -125,6 +128,11 @@ void dispatch(const Record& r,fz_device* d) {
     case 18:mupdf::ll_fz_end_tile(d);break;
     case 19:mupdf::ll_fz_render_flags(d,r.set,r.clear);break;
     case 20:mupdf::ll_fz_set_default_colorspaces(d,r.defaults);break;
+    case 21:
+        (void)mupdf::ll_fz_begin_tile_tid(d,r.scissor,r.view,r.xstep,r.ystep,r.matrix,r.id,r.doc_id);
+        {const auto placement=mupdf::ll_fz_concat(mupdf::ll_fz_invert_matrix(r.tile_basis),r.matrix);
+        for(const auto& child:r.tile->records){auto placed=placed_record(*child,placement);dispatch(*placed,d);}}
+        mupdf::ll_fz_end_tile(d);break;
     }
 }
 void event(Result& out,uint32_t kind,const Result& payload) {
@@ -199,7 +207,7 @@ void raster(Job& job,Result& out,uint32_t start,uint32_t end,uint32_t mode,fz_re
     if(source_kind==8)preparation|=0x100;       // CPU shading bitmap.
     if(source_kind==15)preparation|=0x200;     // CPU composite region.
     if(mode==7)preparation|=0x200;
-    if(source_kind==17)preparation|=0x4000;    // CPU pattern bitmap.
+    if(source_kind==17||source_kind==21)preparation|=0x4000; // CPU pattern bitmap.
     if(source_kind>=4&&source_kind<=7)preparation|=0x1000; // Glyph fallback.
     if(mode==2||mode==3||source_kind==13)preparation|=0x400; // Mask coverage.
     if(source_kind==13&&mode==1)preparation|=0x800; // Single image alpha.
@@ -221,9 +229,21 @@ bool jpeg_rgb(fz_colorspace* cs) {
 }
 // Only unmodified, opaque RGB DCT images may bypass MuPDF decoding.
 // PDF Decode arrays, masks, CMYK and non-sRGB profiles use the old path.
+bool image_mask_clipped(const Job& job,const Record& r,uint32_t start) {
+    if(!r.image||!r.image->mask)return false;
+    std::vector<const Record*> clips;
+    for(uint32_t i=0;i<start;++i){const auto& previous=*job.records[i];
+        if(previous.kind==2||previous.kind==3||previous.kind==6||previous.kind==7||previous.kind==11||previous.kind==13)clips.push_back(&previous);
+        else if(previous.kind==12&&!clips.empty())clips.pop_back();}
+    for(const auto* clip:clips)if(clip->kind==11&&clip->image==r.image->mask){
+        const auto& a=clip->matrix;const auto& b=r.matrix;
+        if(a.a==b.a&&a.b==b.b&&a.c==b.c&&a.d==b.d&&a.e==b.e&&a.f==b.f)return true;
+    }
+    return false;
+}
 bool jpeg_image(Job& job,Result& out,const Record& r,uint32_t start,size_t fallback_bytes,double coverage,uint32_t target_w,uint32_t target_h) {
     const auto* im=r.image;
-    if(r.kind!=9||r.alpha!=1||im->n!=3||im->bpc!=8||im->mask||im->imagemask||im->use_colorkey||im->use_decode||
+    if(r.kind!=9||r.alpha!=1||im->n!=3||im->bpc!=8||(im->mask&&!image_mask_clipped(job,r,start))||im->imagemask||im->use_colorkey||im->use_decode||
         !jpeg_rgb(im->colorspace)||im->w<=0||im->h<=0||im->w>8192||im->h>8192||
         uint64_t(im->w)*im->h>16*1024*1024||coverage<.999999)return false;
     const uint64_t decoded=uint64_t(target_w)*target_h*4;
@@ -259,6 +279,65 @@ bool jpeg_image(Job& job,Result& out,const Record& r,uint32_t start,size_t fallb
     Result p;matrix(p,r.matrix);put(p,uint32_t(im->w));put(p,uint32_t(im->h));put(p,target_w);put(p,target_h);put(p,uint64_t(size));blob(p,bytes,size);
     event(out,24,p);return true;
 }
+// SDK-only image decode/resampling. Rust owns packing and resource deduplication;
+// ICC conversion and independent alpha coverage are evaluated by Direct2D.
+bool color_image(Job& job,Result& out,const Record& r,uint32_t start,fz_rect local,double tw,double th,int x0,int y0,int x1,int y1) {
+    const uint32_t w=uint32_t(x1-x0),h=uint32_t(y1-y0);
+    auto* im=r.image;
+    if(r.kind!=9||im->imagemask||im->use_colorkey||im->bpc!=8||im->w<=0||im->h<=0||
+        im->w>8192||im->h>8192||uint64_t(im->w)*im->h>16*1024*1024||uint64_t(w)*h>8*1024*1024)return false;
+    auto* cs=im->colorspace;
+    for(uint32_t i=0;i<start;++i)if(job.records[i]->kind==20&&cs&&(cs->flags&FZ_COLORSPACE_IS_DEVICE)){
+        auto* defaults=job.records[i]->defaults;
+        auto* effective=cs->type==FZ_COLORSPACE_CMYK?mupdf::ll_fz_default_cmyk(defaults):mupdf::ll_fz_default_rgb(defaults);
+        if(effective)cs=effective;
+    }
+    if(!cs||(cs->type!=FZ_COLORSPACE_RGB&&cs->type!=FZ_COLORSPACE_CMYK)||
+        (im->n!=3&&im->n!=4)||cs->n!=im->n)return false;
+    auto* mask=im->mask;
+    // MuPDF normally emits an explicit clip for an image's attached mask.
+    // Preserve that GPU clip and never apply the same mask a second time.
+    if(mask&&image_mask_clipped(job,r,start))mask=nullptr;
+    if(mask&&(mask->n!=1||mask->mask||mask->use_colorkey||mask->w<=0||mask->h<=0||
+        mask->w>8192||mask->h>8192||uint64_t(mask->w)*mask->h>16*1024*1024))return false;
+    unsigned char* profile=nullptr;size_t profile_size=0;
+#if FZ_ENABLE_ICC
+    if(!jpeg_rgb(cs)){
+        if(!(cs->flags&FZ_COLORSPACE_IS_ICC)||!cs->u.icc.buffer)return false;
+        profile_size=mupdf::ll_fz_buffer_storage(cs->u.icc.buffer,&profile);
+        if(profile_size<128||profile_size>4*1024*1024||!std::memcmp(profile+12,"spac",4)||!std::memcmp(profile+12,"nmcl",4))return false;
+    }
+#endif
+    if(im->n==4&&!profile_size)return false;
+    // Already-supported opaque sRGB JPEGs stay encoded through the pipeline.
+    if(!mask&&!profile_size)return false;
+    const auto decode=[&](fz_image* source){
+        fz_irect subset={int(std::floor(std::clamp(double(local.x0),0.,1.)*source->w)),int(std::floor(std::clamp(double(local.y0),0.,1.)*source->h)),
+            int(std::ceil(std::clamp(double(local.x1),0.,1.)*source->w)),int(std::ceil(std::clamp(double(local.y1),0.,1.)*source->h))};
+        fz_matrix sample={float(tw),0,0,float(th),0,0};
+        std::unique_ptr<fz_pixmap,PixDrop> pixels(mupdf::ll_fz_get_pixmap_from_image(source,&subset,&sample,nullptr,nullptr));
+        if(!pixels)return pixels;
+        const fz_irect clip={x0,y0,x1,y1};
+        pixels.reset(mupdf::ll_fz_scale_pixmap(pixels.get(),sample.e,sample.f,sample.a,sample.d,&clip));
+        return pixels;
+    };
+    auto pix=decode(im);
+    if(!pix||pix->alpha||pix->n!=im->n)return false;
+    if(!pix||pix->w!=int(w)||pix->h!=int(h)||pix->n!=im->n)return false;
+    std::unique_ptr<fz_pixmap,PixDrop> coverage;
+    if(mask){
+        coverage=decode(mask);
+        if(!coverage||coverage->n!=1)return false;
+        if(!coverage||coverage->w!=int(w)||coverage->h!=int(h))return false;
+    }
+    const fz_matrix crop={float(w/tw),0,0,float(h/th),float(x0/tw),float(y0/th)};
+    Result p;matrix(p,mupdf::ll_fz_concat(crop,r.matrix));put(p,double(r.alpha));put(p,uint32_t(im->interpolate)|2u);
+    put(p,w);put(p,h);put(p,uint32_t(im->n));put(p,uint32_t(r.params.ri&3));put(p,uint32_t(mask?w:0));put(p,uint32_t(mask?h:0));
+    put(p,uint64_t(profile_size));if(profile_size)blob(p,profile,profile_size);
+    for(uint32_t y=0;y<h;++y)blob(p,pix->samples+y*pix->stride,size_t(w)*im->n);
+    if(mask)for(uint32_t y=0;y<h;++y)blob(p,coverage->samples+y*coverage->stride,w);
+    event(out,26,p);return true;
+}
 // Images stay in their own sampling grid. Rasterizing a 2x2 source in page
 // coordinates would add transparent borders and blur pixels when magnified.
 void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,double density) {
@@ -283,9 +362,26 @@ void raster_image(Job& job,Result& out,uint32_t start,uint32_t end,fz_rect area,
     const int y1=int(std::ceil(std::clamp(double(local.y1),0.,1.)*th));
     const int w=x1-x0,h=y1-y0;if(w<=0||h<=0)return;
     if(w>32768||h>32768||int64_t(w)*h>16*1024*1024)throw std::runtime_error("native image budget");
+    if(job.mask_coverage&&image->image->n==1&&!image->image->mask&&uint64_t(w)*h<=8*1024*1024){
+        auto* source=image->image;
+        const fz_irect subset={int(std::floor(std::clamp(double(local.x0),0.,1.)*source->w)),int(std::floor(std::clamp(double(local.y0),0.,1.)*source->h)),
+            int(std::ceil(std::clamp(double(local.x1),0.,1.)*source->w)),int(std::ceil(std::clamp(double(local.y1),0.,1.)*source->h))};
+        fz_matrix sample={float(tw),0,0,float(th),0,0};
+        std::unique_ptr<fz_pixmap,PixDrop> pixels(mupdf::ll_fz_get_pixmap_from_image(source,&subset,&sample,nullptr,nullptr));
+        const fz_irect clip={x0,y0,x1,y1};
+        if(pixels&&pixels->n==1)pixels.reset(mupdf::ll_fz_scale_pixmap(pixels.get(),sample.e,sample.f,sample.a,sample.d,&clip));
+        if(pixels&&pixels->n==1&&pixels->w==w&&pixels->h==h){
+            const fz_matrix crop={float(w/tw),0,0,float(h/th),float(x0/tw),float(y0/th)};
+            Result p;matrix(p,mupdf::ll_fz_concat(crop,m));put(p,uint32_t(w));put(p,uint32_t(h));put(p,uint32_t(source->interpolate));
+            for(int y=0;y<h;++y)blob(p,pixels->samples+y*pixels->stride,size_t(w));event(out,27,p);return;
+        }
+    }
     if(start==end){
         const bool complete=area.x0<=image->area.x0&&area.y0<=image->area.y0&&area.x1>=image->area.x1&&area.y1>=image->area.y1;
-        if(complete&&jpeg_image(job,out,*image,start,size_t(w)*h*4,std::max(0.,span_x)*std::max(0.,span_y),uint32_t(std::ceil(tw)),uint32_t(std::ceil(th))))return;
+        if(complete){
+            if(jpeg_image(job,out,*image,start,size_t(w)*h*4,std::max(0.,span_x)*std::max(0.,span_y),uint32_t(std::ceil(tw)),uint32_t(std::ceil(th))))return;
+        }
+        if(color_image(job,out,*image,start,local,tw,th,x0,y0,x1,y1))return;
     }
     const fz_matrix scale={float(tw),0,0,float(th),0,0};
     std::unique_ptr<fz_pixmap,PixDrop> pix(mupdf::ll_fz_new_pixmap_with_bbox(mupdf::ll_fz_device_rgb(),fz_irect{x0,y0,x1,y1},nullptr,1));
@@ -347,6 +443,33 @@ static void mesh_adaptive_triangle(fz_context*,void* opaque,fz_vertex* a,fz_vert
         else mesh_triangle(nullptr,opaque,a,b,c);}catch(...){state.failed=true;}
 }
 void materialize(Job& job,Result& out,const Record& r,fz_rect area,double scale) {
+    if(r.kind==21){
+        Result body;const auto inverse=mupdf::ll_fz_invert_matrix(r.tile_basis);
+        const auto fallback=[&](){
+            const auto found=std::find_if(job.records.begin(),job.records.end(),[&](const auto& record){return record.get()==&r;});
+            if(found==job.records.end())throw std::runtime_error("missing pattern record");
+            const auto index=uint32_t(found-job.records.begin());raster(job,out,index,index,1,area,scale);
+        };
+        // Templates are restricted to independent vector primitives. Keep
+        // their original records for exact CPU escape, emit local coordinates.
+        for(const auto& source:r.tile->records){
+            Record placed;placed.kind=source->kind;placed.flags=source->flags;
+            placed.path=mupdf::ll_fz_keep_path(source->path);placed.shade=mupdf::ll_fz_keep_shade(source->shade);
+            placed.stroke=mupdf::ll_fz_keep_stroke_state(source->stroke);placed.cs=mupdf::ll_fz_keep_colorspace(source->cs);
+            placed.defaults=mupdf::ll_fz_keep_default_colorspaces(source->defaults);
+            placed.matrix=mupdf::ll_fz_concat(source->matrix,inverse);placed.scissor=mupdf::ll_fz_transform_rect(source->scissor,inverse);
+            placed.area=mupdf::ll_fz_transform_rect(source->area,inverse);placed.alpha=source->alpha;placed.params=source->params;
+            placed.set=source->set;placed.clear=source->clear;std::copy(source->color,source->color+FZ_MAX_COLORS,placed.color);
+            try{materialize(*r.tile,body,placed,r.view,scale);}
+            catch(const std::runtime_error& e){
+                if(!std::strcmp(e.what(),"native mesh budget exceeded")||!std::strcmp(e.what(),"native scene budget exceeded")){fallback();return;}
+                throw;
+            }
+            if(body.bytes.size()>16*1024*1024){fallback();return;}
+        }
+        Result p;matrix(p,r.matrix);rect(p,r.scissor);rect(p,r.view);put(p,double(std::abs(r.xstep)));put(p,double(std::abs(r.ystep)));
+        put(p,uint64_t(body.bytes.size()));if(!body.bytes.empty())blob(p,body.bytes.data(),body.bytes.size());event(out,25,p);return;
+    }
     if(r.kind==8&&!gradient(r.shade)) {
         // Function shadings may arrive as an unnecessarily dense sampling grid.
         // Resample its native values, retaining a bounded vector mesh.
@@ -371,7 +494,7 @@ void materialize(Job& job,Result& out,const Record& r,fz_rect area,double scale)
         uint32_t bg=0;if(r.flags){bg=0xff000000;for(int i=0;i<3;++i)bg|=uint32_t(std::clamp(int(rgb[i]*255+.5f),0,255))<<(16-8*i);}
         mask_begin_event(out,area,r.flags!=0,bg);return;}
     if(r.kind==14){mask_end_event(out,r.function);return;}
-    if(r.kind==11){mask_begin_event(out,area);Job mask;
+    if(r.kind==11){mask_begin_event(out,area);Job mask;mask.mask_coverage=true;
         auto paint=std::make_unique<Record>();paint->kind=10;paint->image=mupdf::ll_fz_keep_image(r.image);paint->matrix=r.matrix;
         paint->cs=mupdf::ll_fz_keep_colorspace(mupdf::ll_fz_device_rgb());paint->color[0]=paint->color[1]=paint->color[2]=1;paint->params=r.params;
         mask.records.push_back(std::move(paint));raster_image(mask,out,0,0,area,scale);mask_end_event(out);return;}
@@ -458,8 +581,8 @@ std::unique_ptr<Record> placed_record(const Record& source,fz_matrix transform) 
     r->shade=mupdf::ll_fz_keep_shade(source.shade);r->cs=mupdf::ll_fz_keep_colorspace(source.cs);
     r->defaults=mupdf::ll_fz_keep_default_colorspaces(source.defaults);r->function=mupdf::ll_fz_keep_function(source.function);
     r->matrix=mupdf::ll_fz_concat(source.matrix,transform);r->area=mupdf::ll_fz_transform_rect(source.area,transform);
-    r->scissor=source.kind==17?source.scissor:mupdf::ll_fz_transform_rect(source.scissor,transform);r->view=source.view;
-    r->params=source.params;std::copy(source.color,source.color+FZ_MAX_COLORS,r->color);
+    r->scissor=(source.kind==17||source.kind==21)?source.scissor:mupdf::ll_fz_transform_rect(source.scissor,transform);r->view=source.view;
+    r->tile=source.tile;r->tile_basis=source.tile_basis;r->params=source.params;std::copy(source.color,source.color+FZ_MAX_COLORS,r->color);
     r->alpha=source.alpha;r->xstep=source.xstep;r->ystep=source.ystep;r->isolated=source.isolated;
     r->knockout=source.knockout;r->blend=source.blend;r->id=source.id;r->doc_id=source.doc_id;r->set=source.set;r->clear=source.clear;r->raster_text=source.raster_text;
     return r;
@@ -542,6 +665,16 @@ void normalize_records(Job& job,int depth=0) {
                 const auto ix0=std::floor((a.x0-v.x1)/xs)+1,ix1=std::ceil((a.x1-v.x0)/xs);
                 const auto iy0=std::floor((a.y0-v.y1)/ys)+1,iy1=std::ceil((a.y1-v.y0)/ys);
                 const double cells=std::max(0.,ix1-ix0)*std::max(0.,iy1-iy0);
+                const bool independent=end-index<=4097&&std::all_of(job.records.begin()+index+1,job.records.begin()+end,
+                    [](const auto& r){return r->kind<=3||r->kind==8||r->kind==12||r->kind==19||r->kind==20;});
+                const bool ink=std::any_of(job.records.begin()+index+1,job.records.begin()+end,[](const auto& r){return r->kind==0||r->kind==1||r->kind==8;});
+                if(cells>=2&&independent&&ink&&v.x1>v.x0&&v.y1>v.y0&&xs>=v.x1-v.x0&&ys>=v.y1-v.y0&&
+                    std::abs(record.matrix.a*record.matrix.d-record.matrix.b*record.matrix.c)>1e-12){
+                    auto tile=std::make_shared<Job>();tile->deadline=job.deadline;tile->page=v;
+                    for(size_t child=index+1;child<end;++child)tile->records.push_back(placed_record(*job.records[child],identity));
+                    auto pattern=placed_record(record,identity);pattern->kind=21;pattern->tile_basis=record.matrix;pattern->tile=std::move(tile);
+                    append(std::move(pattern));index=end;continue;
+                }
                 if(cells<=4096&&cells*double(end-index+2)+double(expanded.size())<100000) {
                     const auto clip=[&](fz_rect bounds,fz_matrix matrix){auto r=std::make_unique<Record>();r->kind=2;r->matrix=matrix;r->area=mupdf::ll_fz_transform_rect(bounds,matrix);
                         r->path=mupdf::ll_fz_new_path();mupdf::ll_fz_rectto(r->path,bounds.x0,bounds.y0,bounds.x1,bounds.y1);append(std::move(r));};
@@ -616,7 +749,7 @@ extern "C" __declspec(dllexport) int leaflet_scene_probe(fz_page* page,uint64_t*
 }
 
 extern "C" __declspec(dllexport) void leaflet_scene_drop(leaflet_scene::Job* job) noexcept {delete job;}
-extern "C" __declspec(dllexport) uint32_t leaflet_scene_abi() noexcept{return 4;}
+extern "C" __declspec(dllexport) uint32_t leaflet_scene_abi() noexcept{return 5;}
 extern "C" __declspec(dllexport) leaflet_scene::Job* leaflet_scene_collect(fz_page* page,double timeout,const unsigned char** data,size_t* size) noexcept {
     using namespace leaflet_scene;
     try {

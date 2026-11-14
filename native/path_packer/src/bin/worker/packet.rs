@@ -43,7 +43,7 @@ impl<'a> Reader<'a>{
 }
 fn validate(scene:&Scene)->Result<(),String>{
     if !scene.scale.is_finite()||!(1.0..=64.0).contains(&scene.scale)||scene.commands>1_048_576||scene.features.len()>64
-        ||scene.features.iter().any(|s|s.is_empty()||s.len()>256)||scene.packet.len()>LIMIT||!scene.packet.starts_with(b"LFSC\x03\0\0\0"){
+        ||scene.features.iter().any(|s|s.is_empty()||s.len()>256)||scene.packet.len()>LIMIT||!scene.packet.starts_with(b"LFSC\x04\0\0\0"){
         return Err("invalid cached scene".into());}Ok(())
 }
 pub fn decode(data:&[u8])->Result<Scene,String>{

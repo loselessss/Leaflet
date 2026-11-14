@@ -46,7 +46,7 @@ def pdf_component_blend(mode, backdrop, source):
 
 class D2DBackendTests(unittest.TestCase):
     def test_native_structure_has_stable_abi_layout(self):
-        self.assertEqual(ABI_VERSION, 27)
+        self.assertEqual(ABI_VERSION, 28)
         self.assertEqual(_NativeInfo.adapter_name.offset, 20)
         if os.name == "nt":
             self.assertEqual(ctypes.sizeof(_NativeInfo), 276)

@@ -1,4 +1,4 @@
-// Thin, checked LFSC v3 upload adapter. Scene policy and validation live in Rust.
+// Thin, checked LFSC v4 upload adapter. Scene policy and validation live in Rust.
 #include <array>
 #include <map>
 #include <optional>
@@ -12,10 +12,16 @@ struct Reader {
     size_t count(size_t limit){auto v=value<uint64_t>();if(v>limit)throw std::runtime_error("scene count limit");return static_cast<size_t>(v);}
     float number(){const auto result=static_cast<float>(value<double>());if(!std::isfinite(result))throw std::runtime_error("non-finite GPU value");return result;}
 };
-struct Resource {uint32_t kind=0,w=0,h=0,stride=0,target_w=0,target_h=0;const uint8_t* bytes=nullptr;size_t size=0;};
+struct Resource {
+    uint32_t kind=0,w=0,h=0,stride=0,target_w=0,target_h=0,channels=0,intent=0;
+    std::optional<uint32_t> profile,mask;std::array<float,4> view{};std::array<float,2> step{};
+    const uint8_t* bytes=nullptr;size_t size=0;
+};
 struct Program {
     void* surface;std::vector<Resource> resources;
     std::vector<void*> paths,bitmaps,styles;
+    std::map<uint32_t,ComPtr<ID2D1ColorContext>> profiles;
+    std::map<uint32_t,std::unique_ptr<Surface::Pattern>> patterns;
     std::map<std::pair<uint32_t,bool>,void*> path_index;
     std::map<uint32_t,void*> image_index;
     std::vector<SpdfD2DSceneCommand> commands;
@@ -40,8 +46,31 @@ struct Program {
         const auto& resource=resources[index];void* result=nullptr;
         if(resource.kind==1)check(spdf_d2d_create_bitmap(surface,resource.bytes,resource.w,resource.h,resource.stride,&result));
         else if(resource.kind==3)check(static_cast<Surface*>(surface)->create_jpeg(resource.bytes,resource.size,resource.w,resource.h,resource.target_w,resource.target_h,reinterpret_cast<Surface::Bitmap**>(&result)));
+        else if(resource.kind==5)check(static_cast<Surface*>(surface)->create_mask_image(resource.bytes,resource.w,resource.h,reinterpret_cast<Surface::Bitmap**>(&result)));
+        else if(resource.kind==6){
+            ID2D1ColorContext* profile=nullptr;
+            if(resource.profile){const auto id=*resource.profile;const auto& p=get(id,4);
+                auto& context=profiles[id];if(!context)check(static_cast<Surface*>(surface)->create_profile(p.bytes,static_cast<UINT>(p.size),&context));profile=context.Get();}
+            const Resource* mask=resource.mask?&get(*resource.mask,5):nullptr;
+            check(static_cast<Surface*>(surface)->create_color_image(resource.bytes,resource.w,resource.h,resource.channels,profile,
+                mask?mask->bytes:nullptr,mask?mask->w:0,mask?mask->h:0,resource.intent,reinterpret_cast<Surface::Bitmap**>(&result)));
+        }
         else throw std::runtime_error("invalid image resource");
         bitmaps.push_back(result);image_index[index]=result;return result;
+    }
+    void* pattern(uint32_t index){
+        auto found=patterns.find(index);if(found!=patterns.end())return found->second.get();
+        const auto& r=get(index,7);Reader reader{r.bytes,r.size};
+        if(std::memcmp(reader.take(8),"LFSC\x04\0\0\0",8))throw std::runtime_error("invalid pattern packet");
+        Program nested(surface);nested.load(reader,1,1,false);
+        // Pattern templates never contain image resources or nested patterns.
+        for(const auto& resource:nested.resources)if(resource.kind!=0&&resource.kind!=2)throw std::runtime_error("unsafe pattern resource");
+        void* raw=nullptr;check(spdf_d2d_create_scene(surface,nested.commands.data(),static_cast<uint32_t>(nested.commands.size()),&raw));
+        std::unique_ptr<Scene> scene(static_cast<Scene*>(raw));std::unique_ptr<Surface::Pattern> created;
+        const auto view=D2D1::RectF(r.view[0],r.view[1],r.view[2],r.view[3]);
+        const auto cell=D2D1::RectF(r.view[0],r.view[1],r.view[0]+r.step[0],r.view[1]+r.step[1]);
+        check(static_cast<Surface*>(surface)->record_pattern(scene.get(),view,cell,created));
+        auto* result=created.get();patterns[index]=std::move(created);return result;
     }
     void* style(Reader& reader){if(!reader.boolean())return nullptr;
         const auto start=reader.value<uint32_t>(),dash=reader.value<uint32_t>(),end=reader.value<uint32_t>(),join=reader.value<uint32_t>();
@@ -53,9 +82,10 @@ struct Program {
         const auto count=reader.count(65536);stops.emplace_back(count);for(auto& stop:stops.back()){stop.position=reader.number();stop.argb=reader.value<uint32_t>();}
         command.data=stops.back().data();command.data_count=static_cast<uint32_t>(count);
     }
-    void load(Reader& reader,float width,float height){
+    void load(Reader& reader,float width,float height,bool clear_page=true){
         const auto count=reader.count(1048576);resources.reserve(count);size_t total=0,images=0;
-        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>3)throw std::runtime_error("invalid resource type");
+        for(size_t i=0;i<count;++i){Resource resource;resource.kind=reader.value<uint32_t>();if(resource.kind>7)throw std::runtime_error("invalid resource type");
+            if(!clear_page&&resource.kind!=0&&resource.kind!=2)throw std::runtime_error("unsafe pattern resource");
             resource.size=reader.count(256*1024*1024);resource.bytes=reader.take(resource.size);
             total+=resource.size;if(total>256*1024*1024)throw std::runtime_error("resource budget");
             if(resource.kind==1){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();resource.stride=reader.value<uint32_t>();
@@ -67,9 +97,22 @@ struct Program {
                     !resource.target_w||!resource.target_h||resource.target_w>resource.w||resource.target_h>resource.h||
                     resource.size<4||resource.size>32*1024*1024||resource.bytes[0]!=255||resource.bytes[1]!=216)throw std::runtime_error("invalid JPEG");
                 images+=size_t(resource.target_w)*resource.target_h*4;if(images>128*1024*1024)throw std::runtime_error("image budget");}
+            if(resource.kind==4&&(resource.size<128||resource.size>4*1024*1024))throw std::runtime_error("invalid profile size");
+            if(resource.kind==5){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();
+                if(!resource.w||!resource.h||resource.w>8192||resource.h>8192||uint64_t(resource.w)*resource.h!=resource.size||resource.size>8*1024*1024)throw std::runtime_error("invalid image mask");
+                images+=resource.size*4;}
+            if(resource.kind==6){resource.w=reader.value<uint32_t>();resource.h=reader.value<uint32_t>();resource.channels=reader.value<uint32_t>();
+                if(reader.boolean())resource.profile=reader.value<uint32_t>();if(reader.boolean())resource.mask=reader.value<uint32_t>();resource.intent=reader.value<uint32_t>();
+                if(!resource.w||!resource.h||resource.w>8192||resource.h>8192||uint64_t(resource.w)*resource.h>8*1024*1024||
+                    uint64_t(resource.w)*resource.h*4!=resource.size||(resource.channels!=3&&resource.channels!=4)||
+                    (resource.channels==4&&!resource.profile)||resource.intent>3)throw std::runtime_error("invalid color image");images+=resource.size;}
+            if(resource.kind==7){for(auto& v:resource.view)v=reader.number();for(auto& v:resource.step)v=reader.number();
+                if(resource.size<8||resource.size>32*1024*1024||resource.view[2]<=resource.view[0]||resource.view[3]<=resource.view[1]||
+                    resource.step[0]<resource.view[2]-resource.view[0]||resource.step[1]<resource.view[3]-resource.view[1])throw std::runtime_error("invalid pattern");}
+            if(images>128*1024*1024)throw std::runtime_error("image budget");
             resources.push_back(resource);
         }
-        SpdfD2DSceneCommand clear{};clear.type=1;clear.values[2]=width;clear.values[3]=height;clear.uint_values[0]=0xffffffff;commands.push_back(clear);
+        if(clear_page){SpdfD2DSceneCommand clear{};clear.type=1;clear.values[2]=width;clear.values[3]=height;clear.uint_values[0]=0xffffffff;commands.push_back(clear);}
         const auto length=reader.count(1048576);commands.reserve(length*2+1);
         for(size_t i=0;i<length;++i){
             SpdfD2DSceneCommand command{};const auto operation=reader.value<uint32_t>();std::optional<uint32_t> stroke_color;uint32_t clip_id=0;bool clip_even=false;
@@ -105,6 +148,7 @@ struct Program {
                 break;}
             case 14:command.type=23;break;
             case 15:command.type=24;break;
+            case 16:command.resource=pattern(reader.value<uint32_t>());command.type=25;for(size_t j=0;j<4;++j)command.values[j]=reader.number();break;
             default:throw std::runtime_error("invalid operation");
             }
             std::array<float,6> matrix{};for(auto& value:matrix)value=reader.number();command.flags=1;
@@ -132,7 +176,7 @@ extern "C" __declspec(dllexport) int32_t spdf_d2d_import_rust_scene(void* surfac
     *output=nullptr;
     try {
         leaflet_rust_upload::Reader reader{static_cast<const uint8_t*>(bytes),size};
-        if(std::memcmp(reader.take(8),"LFSC\x03\0\0\0",8)!=0)return static_cast<int32_t>(E_INVALIDARG);
+        if(std::memcmp(reader.take(8),"LFSC\x04\0\0\0",8)!=0)return static_cast<int32_t>(E_INVALIDARG);
         leaflet_rust_upload::Program program(surface);program.load(reader,width,height);
         return spdf_d2d_create_scene(surface,program.commands.data(),static_cast<uint32_t>(program.commands.size()),output);
     } catch(...){return static_cast<int32_t>(E_INVALIDARG);}

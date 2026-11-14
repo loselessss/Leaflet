@@ -2,6 +2,8 @@
 
 ## Unreleased (1.39.2)
 
+- Find PDFs from home-screen previews. Favorites and the latest 30 recent files share one scrollable screen that adapts to window width. Saved previews reopen quickly and are removed when files leave both lists.
+- Improve GPU preparation for color-managed images, transparency masks, and repeating patterns.
 - Reduce preparation time and cache size for some PDFs containing JPEG photos.
 - Use the GPU path for small JPEG previews and avoid repeated preparation when full-resolution images are already ready.
 - Prepare nearby pages concurrently for smoother navigation in multi-page documents.

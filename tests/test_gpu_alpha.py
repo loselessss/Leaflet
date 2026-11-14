@@ -221,7 +221,7 @@ class AlphaImageTests(unittest.TestCase):
                       "--base-scene", str(base_path)])
                 refreshed = pickle.loads(result.read_bytes())
                 self.assertTrue(refreshed.supported, refreshed.reason)
-                self.assertTrue(refreshed.compiled_packet.startswith(b'LFSC\x03'))
+                self.assertTrue(refreshed.compiled_packet.startswith(b'LFSC\x04'))
                 self.assertGreater(refreshed.command_count, 0)
                 self.assertEqual(refreshed.raster_scale, 2)
 

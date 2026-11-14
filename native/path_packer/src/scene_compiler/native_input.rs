@@ -34,7 +34,7 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
         let mut reader=Reader{data:metadata,at:0};let mut raw:Vec<Raw>=Vec::new();let mut scopes:Vec<(u32,usize)>=Vec::new();
         while reader.at<metadata.len(){
             let kind=reader.u32()?;let flags=reader.u32()?;let area=reader.rect()?;let alpha=reader.number()?;
-            if kind>20||!(0.0..=1.0).contains(&alpha){return Err(invalid("invalid native operation"));}
+            if kind>21||!(0.0..=1.0).contains(&alpha){return Err(invalid("invalid native operation"));}
             let density=if matches!(kind,9..=11){
                 ((flags&65535) as f64/(area[2]-area[0]).max(1e-9)).max((flags>>16) as f64/(area[3]-area[1]).max(1e-9))
             }else{64.};
@@ -60,7 +60,7 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
                 2|3|6|7|11|13|15|17=>{stack.push(bounds);bounds=intersect(bounds,r.area);},
                 12|16|18=>{bounds=stack.pop().ok_or_else(||invalid("native extent underflow"))?;},_=>{}
             }
-            if matches!(r.kind,0..=11|13|15|17){r.area=intersect(r.area,bounds);}
+            if matches!(r.kind,0..=11|13|15|17|21){r.area=intersect(r.area,bounds);}
         }
         // Extremely deep/large backdrop groups retain a bounded CPU escape.
         let mut local_captures=std::collections::BTreeMap::new();
@@ -87,7 +87,7 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
             if matches!(r.kind,2|6|11|13)&&area(rect)<=0.{i=r.end+1;continue;}
             // Empty fills/images/shadings paint no ink. Strokes and stroke
             // clips deliberately stay live: zero-width hairlines are visible.
-            if matches!(r.kind,0|8|9|10)&&area(rect)<=0.{i+=1;continue;}
+            if matches!(r.kind,0|8|9|10|21)&&area(rect)<=0.{i+=1;continue;}
             let mut density=(scale*if matches!(r.kind,9..=11){1.}else{2.}).min(64.).min(r.density.max(0.01));
             if let Some(last)=local_captures.get(&i){mode=7;end=*last;density=scale;}
             else {match r.kind {
@@ -112,7 +112,7 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
         // Allocate the complete raster working set together, rather than letting
         // the first large image consume the budget reserved for later masks.
         let desired:f64=jobs.iter().filter(|j|j.0!=0||raw[j.1].kind==11).map(|j|{
-            ((j.3[2]-j.3[0])*j.4+2.)*((j.3[3]-j.3[1])*j.4+2.)*4.
+            ((j.3[2]-j.3[0])*j.4+2.)*((j.3[3]-j.3[1])*j.4+2.)*5.
         }).sum();
         let factor=if desired>IMAGE_LIMIT as f64*0.9{(IMAGE_LIMIT as f64*0.9/desired).sqrt()}else{1.};
         let mut out=Vec::new();let mut total=0usize;
@@ -122,7 +122,7 @@ pub fn plan(metadata:&[u8],page:Rect,scale:f64,viewport:Option<Rect>)->CompileRe
             if sampled&&area(rect)>0.{
                 let w=((rect[2]*density).ceil()-(rect[0]*density).floor()).max(0.);
                 let h=((rect[3]*density).ceil()-(rect[1]*density).floor()).max(0.);
-                total=total.checked_add((w*h*4.) as usize).ok_or_else(||invalid("native raster overflow"))?;
+                total=total.checked_add((w*h*5.) as usize).ok_or_else(||invalid("native raster overflow"))?;
                 if total>IMAGE_LIMIT{return Err(invalid("native raster resource budget exceeded"));}
             }
             request(&mut out,mode,start,end,rect,density);
@@ -197,6 +197,47 @@ fn import_native(data:&[u8])->CompileResult<Scene>{
         let kind=reader.u32()?;let len=reader.u64()?;let mut p=Reader{data:reader.take(len)?,at:0};
         let mut matrix=IDENTITY;let mut bounds=None;let mut axis_clip=None;
         let op=match kind{
+            27=>{
+                matrix=p.matrix()?;let width=p.u32()?;let height=p.u32()?;let interpolate=p.u32()?!=0;
+                if width==0||height==0||width>8192||height>8192||width as u64*height as u64>8*1024*1024{return Err(invalid("invalid alpha image"));}
+                let bytes=p.take(width as usize*height as usize)?.to_vec();
+                let resource=scene.intern(Resource::Mask{bytes,width,height},&mut index)?;
+                Operation::Image{resource,opacity:1.,interpolate}
+            },
+            26=>{
+                matrix=p.matrix()?;let opacity=p.number()?;let interpolate=p.u32()?&3!=0;
+                let width=p.u32()?;let height=p.u32()?;let channels=p.u32()?;let intent=p.u32()?;
+                let mw=p.u32()?;let mh=p.u32()?;let n=p.u64()?;
+                if !(0.0..=1.0).contains(&opacity)||width==0||height==0||width>8192||height>8192||
+                    width as u64*height as u64>8*1024*1024||!matches!(channels,3|4)||intent>3||n>4*1024*1024||
+                    (n!=0&&n<128)||(channels==4&&n==0)||((mw==0)!=(mh==0))||mw>8192||mh>8192||mw as u64*mh as u64>8*1024*1024{
+                    return Err(invalid("invalid native color image"));
+                }
+                let profile=if n!=0{Some(scene.intern(Resource::Profile(p.take(n)?.to_vec()),&mut index)?)}else{None};
+                let raw=p.take(width as usize*height as usize*channels as usize)?;
+                let pixels=if channels==4{raw.to_vec()}else{
+                    let mut rgba=Vec::with_capacity(width as usize*height as usize*4);
+                    for rgb in raw.chunks_exact(3){rgba.extend_from_slice(rgb);rgba.push(255);}rgba
+                };
+                let mask=if mw!=0{Some(scene.intern(Resource::Mask{bytes:p.take(mw as usize*mh as usize)?.to_vec(),width:mw,height:mh},&mut index)?)}else{None};
+                let resource=scene.intern(Resource::ColorImage{pixels,width,height,channels,profile,mask,intent},&mut index)?;
+                Operation::Image{resource,opacity,interpolate}
+            },
+            25=>{
+                matrix=p.matrix()?;let region=p.rect()?;let view=p.rect()?;let step=[p.number()?,p.number()?];let n=p.u64()?;
+                if area(region)<=0.||area(view)<=0.||step[0]<view[2]-view[0]||step[1]<view[3]-view[1]||n>32*1024*1024{
+                    return Err(invalid("invalid native pattern"));
+                }
+                let template=import_native(p.take(n)?)?;
+                if template.resources.iter().any(|r|!matches!(r,Resource::Path(_)|Resource::Mesh(_)))||
+                    template.commands.iter().any(|c|!matches!(c.op,Operation::Path{..}|Operation::Clip{..}|Operation::StrokeClip{..}|
+                        Operation::Linear{..}|Operation::Radial{..}|Operation::ClipEnd|Operation::Mesh{..})){
+                    return Err(invalid("unsafe native pattern program"));
+                }
+                let count=template.commands.len();let compiled=RustCompiledScene{scene:template.analyse()?,source_count:count};
+                let resource=scene.intern(Resource::Pattern{packet:compiled.packet()?,view,step},&mut index)?;
+                Operation::Pattern{resource,area:region}
+            },
             24=>{
                 matrix=p.matrix()?;let width=p.u32()?;let height=p.u32()?;let target_width=p.u32()?;let target_height=p.u32()?;let n=p.u64()?;
                 if width==0||height==0||width>8192||height>8192||width as u64*height as u64>16*1024*1024||n<4||n>32*1024*1024||

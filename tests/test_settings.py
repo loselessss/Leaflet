@@ -12,6 +12,7 @@ class RecentFileSettingsTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        self.enterContext(patch("pdfeditor.paths.user_data_dir", return_value=str(self.root)))
         self.temp = self.root / "Temp"
         self.cache = self.root / "Local" / "Microsoft" / "Windows" / "INetCache"
         self.real_roots = settings._temporary_file_roots
@@ -30,6 +31,18 @@ class RecentFileSettingsTests(unittest.TestCase):
             settings.push_recent(str(temporary))
         self.assertEqual(settings._load(), before)
         self.assertEqual(len(settings.recent_files()), settings.MAX_RECENT)
+
+    def test_old_fifty_entry_history_is_limited_to_latest_thirty(self):
+        paths = [str(self.root / ("document%d.pdf" % index)) for index in range(50)]
+        settings._save({"recent": paths})
+        self.assertEqual(settings.recent_files(), paths[:30])
+        settings.trim_recent_files()
+        self.assertEqual(settings._load()["recent"], paths[:30])
+        settings.remove_recent(paths[0])
+        self.assertEqual(settings.recent_files(), paths[1:30])
+        settings.push_recent(paths[40])
+        self.assertEqual(len(settings._load()["recent"]), 30)
+        self.assertEqual(settings.recent_files()[0], paths[40])
 
     def test_old_temporary_entries_are_hidden_and_cleaned_on_next_open(self):
         keep = str(self.root / "Documents" / "report.pdf")

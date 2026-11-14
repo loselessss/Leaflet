@@ -39,7 +39,7 @@ impl Native {
             let abi:unsafe extern "C" fn()->u32=bridge.symbol(b"leaflet_scene_abi\0")?;
             let get_version:unsafe extern "C" fn()->*const c_char=bridge.symbol(b"leaflet_path_version\0")?;
             let actual_abi=abi();
-            if actual_abi!=4{return Err(format!("native scene ABI mismatch (bridge={actual_abi}, worker=4)"));}
+            if actual_abi!=5{return Err(format!("native scene ABI mismatch (bridge={actual_abi}, worker=5)"));}
             let actual_version=CStr::from_ptr(get_version()).to_string_lossy();
             if actual_version!=version{return Err(format!("native MuPDF version mismatch (bridge={actual_version}, runtime={version})"));}
             Ok(Self{open:bridge.symbol(b"leaflet_scene_open\0")?,materialize:bridge.symbol(b"leaflet_scene_materialize\0")?,

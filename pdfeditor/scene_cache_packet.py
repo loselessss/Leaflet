@@ -4,7 +4,7 @@ import math
 import struct
 
 MAGIC = b'LFDC\x01\0\0\0'
-SCENE_MAGIC = b'LFSC\x03\0\0\0'
+SCENE_MAGIC = b'LFSC\x04\0\0\0'
 MAX_PACKET = 512 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024 * 1024  # Matches the independent Rust buffer codec limit.
 MAX_FEATURES = 64

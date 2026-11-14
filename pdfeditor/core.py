@@ -52,8 +52,9 @@ def _gpu_scene_upload_cost(scene):
     """Charge decoded images separately from the smaller encoded RAM packet."""
     total = _gpu_scene_cost(scene)
     packet = scene.compiled_packet
-    if ('jpeg-ycbcr' in scene.features and len(packet) >= 24
-            and packet.startswith(b'LFSC\x03\0\0\0')):
+    if (any(feature in scene.features for feature in ('jpeg-ycbcr', 'gpu-color-management', 'gpu-image-mask'))
+            and len(packet) >= 24
+            and packet.startswith(b'LFSC\x04\0\0\0')):
         # The native importer validates this Rust serializer footer against
         # the resources. JPEGs are charged conservatively at BGRA size.
         images = int.from_bytes(packet[-8:], 'little')

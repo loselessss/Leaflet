@@ -39,8 +39,8 @@ def file_revision(path):
 
 
 class DocumentSnapshot:
-    def __init__(self, source):
-        self.directory = tempfile.TemporaryDirectory(prefix="spdf-document-")
+    def __init__(self, source, *, root=None):
+        self.directory = tempfile.TemporaryDirectory(prefix="spdf-document-", dir=root)
         self.path = os.path.join(self.directory.name, "document.pdf")
         try:
             before = file_revision(source)

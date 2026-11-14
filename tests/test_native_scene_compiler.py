@@ -32,7 +32,7 @@ class NativeSceneCompilerTests(unittest.TestCase):
 
     def test_jpeg_pdf_color_and_mask_semantics_retain_existing_decoder(self):
         from tests.jpeg_fixtures import jpeg_bytes, jpeg_pdf
-        cases = (jpeg_pdf(decode=True), jpeg_pdf(alpha=True), jpeg_pdf(color_transform=0),
+        cases = (jpeg_pdf(decode=True), jpeg_pdf(color_transform=0),
                  jpeg_pdf(jpeg_bytes(mode='CMYK')), jpeg_pdf(jpeg_bytes(mode='L')))
         for data in cases:
             with self.subTest(case=cases.index(data)), pymupdf.open(stream=data, filetype='pdf') as doc:
@@ -242,7 +242,7 @@ class NativeSceneCompilerTests(unittest.TestCase):
                 with self.subTest(name=name),pymupdf.open(stream=getattr(fixtures,name)(),filetype='pdf') as doc:
                     compiled=compile_page(doc[0])
                     packet=compiled.to_bytes()
-                    self.assertTrue(packet.startswith(b'LFSC\x03\0\0\0'))
+                    self.assertTrue(packet.startswith(b'LFSC\x04\0\0\0'))
                     self.assertLessEqual(compiled.image_bytes,64*1024*1024)
                     self.assertGreater(compiled.command_count,0)
                 gc.collect()

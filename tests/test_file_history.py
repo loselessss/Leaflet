@@ -22,6 +22,7 @@ class FileHistoryTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
+        self.enterContext(patch("pdfeditor.paths.user_data_dir", return_value=str(self.root)))
         self.path = str(self.root / "entry.pdf")
         self.other = str(self.root / "keep.pdf")
         self.settings_patch = patch.object(settings, "PATH", str(self.root / "settings.json"))

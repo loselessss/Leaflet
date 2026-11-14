@@ -9,7 +9,7 @@ from .zoom_limits import MAX_SAVED_ZOOM
 
 PATH = os.path.expanduser("~/.spdf.json")
 _OLD_PATH = os.path.expanduser("~/.pdfeditor.json")  # 이전 설정 경로(호환용)
-MAX_RECENT = 50
+MAX_RECENT = 30
 DEFAULT_THUMBNAIL_WIDTH = 160
 MIN_THUMBNAIL_WIDTH = 96
 MAX_THUMBNAIL_WIDTH = 480
@@ -80,7 +80,22 @@ def _recent_non_temporary(paths, roots=None):
 
 def recent_files():
     # Filter older settings too, without making opening a menu write settings.
-    return _recent_non_temporary(_load().get("recent", []))
+    return _recent_non_temporary(_load().get("recent", []))[:MAX_RECENT]
+
+
+def _prune_home_previews(data):
+    from .scene_disk_cache import prune_thumbnails
+    prune_thumbnails(_recent_non_temporary(data.get("recent", []))[:MAX_RECENT] + data.get("favorites", []))
+
+
+def trim_recent_files():
+    """Apply the current history limit once, without changing favorites."""
+    data = _load()
+    recent = _recent_non_temporary(data.get("recent", []))[:MAX_RECENT]
+    if data.get("recent", []) != recent:
+        data["recent"] = recent
+        _save(data)
+        _prune_home_previews(data)
 
 
 def push_recent(path):
@@ -92,11 +107,13 @@ def push_recent(path):
         if recent != d.get("recent", []):
             d["recent"] = recent
             _save(d)
+            _prune_home_previews(d)
         return
     rest = [p for p in recent
             if os.path.normcase(p) != os.path.normcase(path)]
     d["recent"] = [path] + rest[:MAX_RECENT - 1]
     _save(d)
+    _prune_home_previews(d)
 
 
 def remove_recent(path):
@@ -104,12 +121,14 @@ def remove_recent(path):
     d["recent"] = [p for p in d.get("recent", [])
                    if os.path.normcase(p) != os.path.normcase(path)]
     _save(d)
+    _prune_home_previews(d)
 
 
 def clear_recent():
     d = _load()
     d["recent"] = []
     _save(d)
+    _prune_home_previews(d)
 
 
 def remove_file_entry(path):
@@ -120,6 +139,7 @@ def remove_file_entry(path):
         data[key] = [p for p in data.get(key, [])
                      if os.path.normcase(os.path.abspath(p)) != target]
     _save(data)
+    _prune_home_previews(data)
 
 
 # --- 사용자 인터페이스 언어 -------------------------------------------
@@ -395,6 +415,7 @@ def remove_favorite(path):
     d["favorites"] = [p for p in d.get("favorites", [])
                       if os.path.normcase(p) != os.path.normcase(path)]
     _save(d)
+    _prune_home_previews(d)
 
 
 # --- OCR 엔진 선택 ------------------------------------------------------

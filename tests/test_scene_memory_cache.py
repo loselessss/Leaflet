@@ -11,7 +11,7 @@ from pdfeditor.scene_memory_cache import SceneMemoryCache
 
 class SceneMemoryCacheTests(unittest.TestCase):
     def scene(self, **kwargs):
-        return VectorPage(True, compiled_packet=b'LFSC\x03\0\0\0' + bytes(range(256))*512,
+        return VectorPage(True, compiled_packet=b'LFSC\x04\0\0\0' + bytes(range(256))*512,
                           command_count=300, **kwargs)
 
     def test_ram_round_trip_is_lossless_and_reduces_memory(self):
