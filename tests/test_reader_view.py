@@ -1335,6 +1335,49 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
 
+    def test_scroll_keeps_overlapping_gpu_job_but_cancels_distant_or_rescaled_work(self):
+        retained = Mock(closed=False)
+        surface = Mock()
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (None, (), (), retained)
+        previous = (2., 0., 0., 2., 0., 0.)
+        key = (retained, previous, self.view._d2d_size)
+        self.view._sharp_pending_key = (0, key)
+        self.view._sharp_poll_timer.start()
+        with patch.object(self.view, '_retained_page_transform', return_value=(2., 0., 0., 2., 0., -50.)):
+            self.view._viewport_moved()
+        surface.cancel_sharp.assert_not_called()
+        self.assertTrue(self.view._sharp_poll_timer.isActive())
+        self.assertEqual(self.view._sharp_pending_key, (0, key))
+        for transform in ((2., 0., 0., 2., 0., -5000.), (3., 0., 0., 3., 0., -50.)):
+            self.view._sharp_pending_key = (0, key)
+            with patch.object(self.view, '_retained_page_transform', return_value=transform):
+                self.view._viewport_moved()
+            self.assertIsNone(self.view._sharp_pending_key)
+        self.assertEqual(surface.cancel_sharp.call_count, 2)
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
+    def test_sharp_viewport_schedules_background_margin_refresh(self):
+        from pdfeditor.gpu_raster import VectorPage
+        scene = VectorPage(True)
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = True
+        surface.request_sharp_scene.return_value = True
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, (), (), retained)
+        self.view._sharp_attempted.clear()
+        with patch.object(self.view, '_native_vector_draws', return_value=()):
+            self.view._draw_vector_page(0, scene)
+        self.assertTrue(self.view._sharp_refine_timer.isActive())
+        self.view._start_sharp_refine()
+        surface.request_sharp_scene.assert_called_once()
+        self.assertTrue(self.view._sharp_poll_timer.isActive())
+        surface.draw_scene.assert_not_called()
+        self.view._d2d_surface = None
+        self.view._d2d_vector_paths.clear()
+
     def test_poster_waits_for_exact_gpu_tiles_without_synchronous_coarse_replay(self):
         from pdfeditor.gpu_raster import VectorPage
         scene = VectorPage(True, features=('gpu-mask',))

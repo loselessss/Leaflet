@@ -1,5 +1,11 @@
 # Leaflet Release Notes
 
+## Unreleased (1.39.3)
+
+- Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions.
+- Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
+- Prepare surrounding content ahead of zoomed scrolling to keep the display sharp for longer.
+
 ## 1.39.2 - 2026-11-17
 
 - Find PDFs from home-screen previews. Favorites and the latest 30 recent files share one scrollable screen that adapts to window width. Saved previews reopen quickly and are removed when files leave both lists.

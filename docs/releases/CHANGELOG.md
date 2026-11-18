@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (1.39.3)
+
+### 성능 개선
+
+- Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions.
+- Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
+- Prepare a wider margin around zoomed viewports and refresh it before scrolling exposes a gap. Reuse partially covered tiles and redraw only newly exposed strips, retaining the existing GPU cache memory limit.
+
 ## 1.39.2 - 2026-11-17
 
 ### 개선

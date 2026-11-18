@@ -9,6 +9,7 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -2340,6 +2341,7 @@ public:
         return result;
     }
     void set_cancel_token(std::shared_ptr<std::atomic<bool>> token) { cancel_token_ = std::move(token); }
+    void memory_statistics(std::uint64_t* values) noexcept;
     void park_worker() noexcept {
         d2d_context_->SetTarget(nullptr);
         target_.Reset();
@@ -2603,6 +2605,10 @@ private:
         return created.CopyTo(brush);
     }
 
+    // Coordinates and transforms belong to each brush. Stop collections are
+    // immutable and use the same gamma and extend mode throughout this surface.
+    std::unordered_map<std::string, ComPtr<ID2D1GradientStopCollection>> gradient_stops_;
+
     HRESULT create_gradient_stop_collection(
         const SpdfD2DGradientStop* stops,
         std::uint32_t stop_count,
@@ -2611,30 +2617,41 @@ private:
                 stop_count > 256) {
             return E_INVALIDARG;
         }
-        std::vector<D2D1_GRADIENT_STOP> native_stops;
-        native_stops.reserve(stop_count);
-        float previous = -1.0f;
-        for (std::uint32_t index = 0; index < stop_count; ++index) {
-            const auto position = stops[index].position;
-            if (!std::isfinite(position) || position < 0.0f ||
-                    position > 1.0f || position < previous) {
-                return E_INVALIDARG;
+        static_assert(sizeof(SpdfD2DGradientStop) == 8);
+        try {
+            std::string key(reinterpret_cast<const char*>(stops), sizeof(*stops) * stop_count);
+            auto existing = gradient_stops_.find(key);
+            if (existing != gradient_stops_.end()) return existing->second.CopyTo(collection);
+            std::vector<D2D1_GRADIENT_STOP> native_stops;
+            native_stops.reserve(stop_count);
+            float previous = -1.0f;
+            for (std::uint32_t index = 0; index < stop_count; ++index) {
+                const auto position = stops[index].position;
+                if (!std::isfinite(position) || position < 0.0f ||
+                        position > 1.0f || position < previous) {
+                    return E_INVALIDARG;
+                }
+                previous = position;
+                const auto argb = stops[index].argb;
+                const auto alpha = static_cast<float>((argb >> 24) & 0xff) / 255.0f;
+                const auto red = static_cast<float>((argb >> 16) & 0xff) / 255.0f;
+                const auto green = static_cast<float>((argb >> 8) & 0xff) / 255.0f;
+                const auto blue = static_cast<float>(argb & 0xff) / 255.0f;
+                native_stops.push_back(D2D1::GradientStop(
+                    position, D2D1::ColorF(red, green, blue, alpha)));
             }
-            previous = position;
-            const auto argb = stops[index].argb;
-            const auto alpha = static_cast<float>((argb >> 24) & 0xff) / 255.0f;
-            const auto red = static_cast<float>((argb >> 16) & 0xff) / 255.0f;
-            const auto green = static_cast<float>((argb >> 8) & 0xff) / 255.0f;
-            const auto blue = static_cast<float>(argb & 0xff) / 255.0f;
-            native_stops.push_back(D2D1::GradientStop(
-                position, D2D1::ColorF(red, green, blue, alpha)));
-        }
-        return d2d_context_->CreateGradientStopCollection(
-            native_stops.data(),
-            static_cast<UINT32>(native_stops.size()),
-            D2D1_GAMMA_2_2,
-            D2D1_EXTEND_MODE_CLAMP,
-            collection);
+            ComPtr<ID2D1GradientStopCollection> created;
+            auto result = d2d_context_->CreateGradientStopCollection(
+                native_stops.data(),
+                static_cast<UINT32>(native_stops.size()),
+                D2D1_GAMMA_2_2,
+                D2D1_EXTEND_MODE_CLAMP,
+                &created);
+            if (FAILED(result)) return result;
+            if (gradient_stops_.size() >= 128) gradient_stops_.clear();
+            gradient_stops_.emplace(std::move(key), created);
+            return created.CopyTo(collection);
+        } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
     }
 
     HRESULT create_target() noexcept {
@@ -3880,6 +3897,7 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t,
 }
 
 constexpr UINT32 SHARP_TILE_SIZE = 512;
+constexpr UINT32 SHARP_ATLAS_MARGIN = 256;
 constexpr UINT32 SHARP_TILE_BORDER = 2;
 std::vector<UINT32> sharp_tile_edges(UINT32 size) {
     std::vector<UINT32> edges{0};
@@ -3964,8 +3982,8 @@ void run_sharp_queue(const std::shared_ptr<SharpQueue>& queue) noexcept {
                     width + 2 * SHARP_TILE_BORDER, height + 2 * SHARP_TILE_BORDER);
                 if (FAILED(job->result)) break;
                 auto local = job->transform;
-                local.dx += (64.0f + SHARP_TILE_BORDER - region.left) * 96 / job->dpi;
-                local.dy += (64.0f + SHARP_TILE_BORDER - region.top) * 96 / job->dpi;
+                local.dx += (float(SHARP_ATLAS_MARGIN) + SHARP_TILE_BORDER - region.left) * 96 / job->dpi;
+                local.dy += (float(SHARP_ATLAS_MARGIN) + SHARP_TILE_BORDER - region.top) * 96 / job->dpi;
                 const bool planned = compile_tile_plan(job->renderer.get(), *job->scene, local, plan);
                 if (job->cancelled->load() || job->identity.expired()) break;
                 // Prepare only resources selected by this tile. Bindings live
@@ -4155,7 +4173,7 @@ HRESULT Surface::draw_sharp_partial(Scene* scene, const SpdfD2DTransform& t) noe
     for (auto& raster : scene_rasters_) {
         float dx, dy;
         if (!sharp_offset(scene, t, raster, dx, dy)) continue;
-        const auto x = (dx - 64) / ratio, y = (dy - 64) / ratio;
+        const auto x = (dx - SHARP_ATLAS_MARGIN) / ratio, y = (dy - SHARP_ATLAS_MARGIN) / ratio;
         const auto dimensions = raster.bitmap->GetSize();
         const auto width = (std::min)({size.width, interior.right, x + dimensions.width}) -
             (std::max)({0.0f, interior.left, x});
@@ -4176,9 +4194,15 @@ HRESULT Surface::draw_sharp_partial(Scene* scene, const SpdfD2DTransform& t) noe
     }
     if (sharp_job_) {
         const auto& job = *sharp_job_;
+        SceneRaster partial;
+        partial.identity = job.identity;
+        partial.transform = job.transform;
+        partial.dpi = job.dpi;
+        partial.sharp = true;
+        float dx = 0, dy = 0;
         if (job.bitmap && !job.cancelled->load() && job.identity.lock() == scene->identity &&
-                job.dpi == dpi_ && std::memcmp(&job.transform, &t, sizeof(t)) == 0) {
-            d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation(-64 / ratio, -64 / ratio));
+                sharp_offset(scene, t, partial, dx, dy)) {
+            d2d_context_->SetTransform(D2D1::Matrix3x2F::Translation((dx - SHARP_ATLAS_MARGIN) / ratio, (dy - SHARP_ATLAS_MARGIN) / ratio));
             for (const auto& r : job.coverage) {
                 const auto rect = D2D1::RectF(r.left / ratio, r.top / ratio, r.right / ratio, r.bottom / ratio);
                 d2d_context_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
@@ -4202,8 +4226,8 @@ HRESULT Surface::draw_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept {
         if (!sharp_offset(scene, t, raster, dx, dy)) continue;
         // Keep the border separate from large page translations to avoid
         // losing subpixel precision when zoomed pages have large coordinates.
-        const auto x = (std::round(dx) - 64) / ratio;
-        const auto y = (std::round(dy) - 64) / ratio;
+        const auto x = (std::round(dx) - SHARP_ATLAS_MARGIN) / ratio;
+        const auto y = (std::round(dy) - SHARP_ATLAS_MARGIN) / ratio;
         const auto pixels = raster.bitmap->GetSize();
         if (x > 0 || y > 0 || x + pixels.width < size.width || y + pixels.height < size.height) continue;
         if (drawing_) {
@@ -4222,18 +4246,31 @@ HRESULT Surface::request_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept
     if (drawing_ || !target_ || scene->owner != this) return E_INVALIDARG;
     if (!std::isfinite(t.m11) || !std::isfinite(t.m12) || !std::isfinite(t.m21) ||
             !std::isfinite(t.m22) || !std::isfinite(t.dx) || !std::isfinite(t.dy)) return E_INVALIDARG;
-    if (scene->recordable || draw_sharp(scene, t) == S_OK) return S_FALSE;
+    if (scene->recordable) return S_FALSE;
+    import_sharp();
+    // Start replacing the atlas while half its margin is still available.
+    // The existing sharp image remains usable during this background work.
+    const auto target_size = target_->GetPixelSize();
+    const auto guard = float(SHARP_ATLAS_MARGIN / 2);
+    for (const auto& raster : scene_rasters_) {
+        float dx, dy;
+        if (!sharp_offset(scene, t, raster, dx, dy)) continue;
+        const auto pixels = raster.bitmap->GetPixelSize();
+        const auto x = dx - SHARP_ATLAS_MARGIN, y = dy - SHARP_ATLAS_MARGIN;
+        if (x <= -guard && y <= -guard && x + pixels.width >= target_size.width + guard &&
+                y + pixels.height >= target_size.height + guard) return S_FALSE;
+    }
     const auto dimensions = target_->GetPixelSize();
     if (sharp_job_ && !sharp_job_->imported && !sharp_job_->cancelled->load() && sharp_job_->identity.lock() == scene->identity &&
             std::memcmp(&sharp_job_->transform, &t, sizeof(t)) == 0 && sharp_job_->dpi == dpi_ &&
-            sharp_job_->width == dimensions.width + 128 && sharp_job_->height == dimensions.height + 128)
+            sharp_job_->width == dimensions.width + 2 * SHARP_ATLAS_MARGIN && sharp_job_->height == dimensions.height + 2 * SHARP_ATLAS_MARGIN)
         return S_OK;
-    const auto bytes = static_cast<std::uint64_t>(dimensions.width + 128) * (dimensions.height + 128) * 4;
+    const auto bytes = static_cast<std::uint64_t>(dimensions.width + 2 * SHARP_ATLAS_MARGIN) * (dimensions.height + 2 * SHARP_ATLAS_MARGIN) * 4;
     if (bytes > (std::min)(128ULL * 1024 * 1024, scene_cache_budget() / 4)) return S_FALSE;
     try {
         auto job = std::make_shared<SharpJob>();
-        job->width = dimensions.width + 128;
-        job->height = dimensions.height + 128;
+        job->width = dimensions.width + 2 * SHARP_ATLAS_MARGIN;
+        job->height = dimensions.height + 2 * SHARP_ATLAS_MARGIN;
         job->dpi = dpi_;
         job->transform = t;
         job->identity = scene->identity;
@@ -4254,39 +4291,50 @@ HRESULT Surface::request_sharp(Scene* scene, const SpdfD2DTransform& t) noexcept
         job->tiles.reserve(job->tile_count);
         std::vector<D2D1_RECT_U> missing;
         missing.reserve(job->tile_count);
-        // A completed atlas keeps its exact pixel phase. Copy overlapping
-        // tiles on the GPU instead of replaying their PDF commands after a pan.
+        // Copy every available pixel, including partially covered tiles.
+        // Only the newly exposed strips need PDF replay after a small pan.
         for (const auto& region : job->regions) {
-            SceneRaster* best = nullptr;
-            D2D1_RECT_U source{};
+            std::vector<D2D1_RECT_U> needed{region};
             for (auto& raster : scene_rasters_) {
                 float dx, dy;
                 if (!sharp_offset(scene, t, raster, dx, dy)) continue;
                 const auto size = raster.bitmap->GetPixelSize();
-                const auto left = region.left - dx, top = region.top - dy;
-                const auto right = region.right - dx, bottom = region.bottom - dy;
-                if (left < 0 || top < 0 || right > size.width || bottom > size.height) continue;
-                if (!best || raster.used > best->used) {
-                    best = &raster;
-                    source = D2D1::RectU(static_cast<UINT32>(left), static_cast<UINT32>(top),
+                std::vector<D2D1_RECT_U> remaining;
+                for (const auto& part : needed) {
+                    const auto left = (std::max)(float(part.left), dx);
+                    const auto top = (std::max)(float(part.top), dy);
+                    const auto right = (std::min)(float(part.right), dx + size.width);
+                    const auto bottom = (std::min)(float(part.bottom), dy + size.height);
+                    if (!(left < right && top < bottom)) { remaining.push_back(part); continue; }
+                    if (!job->bitmap) {
+                        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
+                        const auto result = d2d_context_->CreateBitmap(D2D1::SizeU(job->width, job->height),
+                            nullptr, 0, properties, &job->bitmap);
+                        if (FAILED(result)) return result;
+                    }
+                    const auto copied = D2D1::RectU(static_cast<UINT32>(left), static_cast<UINT32>(top),
                         static_cast<UINT32>(right), static_cast<UINT32>(bottom));
+                    const auto source = D2D1::RectU(static_cast<UINT32>(left - dx), static_cast<UINT32>(top - dy),
+                        static_cast<UINT32>(right - dx), static_cast<UINT32>(bottom - dy));
+                    const auto destination = D2D1::Point2U(copied.left, copied.top);
+                    if (FAILED(job->bitmap->CopyFromBitmap(&destination, raster.bitmap.Get(), &source))) {
+                        remaining.push_back(part); continue;
+                    }
+                    job->coverage.push_back(copied);
+                    raster.used = ++raster_clock_;
+                    if (part.top < copied.top) remaining.push_back(D2D1::RectU(part.left, part.top, part.right, copied.top));
+                    if (copied.bottom < part.bottom) remaining.push_back(D2D1::RectU(part.left, copied.bottom, part.right, part.bottom));
+                    if (part.left < copied.left) remaining.push_back(D2D1::RectU(part.left, copied.top, copied.left, copied.bottom));
+                    if (copied.right < part.right) remaining.push_back(D2D1::RectU(copied.right, copied.top, part.right, copied.bottom));
                 }
+                needed.swap(remaining);
+                if (needed.empty() || needed.size() > 128) break;
             }
-            if (!best) { missing.push_back(region); continue; }
-            if (!job->bitmap) {
-                const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
-                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi_, dpi_);
-                const auto result = d2d_context_->CreateBitmap(D2D1::SizeU(job->width, job->height),
-                    nullptr, 0, properties, &job->bitmap);
-                if (FAILED(result)) return result;
-            }
-            const auto destination = D2D1::Point2U(region.left, region.top);
-            if (SUCCEEDED(job->bitmap->CopyFromBitmap(&destination, best->bitmap.Get(), &source))) {
-                job->coverage.push_back(region);
-                best->used = ++raster_clock_;
-            } else missing.push_back(region);
+            missing.insert(missing.end(), needed.begin(), needed.end());
         }
         job->regions.swap(missing);
+        job->tile_count = job->coverage.size() + job->regions.size();
         if (job->regions.empty()) {
             cancel_sharp();
             job->ready.store(true, std::memory_order_release);
@@ -4336,7 +4384,34 @@ std::int32_t Surface::sharp_status() noexcept {
     return sharp_job_->imported ? 2 : (changed ? 3 : 1);
 }
 
+void Surface::memory_statistics(std::uint64_t* values) noexcept {
+    std::fill(values, values + 8, 0);
+    for (const auto& raster : scene_rasters_) values[0] += raster.bytes;
+    values[1] = scratch_bytes_;
+    values[2] = storage_bytes_;
+    values[3] = composite_bytes_;
+    if (sharp_job_) {
+        if (sharp_job_->bitmap) values[4] = std::uint64_t(sharp_job_->width) * sharp_job_->height * 4;
+        std::lock_guard<std::mutex> lock(sharp_job_->tiles_mutex);
+        for (const auto& tile : sharp_job_->tiles) {
+            const auto size = tile.bitmap->GetPixelSize();
+            values[5] += std::uint64_t(size.width) * size.height * 4;
+        }
+    }
+    values[6] = scene_rasters_.size();
+    if (sharp_queue_) {
+        std::lock_guard<std::mutex> lock(sharp_queue_->mutex);
+        values[7] = sharp_queue_->idle_renderer ? 1 : 0;
+    }
+}
+
 }  // namespace
+
+std::int32_t spdf_d2d_memory_statistics(void* surface, std::uint64_t* values, std::uint32_t count) noexcept {
+    if (!surface || !values || count != 8) return static_cast<std::int32_t>(E_INVALIDARG);
+    static_cast<Surface*>(surface)->memory_statistics(values);
+    return S_OK;
+}
 
 std::uint32_t spdf_d2d_abi_version() noexcept {
     return SPDF_D2D_ABI_VERSION;

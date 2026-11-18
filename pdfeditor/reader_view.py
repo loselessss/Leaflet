@@ -1181,6 +1181,13 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
                     return
             elif self._d2d_surface.draw_sharp_scene(retained, transform):
+                # Refresh the off-screen margin before scrolling exposes a
+                # gap. Native code declines work while the guard still fits.
+                key = (retained, transform, self._d2d_size)
+                if (not self._sharp_poll_timer.isActive() and
+                        self._sharp_attempted.get(page) != key and
+                        not self._sharp_refine_timer.isActive()):
+                    self._sharp_refine_timer.start(0)
                 return
             if not self._zoom_animation_timer.isActive() and len(draws) >= 256:
                 key = (retained, transform, self._d2d_size)
@@ -1669,7 +1676,23 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def _viewport_moved(self, *_args):
         if self._updating:
             return
-        self._cancel_sharp_refine()
+        pending = self._sharp_pending_key
+        keep = False
+        if pending is not None:
+            page, (retained, previous, size) = pending
+            cached = self._d2d_vector_paths.get(page)
+            if cached is not None and cached[3] is retained and page in self._page_transforms:
+                current = self._retained_page_transform(page)
+                # A translated viewport can display the job's completed tiles
+                # immediately. Let useful work finish instead of starving it
+                # with every wheel event; distant moves still cancel promptly.
+                keep = (size == self._d2d_size and current[:4] == previous[:4] and
+                        abs(current[4] - previous[4]) < self.viewport().width() and
+                        abs(current[5] - previous[5]) < self.viewport().height() and
+                        any(p == page and rect.intersects(self._visible_scene_rect())
+                            for p, _preview, rect in self.canvas._pages))
+        if not keep:
+            self._cancel_sharp_refine()
         self._pause_page_prefetch()
         self.viewport().update()
         self.viewport_changed.emit()

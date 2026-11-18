@@ -313,6 +313,9 @@ SPDF_D2D_API std::int32_t spdf_d2d_draw_sharp_partial(
 // Negative values are HRESULT errors.
 SPDF_D2D_API std::int32_t spdf_d2d_sharp_status(void* surface) noexcept;
 SPDF_D2D_API void spdf_d2d_cancel_sharp(void* surface) noexcept;
+// Optional diagnostics: eight uint64 counters, bytes except the last two counts.
+SPDF_D2D_API std::int32_t spdf_d2d_memory_statistics(
+    void* surface, std::uint64_t* values, std::uint32_t count) noexcept;
 SPDF_D2D_API std::int32_t spdf_d2d_end_frame(void* surface) noexcept;
 SPDF_D2D_API void spdf_d2d_destroy_bitmap(void* bitmap) noexcept;
 SPDF_D2D_API void spdf_d2d_destroy_path(void* path) noexcept;

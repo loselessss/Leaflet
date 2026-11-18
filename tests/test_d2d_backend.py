@@ -332,8 +332,16 @@ class D2DBackendTests(unittest.TestCase):
                         surface.end_frame()
                         self.assertTrue(surface.request_sharp_scene(scene, transform))
                         deadline = time.monotonic() + 10
-                        while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                        status = surface.sharp_status()
+                        while status in (1, 3) and time.monotonic() < deadline:
+                            if status == 3:
+                                shifted = (*transform[:4], transform[4] + 2 * 96 / dpi, transform[5])
+                                surface.begin_frame(0xff123456)
+                                self.assertEqual(surface.draw_sharp_partial(scene, shifted),
+                                                 transform[1] == 0 and transform[2] == 0)
+                                surface.end_frame()
                             time.sleep(.005)
+                            status = surface.sharp_status()
                         self.assertEqual(surface.sharp_status(), 2)
                         surface.begin_frame(0xff123456)
                         self.assertTrue(surface.draw_sharp_scene(scene, transform))
@@ -356,8 +364,16 @@ class D2DBackendTests(unittest.TestCase):
                         surface.end_frame()
                         self.assertTrue(surface.request_sharp_scene(scene, transform))
                         deadline = time.monotonic() + 10
-                        while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                        status = surface.sharp_status()
+                        while status in (1, 3) and time.monotonic() < deadline:
+                            if status == 3:
+                                shifted = (*transform[:4], transform[4] + 2 * 96 / dpi, transform[5])
+                                surface.begin_frame(0xff123456)
+                                self.assertEqual(surface.draw_sharp_partial(scene, shifted),
+                                                 transform[1] == 0 and transform[2] == 0)
+                                surface.end_frame()
                             time.sleep(.005)
+                            status = surface.sharp_status()
                         self.assertEqual(surface.sharp_status(), 2)
                         surface.begin_frame(0xff123456)
                         self.assertTrue(surface.draw_sharp_scene(scene, transform))
@@ -426,6 +442,22 @@ class D2DBackendTests(unittest.TestCase):
                 self.assertTrue(surface.request_sharp_scene(temporary, (2, 0, 0, 2, 0, 0)))
                 temporary.close()
                 self.assertEqual(surface.sharp_status(), 0)
+                # A sharp viewport can proactively refresh its guard before
+                # the old atlas stops covering the visible screen.
+                guarded = surface.create_scene(32, 32, operations)
+                original = (20, 0, 0, 20, .25, -5.5)
+                self.assertTrue(surface.request_sharp_scene(guarded, original))
+                deadline = time.monotonic() + 10
+                while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                    time.sleep(.005)
+                shifted = (*original[:4], original[4] + 192 * 96 / 144, original[5])
+                self.assertTrue(surface.draw_sharp_scene(guarded, shifted))
+                self.assertTrue(surface.request_sharp_scene(guarded, shifted))
+                deadline = time.monotonic() + 10
+                while surface.sharp_status() in (1, 3) and time.monotonic() < deadline:
+                    time.sleep(.005)
+                self.assertEqual(surface.sharp_status(), 2)
+                guarded.close()
         finally:
             user32.DestroyWindow(hwnd)
 

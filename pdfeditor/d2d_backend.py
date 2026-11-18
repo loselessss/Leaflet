@@ -316,6 +316,18 @@ class D2DSurface:
             return None
         return budget.value, usage.value
 
+    def memory_statistics(self):
+        """Tracked native cache bytes; driver allocations are reported separately."""
+        function = getattr(self._library, 'spdf_d2d_memory_statistics', None)
+        if function is None or self.closed:
+            return None
+        function.argtypes = [c_void_p, POINTER(c_uint64), c_uint32]
+        function.restype = c_int32
+        values = (c_uint64 * 8)()
+        _check_hresult(function(self._handle, values, 8), "GPU memory diagnostics")
+        return dict(zip(('raster_bytes', 'scratch_bytes', 'storage_bytes', 'composite_bytes',
+                         'sharp_atlas_bytes', 'published_tile_bytes', 'raster_count', 'idle_worker'), values))
+
     def clear(self, argb):
         if self.closed:
             raise RuntimeError("Direct2D surface is closed")
