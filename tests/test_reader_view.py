@@ -1404,6 +1404,24 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
 
+    def test_pan_outside_crop_uses_preview_without_reuploading_base_scene(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        detail = VectorPage(True, raster_scale=4, viewport=(0, 0, 100, 100))
+        base = VectorPage(True, features=("image-downsample",))
+        retained = Mock(closed=False)
+        self.view._d2d_surface = Mock()
+        self.view._d2d_vector_paths[0] = (detail, range(300), (), retained)
+        with patch.object(self.view, "_vector_raster_scale", return_value=4), \
+                patch.object(self.view, "_image_refinement_pending", return_value=True), \
+                patch.object(self.view, "_native_vector_draws") as upload, \
+                patch.object(self.view, "_draw_d2d_tiles") as draw_tiles:
+            self.view._draw_vector_page(0, base)
+        upload.assert_not_called()
+        draw_tiles.assert_called_once()
+        self.assertIs(self.view._d2d_vector_paths[0][3], retained)
+        self.assertIn(0, self.view._gpu_preview_tile_pages)
+
     def test_poster_renders_sharp_once_after_pending_image_replacement(self):
         from dataclasses import replace
         from pdfeditor.gpu_raster import VectorPage

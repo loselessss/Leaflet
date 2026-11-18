@@ -198,6 +198,17 @@ def thumbnail_layout_rects(item_rect, icon_size, aspect):
     return image_rect, label_rect
 
 
+class PageNumberDelegate(QStyledItemDelegate):
+    def sizeHint(self, option, index):
+        return QSize(64, option.fontMetrics.height() + 10)
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.icon = QIcon()
+        option.features &= ~QStyleOptionViewItem.HasDecoration
+        option.displayAlignment = Qt.AlignCenter
+
+
 class ThumbnailDelegate(QStyledItemDelegate):
     """Keep thumbnail images out of the dedicated page-number band."""
 

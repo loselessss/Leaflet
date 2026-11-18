@@ -147,6 +147,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._appearance_controller = None
         self._vector_pages = {}
         self._vector_viewport_pages = {}
+        self._gpu_preview_tile_pages = set()
         self._d2d_vector_paths = {}
         self._reported_render_device = None
         self._rasterized_pages = {}
@@ -841,6 +842,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._notify_render_device()
 
     def _release_d2d_surface(self, *, disable=False):
+        self._gpu_preview_tile_pages.clear()
         self._release_night_masks()
         self._cancel_sharp_refine()
         self._sharp_attempted.clear()
@@ -1164,8 +1166,24 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._trim_nearby_native_pages()
 
     def _draw_vector_page(self, page, scene):
-        draws = self._native_vector_draws(page, scene)
         page_transform = self._page_transforms[page]
+        scale = self._vector_raster_scale()
+        cached = self._d2d_vector_paths.get(page)
+        if (scale == 4 and cached is not None and getattr(cached[0], "viewport", None) is not None
+                and cached[0] is not scene and page in self._previews
+                and not self._zoom_animation_timer.isActive()
+                and self._image_refinement_pending(page, scene)):
+            # A long pan can leave the current crop while the next crop is
+            # compiling. Keep the old GPU resources and avoid uploading a
+            # whole-page scene that would only display its preview.
+            width, height = self._page_sizes[page]
+            self._set_page_transform(page_transform)
+            bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
+            self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+            self._gpu_preview_tile_pages.add(page)
+            self._draw_d2d_tiles(page, self._visible_scene_rect())
+            return
+        draws = self._native_vector_draws(page, scene)
         retained = self._d2d_vector_paths[page][3]
         if retained is not None:
             transform = self._retained_page_transform(page)
@@ -1208,6 +1226,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                             self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
                             preview = True
                     if preview:
+                        if scale == 4:
+                            self._gpu_preview_tile_pages.add(page)
+                            self._draw_d2d_tiles(page, self._visible_scene_rect())
                         self._d2d_surface.draw_sharp_partial(retained, transform)
                         if fresh and not image_refining and not self._sharp_poll_timer.isActive():
                             self._sharp_refine_timer.start(0)
@@ -1326,7 +1347,18 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 rect.left(), rect.top(), rect.right(), rect.bottom(),
                 EDIT_BOX_COLOR.rgba(), 1.0 / max(0.1, self.zoom))
 
+    def _draw_d2d_tiles(self, page, exposed):
+        transform = self._page_transforms[page]
+        for key, (pixmap, region) in self._tiles.items():
+            if key in self._wanted and key[0] == page and transform.mapRect(region).intersects(exposed):
+                self._set_page_transform(transform)
+                tile = self._native_bitmap(self._d2d_tiles, key, pixmap)
+                self._d2d_surface.draw_bitmap(
+                    tile, region.left(), region.top(), region.right(), region.bottom())
+
     def _paint_d2d(self):
+        previous_tile_pages = self._gpu_preview_tile_pages
+        self._gpu_preview_tile_pages = set()
         ratio = max(1.0, self.viewport().devicePixelRatioF())
         size = (self.viewport().size(), ratio)
         if size != self._d2d_size:
@@ -1356,14 +1388,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 rasterized[page] = "CPU"
                 bitmap = self._native_bitmap(self._d2d_previews, page, preview)
                 self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
-                for key, (pixmap, region) in self._tiles.items():
-                    if key not in self._wanted or key[0] != page:
-                        continue
-                    if transform.mapRect(region).intersects(exposed):
-                        tile = self._native_bitmap(self._d2d_tiles, key, pixmap)
-                        self._d2d_surface.draw_bitmap(
-                            tile, region.left(), region.top(),
-                            region.right(), region.bottom())
+                self._draw_d2d_tiles(page, exposed)
             if night_plan is not None:
                 mask = self._native_bitmap(self._night_gpu_masks, page, night_plan.mask)
                 night_pages.append((mask, self._retained_page_transform(page), width, height))
@@ -1379,6 +1404,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._set_page_transform(self._page_transforms[page])
             self._draw_d2d_overlays()
         self._d2d_surface.end_frame()
+        if self._gpu_preview_tile_pages - previous_tile_pages:
+            self._schedule_refine(40)
         self._rasterized_pages = rasterized
         self._notify_render_device()
 
@@ -1719,7 +1746,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 continue
             vector_scene = self._display_vector_scene(page)
             if self._d2d_requested and vector_scene is not None and vector_scene.supported:
-                continue
+                if page not in self._gpu_preview_tile_pages:
+                    continue
             inverse, _valid = self._page_transforms[page].inverted()
             region = inverse.mapRect(visible)
             local = QRectF(region.x() * scale, region.y() * scale,
@@ -1747,7 +1775,11 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             return
         key = self._pending.pop(0)
         page, scale, x, y = key
-        if page not in self._page_sizes:
+        if page not in self._page_sizes or (
+                self._d2d_requested and page not in self._gpu_preview_tile_pages
+                and getattr(self._display_vector_scene(page), "supported", False)):
+            if self._pending:
+                self._tile_timer.start(1)
             return
         # One-pixel overlap prevents hairline gaps from rounded clip boundaries.
         clip = ((x * TILE_PIXELS - 1) / scale, (y * TILE_PIXELS - 1) / scale,

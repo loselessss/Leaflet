@@ -2794,6 +2794,8 @@ struct Scene {
 HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nullptr) {
     if (scene->bindings.empty()) scene->bindings.resize(scene->data->binding_commands.size());
     const auto& indices = selected ? *selected : scene->data->binding_commands;
+    // Bindings belong to one context. Brushes are immutable during replay.
+    std::unordered_map<std::string, const SceneBinding*> gradients;
     std::size_t visited = 0;
     for (const auto index : indices) {
         if ((visited++ & 63) == 0 && scene->owner->cancelled())
@@ -2812,14 +2814,29 @@ HRESULT bind_scene(Scene* scene, const std::vector<std::uint32_t>* selected = nu
         if(stored.planes){Surface::Bitmap* bitmap=nullptr;result=scene->owner->bind_color_image(stored.planes,&bitmap);binding.bitmap.reset(bitmap);}
         if(SUCCEEDED(result)&&stored.pattern)result=scene->owner->bind_pattern(stored.pattern,binding.pattern);
         if(c.type==SPDF_D2D_SCENE_MESH)result=scene->owner->create_mesh(stored.mesh_vertices,binding.mesh);
-        if (c.type == SPDF_D2D_SCENE_LINEAR_GRADIENT)
-            result = scene->owner->create_linear_gradient_brush(
-                c.values[0], c.values[1], c.values[2], c.values[3], stored.stops.data(),
-                static_cast<UINT32>(stored.stops.size()), &binding.linear_brush);
-        else if (c.type == SPDF_D2D_SCENE_RADIAL_GRADIENT)
-            result = scene->owner->create_radial_gradient_brush(
-                c.values[0], c.values[1], c.values[2], c.values[3], c.values[4], c.values[5],
-                stored.stops.data(), static_cast<UINT32>(stored.stops.size()), &binding.radial_brush);
+        const bool linear = c.type == SPDF_D2D_SCENE_LINEAR_GRADIENT;
+        if (linear || c.type == SPDF_D2D_SCENE_RADIAL_GRADIENT) {
+            std::string key(1, static_cast<char>(c.type));
+            key.append(reinterpret_cast<const char*>(c.values), (linear ? 4 : 6) * sizeof(float));
+            key.append(reinterpret_cast<const char*>(stored.stops.data()),
+                       stored.stops.size() * sizeof(SpdfD2DGradientStop));
+            auto found = gradients.find(key);
+            if (found != gradients.end()) {
+                binding.linear_brush = found->second->linear_brush;
+                binding.radial_brush = found->second->radial_brush;
+            } else {
+                if (linear)
+                    result = scene->owner->create_linear_gradient_brush(
+                        c.values[0], c.values[1], c.values[2], c.values[3], stored.stops.data(),
+                        static_cast<UINT32>(stored.stops.size()), &binding.linear_brush);
+                else
+                    result = scene->owner->create_radial_gradient_brush(
+                        c.values[0], c.values[1], c.values[2], c.values[3], c.values[4], c.values[5],
+                        stored.stops.data(), static_cast<UINT32>(stored.stops.size()), &binding.radial_brush);
+                if (gradients.size() >= 256) gradients.clear();
+                gradients.emplace(std::move(key), &scene->bindings[stored.binding_index]);
+            }
+        }
         if (FAILED(result)) return result;
         scene->bindings[stored.binding_index] = std::move(binding);
     }

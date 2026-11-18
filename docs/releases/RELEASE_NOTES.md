@@ -2,6 +2,8 @@
 
 ## Unreleased (1.39.3)
 
+- At common zoom levels, show sharp visible tiles during large pans while the GPU prepares the new area. Skip the intermediate whole-page GPU upload.
+- Click the left panel title to switch between page thumbnails and a compact page list.
 - Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions.
 - Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
 - Prepare surrounding content ahead of zoomed scrolling to keep the display sharp for longer.

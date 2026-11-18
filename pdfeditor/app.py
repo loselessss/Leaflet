@@ -12,7 +12,7 @@ import subprocess
 from PyQt5.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QAction, QActionGroup, QApplication, QCheckBox, QDialog, QDialogButtonBox,
-    QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListView,
     QMainWindow, QMenu, QMenuBar, QMessageBox, QProgressDialog, QPushButton,
     QSpinBox, QSplitter, QStackedWidget, QStatusBar, QTabWidget, QToolBar,
     QToolButton, QVBoxLayout, QWidget,
@@ -39,7 +39,7 @@ from .textsel import TextSelectMixin
 from .update_dialog import UpdateCheckWorker, UpdateDialog
 from .update_service import GitHubUpdateService, UpdateError
 from .viewer import ViewerMixin
-from .widgets import BookmarkTree, PageView, ThumbList
+from .widgets import BookmarkTree, PageNumberDelegate, PageView, ThumbList
 from .workspaces import WindowWorkspaceMixin, workspace_policy
 from .tab_lifecycle import TabLifecycleMixin
 from .file_history import FileHistoryMixin
@@ -320,6 +320,12 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         self._sidebar_stack = QStackedWidget()
         self._sidebar_stack.addWidget(self.thumbs)
         self._sidebar_stack.addWidget(self.bookmarks)
+        self._page_list = QListView()
+        self._page_list.setModel(self.thumbs.model())
+        self._page_list.setSelectionModel(self.thumbs.selectionModel())
+        self._page_list.setItemDelegate(PageNumberDelegate(self._page_list))
+        self._page_list.setUniformItemSizes(True)
+        self._sidebar_stack.addWidget(self._page_list)
         self._sidebar_container = QWidget()
         sidebar_layout = QVBoxLayout(self._sidebar_container)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -328,7 +334,10 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
         sidebar_header.setObjectName("sidebarHeader")
         sidebar_header_layout = QHBoxLayout(sidebar_header)
         sidebar_header_layout.setContentsMargins(10, 3, 4, 3)
-        self._sidebar_title = QLabel(tr("페이지 미리보기"))
+        self._sidebar_title = QToolButton()
+        self._sidebar_title.setAutoRaise(True)
+        self._sidebar_title.setText(tr("페이지 미리보기"))
+        self._sidebar_title.clicked.connect(self.toggle_page_list)
         sidebar_header_layout.addWidget(self._sidebar_title, 1)
         self._sidebar_close_button = QToolButton()
         self._sidebar_close_button.setObjectName("sidebarCloseButton")
@@ -664,7 +673,8 @@ class DocumentTab(QMainWindow, EditorWorkspaceMixin, AnnotationPersistenceMixin,
             action = self._act(
                 sidebar_menu, label, None,
                 lambda _checked=False, selected=mode:
-                self.set_sidebar_mode(selected), icon_name)
+                (self.toggle_page_list() if selected == "thumbnails" and
+                 self._sidebar_mode == "thumbnails" else self.set_sidebar_mode(selected)), icon_name)
             action.setCheckable(True)
             self._sidebar_group.addAction(action)
             self._sidebar_actions[mode] = action

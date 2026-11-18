@@ -342,6 +342,11 @@ class ViewerMixin(NavigationMixin):
 
     # --- 왼쪽 탐색 패널 --------------------------------------------
 
+    def toggle_page_list(self):
+        if self._sidebar_mode == "thumbnails":
+            self._page_list_enabled = not getattr(self, "_page_list_enabled", False)
+            self.set_sidebar_mode("thumbnails", persist=False)
+
     def set_sidebar_mode(self, mode, persist=True):
         if mode not in settings.SIDEBAR_MODES:
             mode = settings.DEFAULT_SIDEBAR_MODE
@@ -350,8 +355,10 @@ class ViewerMixin(NavigationMixin):
             self._sidebar_stack.hide()
             self._sidebar_container.hide()
         else:
-            self._sidebar_stack.setCurrentWidget(
-                self.thumbs if mode == "thumbnails" else self.bookmarks)
+            pages = self._page_list if getattr(self, "_page_list_enabled", False) else self.thumbs
+            self._sidebar_stack.setCurrentWidget(pages if mode == "thumbnails" else self.bookmarks)
+            if mode == "thumbnails":
+                pages.scrollTo(pages.currentIndex())
             self._sidebar_stack.show()
             self._sidebar_container.show()
             width = settings.thumbnail_width()
@@ -365,6 +372,10 @@ class ViewerMixin(NavigationMixin):
             "none": tr("없음"), "thumbnails": tr("페이지 미리보기"),
             "bookmarks": tr("책갈피"),
         }
+        if mode == "thumbnails" and getattr(self, "_page_list_enabled", False):
+            labels[mode] = tr("페이지 목록")
+        self._sidebar_title.setEnabled(mode == "thumbnails")
+        self._sidebar_title.setToolTip(tr("미리보기와 목록 전환") if mode == "thumbnails" else "")
         self._sidebar_title.setProperty("_spdf_i18n_source_text", labels[mode])
         self._sidebar_title.setText(labels[mode])
         if hasattr(self, "_sidebar_cycle_act"):
@@ -438,7 +449,8 @@ class ViewerMixin(NavigationMixin):
 
     def _render_visible_thumbs(self):
         """보이는 항목 중 아직 안 그린 것만 렌더(레이지, 설계 §3.1)."""
-        if self.doc is None:
+        if self.doc is None or (getattr(self, "_page_list_enabled", False)
+                                and self._sidebar_mode == "thumbnails"):
             return
         if not getattr(self, "_view_ready", True):
             self._schedule_thumbs()

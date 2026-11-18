@@ -123,6 +123,8 @@ EN = {
     "왼쪽 패널": "Left Panel",
     "없음": "None",
     "페이지 미리보기": "Page Thumbnails",
+    "페이지 목록": "Page List",
+    "미리보기와 목록 전환": "Switch between thumbnails and page list",
     "책갈피": "Bookmarks",
     "책갈피 없음": "No bookmarks",
     "이전 보기": "Back to Previous View",
