@@ -40,6 +40,19 @@ class SceneMemoryCacheTests(unittest.TestCase):
         self.assertTrue(future.cancelled())
         self.assertEqual(archive.bytes, 0)
 
+    def test_viewport_crop_round_trips_without_serving_as_a_whole_page(self):
+        archive = SceneMemoryCache()
+        archive.trim(MIB)
+        scene = self.scene(raster_scale=8., viewport=(100., 50., 400., 350.),
+                           features=('image-downsample',))
+        self.assertTrue(archive.store((1, 16., False), scene))
+        archive.poll(wait=True)
+        self.assertLess(archive.bytes, len(scene.compiled_packet)//2)
+        self.assertIsNone(archive.take(1, 8., False))
+        self.assertIsNone(archive.take(1, 8., False, viewport=(0., 50., 400., 350.)))
+        self.assertIsNone(archive.take(1, 16., False, viewport=(100., 50., 300., 300.)))
+        self.assertEqual(archive.take(1, 8., False, viewport=(200., 50., 400., 340.)), scene)
+
     def test_packed_ram_retains_more_than_128_pages_when_bytes_fit(self):
         archive = SceneMemoryCache()
         archive.trim(MIB)

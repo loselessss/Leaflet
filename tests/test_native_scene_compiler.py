@@ -370,6 +370,56 @@ class NativeSceneGpuTests(unittest.TestCase):
                 error=self._compare_page(doc[0])
                 self.assertLess(error,2.,f'{name}: mean channel error {error:.4f}/255')
 
+    def test_radial_gradient_extends_outer_stop_to_clip_on_gpu(self):
+        from contextlib import closing
+        from tests.benchmark_gpu_pipeline import render_sample
+
+        for extend in (False, True):
+            with self.subTest(extend=extend), \
+                    pymupdf.open(stream=fixtures.radial_gradient_pdf_bytes(), filetype='pdf') as doc:
+                doc.xref_set_key(5, 'Coords', '[150 120 0 150 120 40]')
+                doc.xref_set_key(5, 'Extend', f'[false {str(extend).lower()}]')
+                page = doc[0]
+                scene = compile_vector_page(page)
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertNotIn('cpu-island', scene.features)
+                self.assertIn('gradient-primitive', scene.features)
+                cpu = page.get_pixmap(alpha=False)
+                with closing(self.surface.create_rust_scene(scene, 300, 240)) as retained:
+                    pixels = render_sample(self.surface, retained, (1., 0., 0., 1., 0., 0.),
+                                           256, 256, 'completed', .001)[3]
+                for x, y in ((240, 120), (12, 120)):
+                    offset = (y * 256 + x) * 4
+                    rgb = tuple(reversed(pixels[offset:offset + 3]))
+                    self.assertEqual(rgb, cpu.pixel(x, y))
+
+    def test_zoomed_cmyk_color_dodge_keeps_the_gpu_rgb_blend(self):
+        from contextlib import closing
+        from tests.benchmark_gpu_pipeline import render_sample
+
+        with pymupdf.open() as doc:
+            page = doc.new_page(width=256, height=256)
+            page.draw_rect(page.rect, fill=(0, 0, 0, .5), color=None)
+            doc.xref_set_key(page.xref, 'Group', '<< /S /Transparency /CS /DeviceCMYK /I true >>')
+            resources = int(doc.xref_get_key(page.xref, 'Resources')[1].split()[0])
+            doc.xref_set_key(resources, 'ExtGState', '<< /Dodge << /BM /ColorDodge >> >>')
+            doc.update_stream(page.get_contents()[0],
+                              b'.9 .9 0 .2 k 0 0 256 256 re f\n'
+                              b'q /Dodge gs .1 .6 .3 .0 k 40 40 48 48 re f Q\n'
+                              b'0 0 0 .8 k 58 56 12 20 re f\n')
+            page = doc.reload_page(page)
+            region = (30., 158., 94., 222.)
+            frames = []
+            for viewport in (None, region):
+                scene = compile_vector_page(page, 4., viewport=viewport)
+                self.assertTrue(scene.supported, scene.reason)
+                self.assertIn('rgb-transparency-approximation', scene.features)
+                self.assertNotIn('cpu-island', scene.features)
+                with closing(self.surface.create_rust_scene(scene, 256, 256)) as retained:
+                    frames.append(render_sample(self.surface, retained, (4., 0., 0., 4., -120., -632.),
+                                                256, 256, 'completed', .001)[3])
+            self.assertTrue(frames[0] == frames[1], 'viewport and whole-page GPU color should agree')
+
     def test_stroked_text_width_and_text_clip_rendering_match_reference(self):
         for mode in (1,2,4,5,6,7):
             with self.subTest(mode=mode),pymupdf.open() as doc:

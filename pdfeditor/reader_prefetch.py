@@ -104,6 +104,13 @@ class ReaderPrefetchMixin:
         budget = vector_gpu_budget(self._document.gpu_scene_memory_budget(), video)
         self._native_retention_budget = budget
         used = 0
+        if self._standby_gpu_scene is not None:
+            page, cached = self._standby_gpu_scene
+            cost = _gpu_scene_upload_cost(cached[0])
+            if page not in self._page_sizes or cost > budget:
+                self._release_standby_gpu_scene(archive=True)
+            else:
+                used = cost
         for page in reversed(tuple(self._d2d_vector_paths)):
             cached = self._d2d_vector_paths[page]
             if page in self._page_sizes:
@@ -120,8 +127,10 @@ class ReaderPrefetchMixin:
                 self._discard_native_vector_page(page)
             else:
                 used += cost
-        self._vector_viewport_pages = {p: scene for p, scene in self._vector_viewport_pages.items()
-            if p in self._page_sizes or p in self._d2d_vector_paths}
+        for page, scene in tuple(self._vector_viewport_pages.items()):
+            if page not in self._page_sizes and page not in self._d2d_vector_paths:
+                self._document.stash_gpu_viewport_scene(page, scene)
+                del self._vector_viewport_pages[page]
 
     def _nearby_prefetch_pages(self):
         if self._document is None or not self._page_sizes:

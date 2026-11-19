@@ -388,6 +388,17 @@ class Document:
         archive = getattr(self, '_gpu_packed_cache', None)
         return archive is not None and archive.contains(index, scale, _aggressive_gpu_band_merge_enabled())
 
+    def stash_gpu_viewport_scene(self, index, scene):
+        self._stash_gpu_scene(
+            (index, scene.raster_scale, _aggressive_gpu_band_merge_enabled()), scene)
+
+    def packed_gpu_viewport_scene(self, index, scale, viewport, *, restore=False):
+        archive = getattr(self, '_gpu_packed_cache', None)
+        if archive is None or viewport is None:
+            return None
+        access = archive.take if restore else archive.contains
+        return access(index, scale, _aggressive_gpu_band_merge_enabled(), viewport=viewport)
+
     def _restore_packed_gpu_scene(self, index, scale, variant):
         archive = getattr(self, '_gpu_packed_cache', None)
         if archive is None:
@@ -457,10 +468,23 @@ class Document:
         """Return one current page as an isolated worker-safe PDF snapshot."""
         snapshot = fitz.open()
         try:
-            snapshot.insert_pdf(self._doc, from_page=index, to_page=index)
+            self._insert_gpu_snapshot_page(snapshot, index)
             return snapshot.tobytes(garbage=0, deflate=True)
         finally:
             snapshot.close()
+
+    def _insert_gpu_snapshot_page(self, snapshot, index):
+        source = self._doc[index]
+        snapshot.insert_pdf(self._doc, from_page=index, to_page=index)
+        if self._doc.xref_get_key(source.xref, "Group")[0] == "null":
+            return
+        # insert_pdf omits the page transparency group. Preserve its blending
+        # space and graft any indirect ICC profile into the worker document.
+        mupdf = fitz.mupdf
+        group = mupdf.pdf_dict_gets(fitz._as_pdf_page(source).obj(), "Group")
+        if mupdf.pdf_is_dict(group):
+            target = fitz._as_pdf_page(snapshot[0])
+            mupdf.pdf_dict_puts(target.obj(), "Group", mupdf.pdf_graft_object(target.doc(), group))
 
     def write_gpu_page_snapshot(self, index, path):
         """Write worker input without a whole-page Python bytes buffer.
@@ -484,7 +508,7 @@ class Document:
                 # Cross-volume or unsupported filesystem: export instead.
                 pass
         with fitz.open() as snapshot:
-            snapshot.insert_pdf(self._doc, from_page=index, to_page=index)
+            self._insert_gpu_snapshot_page(snapshot, index)
             # Existing compressed streams stay compressed. Do not spend UI
             # time recompressing uncompressed images for disposable IPC.
             snapshot.save(path, garbage=0, deflate=False)

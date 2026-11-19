@@ -8,14 +8,22 @@
 
 ### 성능 개선
 
+- Reuse a finished GPU view when returning to a recent zoomed area, preventing a color shift from a temporary CPU frame.
+- Keep previously viewed zoomed areas in compressed memory so revisiting them can reuse the prepared drawing data.
 - Use less memory during zooming by preparing nearby pages at a lower resolution and releasing temporary GPU tile copies once the page is ready.
 - Update the viewport once per zoom step or diagonal scroll input so the reader prepares only the final position.
 - Keep zoom and scrolling responsive by reusing prepared previews and applying new GPU scenes after input pauses.
 - Avoid preparing another GPU scene when the completed region already covers the screen. Skip sharpening regions left behind after a pan.
-- At higher zoom levels, keep sharp tiles visible after a large pan until the new GPU frame is ready. This prevents the screen from flashing back to a blurry preview.
+- On GPU-supported pages, reuse available GPU previews and display the sharp GPU tiles as they arrive, avoiding an intermediate CPU rendering pass.
 - Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions. Gradients with matching geometry can also share a brush.
 - Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
 - Prepare a wider margin around zoomed viewports and refresh it before scrolling exposes a gap. Reuse partially covered tiles and redraw only newly exposed strips, retaining the existing GPU cache memory limit.
+
+### 버그 수정
+
+- Fix clipped highlights and rings in PDFs that extend radial gradients past their outer edge.
+- Preserve the original transparency color space when preparing pages for GPU rendering.
+- Use GPU RGB blending for a consistent appearance in supported CMYK transparency effects while zooming.
 
 ## 1.39.2 - 2026-11-17
 

@@ -4,6 +4,7 @@ use pyo3::exceptions::{PyFloatingPointError, PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyTuple};
 mod parallel_buffers;
+mod packed_scene_index;
 mod raster_copy;
 
 
@@ -277,6 +278,7 @@ fn pack_path<'py>(py: Python<'py>, commands: &Bound<'py, PyTuple>) -> PyResult<B
 #[pymodule]
 fn _path_packer(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<scene_compiler::RustCompiledScene>()?;
+    module.add_class::<packed_scene_index::PackedSceneIndex>()?;
     module.add_function(wrap_pyfunction!(scene_compiler::compile_scene, module)?)?;
     module.add_function(wrap_pyfunction!(scene_compiler::native_input::plan_native_scene, module)?)?;
     module.add_function(wrap_pyfunction!(scene_compiler::native_input::compile_native_scene, module)?)?;

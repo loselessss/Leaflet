@@ -3750,6 +3750,8 @@ HRESULT Surface::draw_group_coarse(Scene* scene, std::size_t index,
     return draw_group_raster(scene, index, t);
 }
 
+constexpr UINT32 SHARP_ATLAS_MARGIN = 256;
+
 HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noexcept {
     if (scene->recordable || t.m12 != 0 || t.m21 != 0 ||
             t.m11 <= 0 || t.m22 <= 0 || !std::isfinite(t.m11) ||
@@ -3762,8 +3764,10 @@ HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noe
     const auto bounds = D2D1::RectF(background.values[0], background.values[1],
         background.values[2], background.values[3]);
     for (auto& cached : scene_rasters_) {
-        if (!cached.sharp && cached.command_index == SIZE_MAX && cached.identity.lock() == scene->identity && cached.dpi == dpi_ &&
-                (!best || cached.used > best->used) && covers_visible(cached.coverage, bounds, t)) best = &cached;
+        if (cached.command_index != SIZE_MAX || cached.identity.lock() != scene->identity || cached.dpi != dpi_ ||
+                cached.transform.m12 != 0 || cached.transform.m21 != 0 || cached.transform.m11 <= 0 ||
+                cached.transform.m22 <= 0 || (best && cached.used <= best->used)) continue;
+        if (covers_visible(cached.coverage, bounds, t)) best = &cached;
     }
     if (!best) return S_FALSE;
     const float sx = t.m11 / best->transform.m11;
@@ -3771,8 +3775,9 @@ HRESULT Surface::draw_scene_preview(Scene* scene, const SpdfD2DTransform& t) noe
     if (!std::isfinite(sx) || !std::isfinite(sy)) return S_FALSE;
     // Scale the cached page origin as well as its pixels, preserving the
     // cursor anchor even when the raster has a fractional-pixel border.
+    const auto margin = best->sharp ? SHARP_ATLAS_MARGIN * 96.0f / best->dpi : 0.0f;
     d2d_context_->SetTransform(D2D1::Matrix3x2F(sx, 0, 0, sy,
-        t.dx - best->transform.dx * sx, t.dy - best->transform.dy * sy));
+        t.dx - (best->transform.dx + margin) * sx, t.dy - (best->transform.dy + margin) * sy));
     d2d_context_->DrawBitmap(best->bitmap.Get(), nullptr, 1.0f,
         D2D1_INTERPOLATION_MODE_LINEAR);
     best->used = ++raster_clock_;
@@ -3914,7 +3919,6 @@ HRESULT Surface::draw_cached_scene(Scene* scene, const SpdfD2DTransform& t,
 }
 
 constexpr UINT32 SHARP_TILE_SIZE = 512;
-constexpr UINT32 SHARP_ATLAS_MARGIN = 256;
 constexpr UINT32 SHARP_TILE_BORDER = 2;
 std::vector<UINT32> sharp_tile_edges(UINT32 size) {
     std::vector<UINT32> edges{0};
@@ -4141,6 +4145,13 @@ bool Surface::import_sharp() noexcept {
     raster.bytes = static_cast<std::uint64_t>(sharp_job_->width) * sharp_job_->height * 4;
     raster.used = ++raster_clock_;
     raster.sharp = true;
+    const auto& t = raster.transform;
+    if (t.m12 == 0 && t.m21 == 0 && t.m11 > 0 && t.m22 > 0) {
+        const auto margin = SHARP_ATLAS_MARGIN * 96.0f / raster.dpi;
+        const auto size = raster.bitmap->GetSize();
+        raster.coverage = D2D1::RectF((-margin - t.dx) / t.m11, (-margin - t.dy) / t.m22,
+            (size.width - margin - t.dx) / t.m11, (size.height - margin - t.dy) / t.m22);
+    }
     const auto budget = scene_cache_budget();
     scene_rasters_.erase(std::remove_if(scene_rasters_.begin(), scene_rasters_.end(),
         [](const SceneRaster& entry) { return entry.identity.expired(); }), scene_rasters_.end());

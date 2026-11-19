@@ -185,6 +185,27 @@ class ReaderViewTests(unittest.TestCase):
         self.view.clear()
         self.assertFalse(self.view._vector_viewport_pages)
 
+    def test_high_zoom_return_restores_packed_crop_without_starting_worker(self):
+        from pdfeditor.gpu_raster import VectorPage
+        from pdfeditor.render_memory import MIB, RenderMemory
+
+        self.view._apply_preview_zoom(8.0)
+        self.view.stop_rendering()
+        self.view._render_mode = "gpu"
+        self.view._vector_pages[0] = VectorPage(True, features=("image-downsample",))
+        region = self.view._gpu_visible_region(0, padded=True)
+        scale = self.view._vector_raster_scale()
+        detail = VectorPage(True, raster_scale=scale, viewport=region,
+                            compiled_packet=b"LFSC\x04\0\0\0" + b"x" * 131072)
+        with patch('pdfeditor.core.render_memory', return_value=RenderMemory(128*MIB, 2)):
+            self.doc.stash_gpu_viewport_scene(0, detail)
+        self.doc._gpu_packed_cache.poll(wait=True)
+        with patch.object(self.view, "_start_vector_refine_worker") as launch:
+            self.view._schedule_vector_refine()
+            self.view._refresh_next_vector_page()
+            launch.assert_not_called()
+        self.assertEqual(self.view._display_vector_scene(0), detail)
+
     def test_completed_viewport_scene_is_view_owned_and_can_be_revisited(self):
         from pdfeditor.gpu_raster import VectorPage
         self.view._apply_preview_zoom(8.0)
@@ -1465,14 +1486,13 @@ class ReaderViewTests(unittest.TestCase):
                     patch.object(self.view, "_draw_d2d_tiles") as draw_tiles:
                 self.view._draw_vector_page(0, base)
                 upload.assert_not_called()
-                draw_tiles.assert_called_once()
+                draw_tiles.assert_not_called()
         self.assertIs(self.view._d2d_vector_paths[0][3], retained)
-        self.assertIn(0, self.view._gpu_preview_tile_pages)
 
-    def test_complete_cpu_tiles_do_not_flash_partial_gpu_tiles_in_high_zoom(self):
+    def test_mixed_scene_displays_gpu_tiles_without_sharpening_cpu_preview(self):
         from pdfeditor.gpu_raster import VectorPage
 
-        scene = VectorPage(True, raster_scale=8, features=("gpu-mask",))
+        scene = VectorPage(True, raster_scale=8, features=("gpu-mask", "cpu-island"))
         retained = Mock(closed=False)
         surface = Mock()
         surface.draw_sharp_scene.return_value = False
@@ -1480,11 +1500,91 @@ class ReaderViewTests(unittest.TestCase):
         self.view._d2d_surface = surface
         self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
         with patch.object(self.view, "_vector_raster_scale", return_value=8), \
-                patch.object(self.view, "_draw_d2d_tiles", return_value=True) as tiles:
+                patch.object(self.view, "_draw_d2d_tiles") as tiles:
             self.view._draw_vector_page(0, scene)
-        tiles.assert_called_once_with(0, self.view._visible_scene_rect(), check_coverage=True)
-        surface.draw_sharp_partial.assert_not_called()
+        tiles.assert_not_called()
+        surface.draw_sharp_partial.assert_called_once()
         self.assertTrue(self.view._sharp_refine_timer.isActive())
+
+    def test_gpu_zoom_uses_cached_preview_and_gpu_tiles_without_cpu_sharpening(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        scene = VectorPage(True, raster_scale=8, features=("rgb-transparency-approximation",))
+        retained = Mock(closed=False)
+        previous = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = False
+        surface.draw_scene_preview.side_effect = (False, True)
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        self.view._standby_gpu_scene = (0, (scene, range(300), (), previous))
+        with patch.object(self.view, "_vector_raster_scale", return_value=8), \
+                patch.object(self.view, "_draw_d2d_page_preview") as thumbnail, \
+                patch.object(self.view, "_draw_d2d_tiles") as cpu_tiles:
+            self.view._draw_vector_page(0, scene)
+        thumbnail.assert_not_called()
+        cpu_tiles.assert_not_called()
+        surface.draw_scene_preview.assert_called_with(previous, self.view._retained_page_transform(0))
+        surface.draw_sharp_partial.assert_called_once()
+
+    def test_pending_gpu_scene_skips_cpu_tiles_until_preparation_fails(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        view = self.view
+        view._d2d_requested = True
+        view._vector_pages[0] = VectorPage(False, reason="GPU scene awaiting first frame")
+        view._vector_refine_pages = [0]
+        view._plan_tiles()
+        self.assertFalse(view._pending)
+        view._finish_failed_vector_refine(0, "unsupported test scene")
+        view._plan_tiles()
+        self.assertTrue(view._pending)
+
+    def test_return_to_retained_crop_draws_gpu_frame_before_cpu_preview(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        view = self.view
+        view._apply_preview_zoom(8.0)
+        view.stop_rendering()
+        previous = VectorPage(True, raster_scale=view._vector_raster_scale(),
+                              viewport=view._gpu_visible_region(0, padded=True))
+        other = VectorPage(True, raster_scale=previous.raster_scale, viewport=(0, 0, 1, 1))
+        old_native = (previous, range(300), (), Mock(closed=False))
+        new_native = (other, range(300), (), Mock(closed=False))
+        surface = Mock()
+        view._d2d_surface = surface
+        view._vector_viewport_pages[0] = other
+        view._d2d_vector_paths[0] = new_native
+        view._standby_gpu_scene = (0, old_native)
+        view._vector_refine_pages = [0]
+        surface.draw_sharp_scene.return_value = False
+        self.assertIsNone(view._draw_standby_gpu_scene(0))
+        self.assertEqual(view._standby_gpu_scene, (0, old_native))
+
+        surface.draw_sharp_scene.return_value = True
+        with patch.object(view, "_draw_vector_page") as draw_vector, \
+                patch.object(view, "_draw_d2d_tiles") as draw_cpu_tiles:
+            view._paint_d2d()
+            draw_vector.assert_not_called()
+            draw_cpu_tiles.assert_not_called()
+        self.assertIs(view._vector_viewport_pages[0], previous)
+        self.assertIs(view._d2d_vector_paths[0], old_native)
+        self.assertFalse(view._vector_refine_pages)
+        old_native[3].close.assert_not_called()
+
+    def test_reduced_native_memory_budget_drops_standby_crop(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        view = self.view
+        crop = VectorPage(True, raster_scale=8, viewport=(0, 0, 100, 100))
+        retained = Mock()
+        view._standby_gpu_scene = (0, (crop, range(300), (), retained))
+        with patch('pdfeditor.reader_prefetch.vector_gpu_budget', return_value=0), \
+                patch.object(self.doc, 'stash_gpu_viewport_scene') as stash:
+            view._trim_nearby_native_pages()
+        stash.assert_called_once_with(0, crop)
+        retained.close.assert_called_once()
+        self.assertIsNone(view._standby_gpu_scene)
 
     def test_gpu_takeover_releases_only_the_uploaded_preview_tiles(self):
         from pdfeditor.gpu_raster import VectorPage
@@ -1492,7 +1592,6 @@ class ReaderViewTests(unittest.TestCase):
         view = self.view
         view._d2d_surface = Mock()
         view._vector_pages[0] = VectorPage(True)
-        view._gpu_preview_tile_pages.add(0)
         key = (0, 4.0, 0, 0)
         uploaded = Mock()
         view._d2d_tiles[key] = (1, uploaded)

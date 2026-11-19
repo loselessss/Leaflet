@@ -11,7 +11,7 @@ import zlib
 
 MAX_DECODED = 512 * 1024 * 1024
 # Bump when extraction semantics or persisted fields change, not for UI releases.
-SCENE_FORMAT_VERSION = 26
+SCENE_FORMAT_VERSION = 27
 THUMBNAIL_ONLY_LIMIT = 16 * 1024 * 1024
 
 

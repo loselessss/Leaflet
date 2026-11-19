@@ -32,7 +32,8 @@ class GpuWorkerInputTests(unittest.TestCase):
         expected = document.render(index, 1)
         with fitz.open(target) as pdf:
             pix = pdf[worker_page].get_pixmap(alpha=False)
-            self.assertEqual(expected, (pix.width, pix.height, pix.stride, pix.samples))
+            self.assertEqual(expected[:3], (pix.width, pix.height, pix.stride))
+            self.assertTrue(expected[3] == pix.samples, "worker snapshot pixels differ")
 
     def test_private_input_survives_document_close_and_preserves_page(self):
         doc = Document(str(self.source), read_only=True, isolated=True)
@@ -72,6 +73,25 @@ class GpuWorkerInputTests(unittest.TestCase):
                 page = doc.write_gpu_page_snapshot(1, target)
             self.assertEqual(page, 0)
             self.assert_pixels(doc, 1, target, page)
+        finally:
+            doc.close()
+
+    def test_export_preserves_indirect_page_blending_space(self):
+        source = self.root / "cmyk.pdf"
+        with fitz.open(self.source) as pdf:
+            group = pdf.get_new_xref()
+            pdf.update_object(group, '<< /S /Transparency /CS /DeviceCMYK /I true >>')
+            pdf.xref_set_key(pdf[1].xref, 'Group', f'{group} 0 R')
+            pdf.save(source)
+        doc = Document(str(source), read_only=True, isolated=True)
+        try:
+            target = self.root / "transparency.pdf"
+            with patch("pdfeditor.core.os.link", side_effect=OSError("unsupported")):
+                self.assertEqual(doc.write_gpu_page_snapshot(1, target), 0)
+            self.assert_pixels(doc, 1, target, 0)
+            with fitz.open(target) as snapshot:
+                self.assertEqual(snapshot.xref_get_key(snapshot[0].xref, 'Group/CS'),
+                                 ('name', '/DeviceCMYK'))
         finally:
             doc.close()
 

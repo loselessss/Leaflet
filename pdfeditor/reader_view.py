@@ -16,7 +16,7 @@ import tempfile
 import time
 
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap, QRegion,
+from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap,
                          QTransform)
 from PyQt5.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidget
 
@@ -42,6 +42,9 @@ VECTOR_SCENE_REFINE_DELAY_MS = 120
 ZOOM_ANIMATION_DURATION_SECONDS = 0.12
 ZOOM_ANIMATION_FRAME_MS = 16
 GPU_PAN_IDLE_MS = 60
+CPU_RASTER_SCENE_FEATURES = frozenset(("raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"))
+GPU_PENDING_SCENE_REASONS = frozenset(("GPU scene awaiting first frame",
+    "GPU scene deferred by complexity probe", "GPU scene time budget exceeded"))
 _CURRENT_ZOOM_ANCHOR = object()
 
 
@@ -149,8 +152,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._appearance_controller = None
         self._vector_pages = {}
         self._vector_viewport_pages = {}
-        self._gpu_preview_tile_pages = set()
         self._d2d_vector_paths = {}
+        self._standby_gpu_scene = None
+        self._native_retention_budget = 0
         self._reported_render_device = None
         self._rasterized_pages = {}
         self._tile_timer = QTimer(self)
@@ -496,9 +500,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                    if region is not None else (generation, page, self._vector_refine_scale))
             deferred = (
                 self._render_mode in ("auto", "gpu") and not scene.supported and
-                scene.reason in ("GPU scene awaiting first frame",
-                                 "GPU scene deferred by complexity probe",
-                                 "GPU scene time budget exceeded") and
+                scene.reason in GPU_PENDING_SCENE_REASONS and
                 key not in self._vector_refine_attempted)
             image_refine = (
                 scene.supported and "image-downsample" in scene.features and
@@ -529,11 +531,28 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 return
         page = self._vector_refine_pages.pop(0)
         scene = self._vector_pages.get(page)
+        if self._render_mode in ("auto", "gpu") and self._vector_refine_scale >= 4:
+            visible = self._gpu_visible_region(page)
+            current = self._vector_viewport_pages.get(page)
+            if (current is None or current.raster_scale < self._vector_refine_scale or
+                    not self._viewport_scene_covers(page, current)):
+                if self._gpu_pan_idle_timer.isActive():
+                    # Decompress at idle, just like the subsequent GPU upload.
+                    if self._document.packed_gpu_viewport_scene(page, self._vector_refine_scale, visible):
+                        self._vector_refine_pages.insert(0, page)
+                        self._vector_refine_timer.start(self._gpu_pan_idle_timer.remainingTime() + 1)
+                        return
+                else:
+                    restored = self._document.packed_gpu_viewport_scene(
+                        page, self._vector_refine_scale, visible, restore=True)
+                    if restored is not None:
+                        self._install_viewport_scene(page, restored)
+                        self.viewport().update()
+                        if self._vector_refine_pages:
+                            self._vector_refine_timer.start(0)
+                        return
         if self._render_mode in ("auto", "gpu") and scene is not None and (
-                (not scene.supported and scene.reason in (
-                    "GPU scene awaiting first frame",
-                    "GPU scene deferred by complexity probe",
-                    "GPU scene time budget exceeded")) or
+                (not scene.supported and scene.reason in GPU_PENDING_SCENE_REASONS) or
                 (scene.supported and "image-downsample" in scene.features and
                  scene.raster_scale < self._vector_refine_scale)):
             self._start_vector_refine_worker(page)
@@ -658,6 +677,57 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         if self._vector_refine_process is None and not self._prefetch_jobs:
             self._vector_refine_poll_timer.stop()
 
+    def _install_viewport_scene(self, page, scene, *, native=None):
+        from .core import _gpu_scene_upload_cost
+
+        previous = self._vector_viewport_pages.get(page)
+        cached = self._d2d_vector_paths.pop(page, None)
+        if previous is not None and previous is not scene:
+            if (cached is not None and cached[0] is previous and cached[3] is not None
+                    and _gpu_scene_upload_cost(previous) <= self._native_retention_budget):
+                self._release_standby_gpu_scene(archive=True)
+                self._standby_gpu_scene = (page, cached)
+                self._trim_nearby_native_pages()
+                cached = None
+            else:
+                self._document.stash_gpu_viewport_scene(page, previous)
+        elif (previous is None and self._standby_gpu_scene is None and cached is not None
+              and cached[0].viewport is None and cached[3] is not None
+              and _gpu_scene_upload_cost(cached[0]) <= self._native_retention_budget):
+            # Keep the already drawn whole-page preview until the first crop is sharp.
+            self._standby_gpu_scene = (page, cached)
+            self._trim_nearby_native_pages()
+            cached = None
+        if cached is not None:
+            self._close_native_vector_scene(cached)
+        self._vector_viewport_pages[page] = scene
+        if native is not None:
+            self._d2d_vector_paths[page] = native
+
+    def _draw_standby_gpu_scene(self, page):
+        standby = self._standby_gpu_scene
+        if (standby is None or standby[0] != page or self._zoom_animation_timer.isActive()
+                or self._document_generation != self._document.render_generation):
+            return None
+        cached = standby[1]
+        scene = cached[0]
+        scale = self._vector_raster_scale()
+        active = self._vector_viewport_pages.get(page)
+        if (active is not None and active.raster_scale >= scale
+                and self._viewport_scene_covers(page, active)):
+            return None
+        if scene.raster_scale < scale or not self._viewport_scene_covers(page, scene):
+            return None
+        if not self._d2d_surface.draw_sharp_scene(cached[3], self._retained_page_transform(page)):
+            return None
+        # Keep the exact same GPU output on a return pan. Drawing a CPU tile
+        # first would replace even already-sharp pixels with different colors.
+        self._standby_gpu_scene = None
+        self._install_viewport_scene(page, scene, native=cached)
+        if page in self._vector_refine_pages:
+            self._vector_refine_pages.remove(page)
+        return scene
+
     def _poll_vector_refine_job(self, process, job):
         if process.poll() is None:
             if job.get("speculative"):
@@ -763,8 +833,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 previous = self._vector_viewport_pages.get(job["page"])
                 if (self._viewport_scene_covers(job["page"], scene) or
                         not self._viewport_scene_covers(job["page"], previous)):
-                    self._discard_native_vector_page(job["page"])
-                    self._vector_viewport_pages[job["page"]] = scene
+                    self._install_viewport_scene(job["page"], scene)
             else:
                 self._discard_native_vector_page(job["page"])
                 self._vector_pages[job["page"]] = scene
@@ -788,13 +857,12 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         from .gpu_raster import VectorPage
         previous = self._vector_pages.get(page)
         if previous is None or not previous.supported:
-            if reason in ("GPU scene awaiting first frame",
-                          "GPU scene deferred by complexity probe",
-                          "GPU scene time budget exceeded"):
+            if reason in GPU_PENDING_SCENE_REASONS:
                 # This job has finished; its failure must not look pending.
                 reason = "GPU scene preparation failed: " + reason
             self._vector_pages[page] = VectorPage(
                 False, reason=(reason or "GPU scene preparation failed")[:1024])
+            self._schedule_refine()
             self.viewport().update()
 
     def _stop_vector_refine_worker(self):
@@ -857,7 +925,6 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._notify_render_device()
 
     def _release_d2d_surface(self, *, disable=False):
-        self._gpu_preview_tile_pages.clear()
         self._release_night_masks()
         self._cancel_sharp_refine()
         self._sharp_attempted.clear()
@@ -865,15 +932,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             bitmap.close()
         for _key, bitmap in tuple(self._d2d_tiles.values()):
             bitmap.close()
-        for _scene, _draws, resources, retained in tuple(
-                self._d2d_vector_paths.values()):
-            if retained is not None:
-                retained.close()
-            for path in resources:
-                path.close()
+        self._clear_native_vector_scenes(archive_standby=True)
         self._d2d_previews.clear()
         self._d2d_tiles.clear()
-        self._d2d_vector_paths.clear()
         if self._d2d_surface is not None:
             self._d2d_surface.close()
             self._d2d_surface = None
@@ -886,13 +947,31 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
 
     def _discard_native_vector_page(self, page):
         cached = self._d2d_vector_paths.pop(page, None)
-        if cached is None:
-            return
+        if cached is not None:
+            self._close_native_vector_scene(cached)
+
+    @staticmethod
+    def _close_native_vector_scene(cached):
         _scene, _draws, resources, retained = cached
         if retained is not None:
             retained.close()
         for resource in resources:
             resource.close()
+
+    def _release_standby_gpu_scene(self, *, archive=False):
+        if self._standby_gpu_scene is not None:
+            page, cached = self._standby_gpu_scene
+            self._standby_gpu_scene = None
+            if (archive and cached[0].viewport is not None and self._document is not None
+                    and self._document_generation == self._document.render_generation):
+                self._document.stash_gpu_viewport_scene(page, cached[0])
+            self._close_native_vector_scene(cached)
+
+    def _clear_native_vector_scenes(self, *, archive_standby=False):
+        self._release_standby_gpu_scene(archive=archive_standby)
+        for cached in self._d2d_vector_paths.values():
+            self._close_native_vector_scene(cached)
+        self._d2d_vector_paths.clear()
 
     @staticmethod
     def _bitmap_bytes(pixmap):
@@ -945,10 +1024,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._d2d_vector_paths[page] = cached
             return cached[1]
         if cached is not None:
-            if cached[3] is not None:
-                cached[3].close()
-            for path in cached[2]:
-                path.close()
+            self._close_native_vector_scene(cached)
         if scene.compiled_packet:
             width, height = (self._page_sizes[page] if page in self._page_sizes
                              else self._document.page_size(page))
@@ -1185,18 +1261,14 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         scale = self._vector_raster_scale()
         cached = self._d2d_vector_paths.get(page)
         animating = self._zoom_animation_timer.isActive()
-        if animating and cached is not None and cached[3] is not None:
-            if (cached[0] is scene and self._d2d_surface.draw_scene_preview(
-                    cached[3], self._retained_page_transform(page))):
-                return
+        if animating and self._draw_cached_gpu_preview(page):
+            return
         if page in self._previews and (
                 (animating and (cached is None or cached[0] is not scene or len(cached[1]) >= 256))
                 or (self._gpu_pan_idle_timer.isActive() and
                     (cached is None or cached[0] is not scene))):
-            self._draw_d2d_page_preview(page)
-            if not animating and scale >= 4:
-                self._gpu_preview_tile_pages.add(page)
-                self._draw_d2d_tiles(page, self._visible_scene_rect())
+            if animating or not self._draw_cached_gpu_preview(page):
+                self._draw_d2d_page_preview(page)
             return
         if (scale >= 4 and cached is not None and getattr(cached[0], "viewport", None) is not None
                 and cached[0] is not scene and page in self._previews
@@ -1205,9 +1277,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             # A long pan can leave the current crop while the next crop is
             # compiling. Keep the old GPU resources and avoid uploading a
             # whole-page scene that would only display its preview.
-            self._draw_d2d_page_preview(page)
-            self._gpu_preview_tile_pages.add(page)
-            self._draw_d2d_tiles(page, self._visible_scene_rect())
+            if not self._draw_cached_gpu_preview(page):
+                self._draw_d2d_page_preview(page)
             return
         draws = self._native_vector_draws(page, scene)
         retained = self._d2d_vector_paths[page][3]
@@ -1231,22 +1302,14 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     # Render the final-scale atlas once in the GPU worker.
                     # Replaying a coarse page here would delay that job and
                     # repeat the poster's expensive transparency composition.
-                    preview = self._d2d_surface.draw_scene_preview(retained, transform)
+                    preview = self._draw_cached_gpu_preview(page)
                     if not preview and {"gpu-mask", "gpu-backdrop",
                             "rgb-transparency-approximation", "cpu-island"}.intersection(scene.features):
                         if page in self._previews:
                             self._draw_d2d_page_preview(page)
                             preview = True
                     if preview:
-                        tiles_cover_view = False
-                        if scale >= 4:
-                            self._gpu_preview_tile_pages.add(page)
-                            tiles_cover_view = self._draw_d2d_tiles(
-                                page, self._visible_scene_rect(), check_coverage=True)
-                        # Once the CPU tiles cover the view, present them until
-                        # the GPU can replace them together in a single frame.
-                        if not tiles_cover_view:
-                            self._d2d_surface.draw_sharp_partial(retained, transform)
+                        self._d2d_surface.draw_sharp_partial(retained, transform)
                         if fresh and not image_refining and not self._sharp_poll_timer.isActive():
                             self._sharp_refine_timer.start(0)
                         return
@@ -1364,19 +1427,28 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 rect.left(), rect.top(), rect.right(), rect.bottom(),
                 EDIT_BOX_COLOR.rgba(), 1.0 / max(0.1, self.zoom))
 
+    def _draw_cached_gpu_preview(self, page):
+        transform = self._retained_page_transform(page)
+        standby = self._standby_gpu_scene
+        candidates = (self._d2d_vector_paths.get(page), standby[1] if standby and standby[0] == page else None)
+        for cached in candidates:
+            if cached is None or cached[3] is None:
+                continue
+            scene = cached[0]
+            if scene.viewport is not None and not self._viewport_scene_covers(page, scene):
+                continue
+            if self._d2d_surface.draw_scene_preview(cached[3], transform):
+                return True
+        return False
+
     def _draw_d2d_page_preview(self, page):
         self._set_page_transform(self._page_transforms[page])
         width, height = self._page_sizes[page]
         bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
         self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
 
-    def _draw_d2d_tiles(self, page, exposed, *, check_coverage=False):
+    def _draw_d2d_tiles(self, page, exposed):
         transform = self._page_transforms[page]
-        uncovered = None
-        if check_coverage:
-            width, height = self._page_sizes[page]
-            bounds = transform.mapRect(QRectF(0, 0, width, height))
-            uncovered = QRegion(bounds.intersected(exposed).toAlignedRect())
         for key, (pixmap, region) in self._tiles.items():
             if key not in self._wanted or key[0] != page:
                 continue
@@ -1387,13 +1459,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             tile = self._native_bitmap(self._d2d_tiles, key, pixmap)
             self._d2d_surface.draw_bitmap(
                 tile, region.left(), region.top(), region.right(), region.bottom())
-            if uncovered is not None:
-                uncovered -= QRegion(visible.toAlignedRect())
-        return uncovered is not None and uncovered.isEmpty()
 
     def _paint_d2d(self):
-        previous_tile_pages = self._gpu_preview_tile_pages
-        self._gpu_preview_tile_pages = set()
         ratio = max(1.0, self.viewport().devicePixelRatioF())
         size = (self.viewport().size(), ratio)
         if size != self._d2d_size:
@@ -1413,17 +1480,19 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._set_page_transform(transform)
             width, height = self._page_sizes[page]
             night_plan = self._night_plan(page, preview)
-            vector_scene = self._display_vector_scene(page)
+            standby_scene = self._draw_standby_gpu_scene(page)
+            vector_scene = standby_scene if standby_scene is not None else self._display_vector_scene(page)
             if vector_scene is not None and vector_scene.supported:
-                self._draw_vector_page(page, vector_scene)
-                rasterized[page] = ("CPU+GPU" if
-                    {"raster-shading", "cpu-island", "raster-pattern", "text-raster-fallback"}.intersection(vector_scene.features)
-                    else "GPU")
+                if standby_scene is None:
+                    self._draw_vector_page(page, vector_scene)
+                rasterized[page] = ("GPU" if CPU_RASTER_SCENE_FEATURES.isdisjoint(vector_scene.features)
+                                    else "CPU+GPU")
             else:
                 rasterized[page] = "CPU"
                 bitmap = self._native_bitmap(self._d2d_previews, page, preview)
                 self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
-                self._draw_d2d_tiles(page, exposed)
+                if self._cpu_tiles_needed(page, vector_scene):
+                    self._draw_d2d_tiles(page, exposed)
             if night_plan is not None:
                 mask = self._native_bitmap(self._night_gpu_masks, page, night_plan.mask)
                 night_pages.append((mask, self._retained_page_transform(page), width, height))
@@ -1439,15 +1508,11 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._set_page_transform(self._page_transforms[page])
             self._draw_d2d_overlays()
         self._d2d_surface.end_frame()
-        finished_previews = previous_tile_pages - self._gpu_preview_tile_pages
-        if finished_previews:
-            # Keep the reusable Qt tiles. Release their GPU copies when the
-            # retained scene takes over so the same pixels don't stay twice.
+        if self._d2d_tiles:
+            # Release CPU tile uploads after the page switches to vector drawing.
             for key in tuple(self._d2d_tiles):
-                if key[0] in finished_previews and rasterized.get(key[0]) != "CPU":
+                if rasterized.get(key[0]) in ("GPU", "CPU+GPU"):
                     self._d2d_tiles.pop(key)[1].close()
-        if self._gpu_preview_tile_pages - previous_tile_pages:
-            self._schedule_refine(40)
         self._rasterized_pages = rasterized
         self._notify_render_device()
 
@@ -1523,13 +1588,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._d2d_previews.clear()
             self._vector_pages.clear()
             self._vector_viewport_pages.clear()
-            for _scene, _draws, resources, retained in tuple(
-                    self._d2d_vector_paths.values()):
-                if retained is not None:
-                    retained.close()
-                for path in resources:
-                    path.close()
-            self._d2d_vector_paths.clear()
+            self._clear_native_vector_scenes()
             self._clear_tiles()
         self._document = document
         self._document_generation = generation
@@ -1782,6 +1841,20 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         if self._vector_raster_scale() >= 4:
             self._schedule_vector_refine()
 
+    def _cpu_tiles_needed(self, page, scene):
+        if not self._d2d_requested or scene is None:
+            return True
+        if scene.supported:
+            return False
+        if scene.reason not in GPU_PENDING_SCENE_REASONS:
+            return True
+        if getattr(self, "_gpu_initial_frame_pending", False) or page in self._vector_refine_pages:
+            return False
+        job = self._vector_refine_job
+        return not (job and not job.get("speculative") and job["page"] == page
+                    and job["document"] is self._document
+                    and job["generation"] == self._document.render_generation)
+
     def _plan_tiles(self):
         self._pending.clear()
         self._wanted.clear()
@@ -1800,9 +1873,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             if visible.isEmpty():
                 continue
             vector_scene = self._display_vector_scene(page)
-            if self._d2d_requested and vector_scene is not None and vector_scene.supported:
-                if page not in self._gpu_preview_tile_pages:
-                    continue
+            if not self._cpu_tiles_needed(page, vector_scene):
+                continue
             inverse, _valid = self._page_transforms[page].inverted()
             region = inverse.mapRect(visible)
             local = QRectF(region.x() * scale, region.y() * scale,
@@ -1830,9 +1902,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             return
         key = self._pending.pop(0)
         page, scale, x, y = key
-        if page not in self._page_sizes or (
-                self._d2d_requested and page not in self._gpu_preview_tile_pages
-                and getattr(self._display_vector_scene(page), "supported", False)):
+        if page not in self._page_sizes or not self._cpu_tiles_needed(page, self._display_vector_scene(page)):
             if self._pending:
                 self._tile_timer.start(1)
             return
@@ -1930,13 +2000,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         for _identity, bitmap in tuple(self._d2d_previews.values()):
             bitmap.close()
         self._d2d_previews.clear()
-        for _scene, _draws, resources, retained in tuple(
-                self._d2d_vector_paths.values()):
-            if retained is not None:
-                retained.close()
-            for path in resources:
-                path.close()
-        self._d2d_vector_paths.clear()
+        self._clear_native_vector_scenes()
         self._page_sizes.clear()
         self._page_transforms.clear()
         self._rotations.clear()

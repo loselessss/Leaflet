@@ -174,11 +174,20 @@ fn gradient_input(p:&mut Reader<'_>,scene:&mut Scene,index:&mut HashMap<u64,Vec<
         let c=end;let px=point(coords[3]+r,coords[4]);let py=point(coords[3],coords[4]+r);
         let x=[px[0]-c[0],px[1]-c[1]];let y=[py[0]-c[0],py[1]-c[1]];
         let at=|a:f64,b:f64|[c[0]+x[0]*a+y[0]*b,c[1]+x[1]*a+y[1]*b];
-        let k=0.5522847498307936;let mut path=Vec::new();path_segment(&mut path,1,&[at(1.,0.)]);
-        for controls in [[at(1.,k),at(k,1.),at(0.,1.)],[at(-k,1.),at(-1.,k),at(-1.,0.)],
-                         [at(-1.,-k),at(-k,-1.),at(0.,-1.)],[at(k,-1.),at(1.,-k),at(1.,0.)]]{
-            path_segment(&mut path,3,&controls);
-        }path.push(4);(path,Some([x[0].hypot(x[1]),y[0].hypot(y[1])]))
+        let path = if extend[1] {
+            // A clamped Direct2D brush already supplies the last stop outside
+            // the ellipse. Keep the page/clip bounds instead of cutting it off.
+            polygon(&[[b[0],b[1]],[b[2],b[1]],[b[2],b[3]],[b[0],b[3]]])
+        } else {
+            let k=0.5522847498307936;let mut path=Vec::new();path_segment(&mut path,1,&[at(1.,0.)]);
+            for controls in [[at(1.,k),at(k,1.),at(0.,1.)],[at(-k,1.),at(-1.,k),at(-1.,0.)],
+                             [at(-1.,-k),at(-k,-1.),at(0.,-1.)],[at(k,-1.),at(1.,-k),at(1.,0.)]]{
+                path_segment(&mut path,3,&controls);
+            }
+            path.push(4);
+            path
+        };
+        (path,Some([x[0].hypot(x[1]),y[0].hypot(y[1])]))
     }else{return Err(invalid("unknown native gradient"));};
     validate_path(&path)?;
     let clip=polygon(&[[b[0],b[1]],[b[2],b[1]],[b[2],b[3]],[b[0],b[3]]]);
