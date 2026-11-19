@@ -6,6 +6,7 @@ One CPU tile per timer tick yields between fallback rendering requests.
 """
 
 from collections import OrderedDict
+from contextlib import contextmanager
 import math
 import os
 import pickle
@@ -15,7 +16,7 @@ import tempfile
 import time
 
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap,
+from PyQt5.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPixmap, QRegion,
                          QTransform)
 from PyQt5.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QOpenGLWidget, QWidget
 
@@ -40,6 +41,7 @@ GPU_SCENE_WORKER_TIMEOUT_SECONDS = 12.0
 VECTOR_SCENE_REFINE_DELAY_MS = 120
 ZOOM_ANIMATION_DURATION_SECONDS = 0.12
 ZOOM_ANIMATION_FRAME_MS = 16
+GPU_PAN_IDLE_MS = 60
 _CURRENT_ZOOM_ANCHOR = object()
 
 
@@ -178,12 +180,17 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._poll_vector_refine_worker)
         self._zoom_animation_timer = QTimer(self)
         self._zoom_animation_timer.setSingleShot(True)
+        self._zoom_animation_timer.setTimerType(Qt.PreciseTimer)
         self._zoom_animation_timer.timeout.connect(self._animate_zoom_step)
         self._zoom_animation_start = self.zoom
         self._zoom_animation_target = self.zoom
         self._zoom_animation_position = None
         self._zoom_animation_anchor = None
         self._zoom_animation_started = 0.0
+        self._gpu_pan_idle_timer = QTimer(self)
+        self._gpu_pan_idle_timer.setSingleShot(True)
+        self._gpu_pan_idle_timer.setInterval(GPU_PAN_IDLE_MS)
+        self._gpu_pan_idle_timer.timeout.connect(lambda: self.viewport().update())
         self._sharp_refine_timer = QTimer(self)
         self._sharp_refine_timer.setSingleShot(True)
         self._sharp_refine_timer.timeout.connect(self._start_sharp_refine)
@@ -459,7 +466,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     job["page"] == page and not job.get("speculative") and
                     job["scale"] == self._vector_raster_scale())
 
-    def _schedule_vector_refine(self, delay=VECTOR_SCENE_REFINE_DELAY_MS):
+    def _schedule_vector_refine(self, delay=VECTOR_SCENE_REFINE_DELAY_MS, *, guard=True):
         remaining = self._vector_refine_timer.remainingTime()
         if remaining >= 0:
             delay = min(delay, remaining)  # Continuous dragging must not starve preparation.
@@ -470,20 +477,21 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         if self._document is None or not self.isVisible():
             return
         exposed = self._visible_scene_rect()
+        generation = getattr(self._document, "render_generation", 0)
         candidates = []
         for page, _preview, rect in self.canvas._pages:
             scene = self._vector_pages.get(page)
             if scene is None:
                 continue
-            generation = getattr(self._document, "render_generation", 0)
-            region = (self._gpu_visible_region(page, padded=True)
-                      if self._vector_refine_scale >= 4 else None)
-            if self._vector_refine_scale >= 4 and region is None:
-                continue
             detail = self._vector_viewport_pages.get(page)
             if (detail is not None and detail.raster_scale >= self._vector_refine_scale
-                    and self._viewport_scene_covers(page, detail, guard=True)):
+                    and self._viewport_scene_covers(page, detail, guard=guard)):
                 continue
+            region = None
+            if self._vector_refine_scale >= 4:
+                region = self._gpu_visible_region(page, padded=True)
+                if region is None:
+                    continue
             key = ((generation, page, self._vector_refine_scale, region)
                    if region is not None else (generation, page, self._vector_refine_scale))
             deferred = (
@@ -504,7 +512,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._vector_refine_timer.start(max(0, int(delay)))
 
     def _refresh_next_vector_page(self):
-        if getattr(self, "_gpu_initial_frame_pending", False):
+        if (getattr(self, "_gpu_initial_frame_pending", False)
+                or self._zoom_animation_timer.isActive()):
             # Painting will rearm the queue; do not spin while hidden/occluded.
             return
         if not self._vector_refine_pages or \
@@ -693,6 +702,12 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         else:
             if not reader.done():
                 return
+            if (not job.get("speculative") and
+                    (self._zoom_animation_timer.isActive() or self._gpu_pan_idle_timer.isActive())):
+                # A completed crop replaces the native GPU scene on paint.
+                # Keep it on the reader thread until input pauses.
+                self._vector_refine_poll_timer.start(30)
+                return
             scene, failure_reason = reader.take()
         if self._prefetch_jobs.get(job.get("page")) is job:
             self._prefetch_jobs.pop(job["page"])
@@ -762,10 +777,10 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             # A failed image replacement must also release the old scene for
             # sharp rendering; otherwise it can remain a preview indefinitely.
             self.viewport().update()
-        if self._vector_refine_pages:
-            self._vector_refine_timer.start(0)
-
-        self._schedule_vector_refine()
+        # A pan during extraction may have used up some of the new crop's
+        # margin. If it still covers the screen, finish drawing it before
+        # preparing another crop. The next pan will check the margin again.
+        self._schedule_vector_refine(guard=False)
         self._schedule_page_prefetch()
 
     def _finish_failed_vector_refine(self, page, reason=None):
@@ -1169,17 +1184,28 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         page_transform = self._page_transforms[page]
         scale = self._vector_raster_scale()
         cached = self._d2d_vector_paths.get(page)
-        if (scale == 4 and cached is not None and getattr(cached[0], "viewport", None) is not None
+        animating = self._zoom_animation_timer.isActive()
+        if animating and cached is not None and cached[3] is not None:
+            if (cached[0] is scene and self._d2d_surface.draw_scene_preview(
+                    cached[3], self._retained_page_transform(page))):
+                return
+        if page in self._previews and (
+                (animating and (cached is None or cached[0] is not scene or len(cached[1]) >= 256))
+                or (self._gpu_pan_idle_timer.isActive() and
+                    (cached is None or cached[0] is not scene))):
+            self._draw_d2d_page_preview(page)
+            if not animating and scale >= 4:
+                self._gpu_preview_tile_pages.add(page)
+                self._draw_d2d_tiles(page, self._visible_scene_rect())
+            return
+        if (scale >= 4 and cached is not None and getattr(cached[0], "viewport", None) is not None
                 and cached[0] is not scene and page in self._previews
-                and not self._zoom_animation_timer.isActive()
+                and not animating
                 and self._image_refinement_pending(page, scene)):
             # A long pan can leave the current crop while the next crop is
             # compiling. Keep the old GPU resources and avoid uploading a
             # whole-page scene that would only display its preview.
-            width, height = self._page_sizes[page]
-            self._set_page_transform(page_transform)
-            bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
-            self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+            self._draw_d2d_page_preview(page)
             self._gpu_preview_tile_pages.add(page)
             self._draw_d2d_tiles(page, self._visible_scene_rect())
             return
@@ -1187,18 +1213,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         retained = self._d2d_vector_paths[page][3]
         if retained is not None:
             transform = self._retained_page_transform(page)
-            if self._zoom_animation_timer.isActive():
-                if self._d2d_surface.draw_scene_preview(retained, transform):
-                    return
-                # A high-zoom raster may cover only the old viewport. Keep the
-                # full-page preview visible if zooming out exposes new content.
-                if len(draws) >= 256 and page in self._previews:
-                    width, height = self._page_sizes[page]
-                    self._set_page_transform(page_transform)
-                    bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
-                    self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
-                    return
-            elif self._d2d_surface.draw_sharp_scene(retained, transform):
+            if not animating and self._d2d_surface.draw_sharp_scene(retained, transform):
                 # Refresh the off-screen margin before scrolling exposes a
                 # gap. Native code declines work while the guard still fits.
                 key = (retained, transform, self._d2d_size)
@@ -1207,7 +1222,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                         not self._sharp_refine_timer.isActive()):
                     self._sharp_refine_timer.start(0)
                 return
-            if not self._zoom_animation_timer.isActive() and len(draws) >= 256:
+            if not animating and len(draws) >= 256:
                 key = (retained, transform, self._d2d_size)
                 fresh = self._sharp_attempted.get(page) != key
                 waiting = self._sharp_pending_key == (page, key)
@@ -1220,23 +1235,25 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                     if not preview and {"gpu-mask", "gpu-backdrop",
                             "rgb-transparency-approximation", "cpu-island"}.intersection(scene.features):
                         if page in self._previews:
-                            width, height = self._page_sizes[page]
-                            self._set_page_transform(page_transform)
-                            bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
-                            self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+                            self._draw_d2d_page_preview(page)
                             preview = True
                     if preview:
-                        if scale == 4:
+                        tiles_cover_view = False
+                        if scale >= 4:
                             self._gpu_preview_tile_pages.add(page)
-                            self._draw_d2d_tiles(page, self._visible_scene_rect())
-                        self._d2d_surface.draw_sharp_partial(retained, transform)
+                            tiles_cover_view = self._draw_d2d_tiles(
+                                page, self._visible_scene_rect(), check_coverage=True)
+                        # Once the CPU tiles cover the view, present them until
+                        # the GPU can replace them together in a single frame.
+                        if not tiles_cover_view:
+                            self._d2d_surface.draw_sharp_partial(retained, transform)
                         if fresh and not image_refining and not self._sharp_poll_timer.isActive():
                             self._sharp_refine_timer.start(0)
                         return
             self._d2d_surface.draw_scene(retained, transform, reuse_groups=True)
-            if not self._zoom_animation_timer.isActive():
+            if not animating:
                 self._d2d_surface.draw_sharp_partial(retained, transform)
-            if not self._zoom_animation_timer.isActive() and not self._sharp_poll_timer.isActive():
+            if not animating and not self._sharp_poll_timer.isActive():
                 if not self._sharp_refine_timer.isActive():
                     self._sharp_refine_timer.start(90)
             return
@@ -1347,14 +1364,32 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
                 rect.left(), rect.top(), rect.right(), rect.bottom(),
                 EDIT_BOX_COLOR.rgba(), 1.0 / max(0.1, self.zoom))
 
-    def _draw_d2d_tiles(self, page, exposed):
+    def _draw_d2d_page_preview(self, page):
+        self._set_page_transform(self._page_transforms[page])
+        width, height = self._page_sizes[page]
+        bitmap = self._native_bitmap(self._d2d_previews, page, self._previews[page])
+        self._d2d_surface.draw_bitmap(bitmap, 0, 0, width, height)
+
+    def _draw_d2d_tiles(self, page, exposed, *, check_coverage=False):
         transform = self._page_transforms[page]
+        uncovered = None
+        if check_coverage:
+            width, height = self._page_sizes[page]
+            bounds = transform.mapRect(QRectF(0, 0, width, height))
+            uncovered = QRegion(bounds.intersected(exposed).toAlignedRect())
         for key, (pixmap, region) in self._tiles.items():
-            if key in self._wanted and key[0] == page and transform.mapRect(region).intersects(exposed):
-                self._set_page_transform(transform)
-                tile = self._native_bitmap(self._d2d_tiles, key, pixmap)
-                self._d2d_surface.draw_bitmap(
-                    tile, region.left(), region.top(), region.right(), region.bottom())
+            if key not in self._wanted or key[0] != page:
+                continue
+            visible = transform.mapRect(region).intersected(exposed)
+            if visible.isEmpty():
+                continue
+            self._set_page_transform(transform)
+            tile = self._native_bitmap(self._d2d_tiles, key, pixmap)
+            self._d2d_surface.draw_bitmap(
+                tile, region.left(), region.top(), region.right(), region.bottom())
+            if uncovered is not None:
+                uncovered -= QRegion(visible.toAlignedRect())
+        return uncovered is not None and uncovered.isEmpty()
 
     def _paint_d2d(self):
         previous_tile_pages = self._gpu_preview_tile_pages
@@ -1404,6 +1439,13 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self._set_page_transform(self._page_transforms[page])
             self._draw_d2d_overlays()
         self._d2d_surface.end_frame()
+        finished_previews = previous_tile_pages - self._gpu_preview_tile_pages
+        if finished_previews:
+            # Keep the reusable Qt tiles. Release their GPU copies when the
+            # retained scene takes over so the same pixels don't stay twice.
+            for key in tuple(self._d2d_tiles):
+                if key[0] in finished_previews and rasterized.get(key[0]) != "CPU":
+                    self._d2d_tiles.pop(key)[1].close()
         if self._gpu_preview_tile_pages - previous_tile_pages:
             self._schedule_refine(40)
         self._rasterized_pages = rasterized
@@ -1541,7 +1583,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self._layout_pages()
         self._schedule_refine()
 
-    def _layout_pages(self):
+    def _layout_pages(self, *, notify=True):
         self._updating = True
         try:
             left, height = 0.0, 0.0
@@ -1564,12 +1606,12 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             self.setSceneRect(QRectF(0, 0, max(0, left - 16), height))
         finally:
             self._updating = False
-        self.viewport().update()
-        self.viewport_changed.emit()
+        if notify:
+            self.viewport().update()
+            self.viewport_changed.emit()
 
     def _apply_preview_zoom(
             self, zoom, position=None, anchor=_CURRENT_ZOOM_ANCHOR):
-        self._pause_page_prefetch()
         if position is None:
             position = self.viewport().rect().center()
         if anchor is _CURRENT_ZOOM_ANCHOR:
@@ -1578,21 +1620,26 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         self.zoom = max(self.ZOOM_MIN, min(self.ZOOM_MAX, zoom))
         self.stop_rendering(
             keep_zoom_animation=True, keep_vector_refine_worker=True)
-        self._layout_pages()
+        self._layout_pages(notify=False)
         if anchor is not None:
             page, point = anchor
             for index, _pix, rect in self.canvas._pages:
                 if index == page:
                     target = self._page_transforms[page].map(point)
                     actual = self.mapToScene(position)
-                    self.horizontalScrollBar().setValue(
-                        self.horizontalScrollBar().value() + round(target.x() - actual.x()))
-                    self.verticalScrollBar().setValue(
-                        self.verticalScrollBar().value() + round(target.y() - actual.y()))
+                    self._updating = True
+                    try:
+                        self.horizontalScrollBar().setValue(
+                            self.horizontalScrollBar().value() + round(target.x() - actual.x()))
+                        self.verticalScrollBar().setValue(
+                            self.verticalScrollBar().value() + round(target.y() - actual.y()))
+                    finally:
+                        self._updating = False
                     break
         self._schedule_refine(90)
-        if self.zoom != old_zoom:
+        if not self._zoom_animation_timer.isActive() and self.zoom != old_zoom:
             self._schedule_vector_refine()
+        self.viewport().update()
         self.viewport_changed.emit()
         if self.zoom != old_zoom:
             self.zoom_changed.emit(self.zoom)
@@ -1626,10 +1673,13 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
         zoom = (self._zoom_animation_target if progress >= 1.0 else
                 self._zoom_animation_start +
                 (self._zoom_animation_target - self._zoom_animation_start) * eased)
+        if progress < 1.0:
+            period = ZOOM_ANIMATION_FRAME_MS / 1000
+            until_next = min(period - elapsed % period,
+                             ZOOM_ANIMATION_DURATION_SECONDS - elapsed)
+            self._zoom_animation_timer.start(max(1, math.ceil(until_next * 1000)))
         self._apply_preview_zoom(
             zoom, self._zoom_animation_position, self._zoom_animation_anchor)
-        if progress < 1.0:
-            self._zoom_animation_timer.start(ZOOM_ANIMATION_FRAME_MS)
 
     def _cancel_sharp_refine(self):
         self._sharp_refine_timer.stop()
@@ -1653,7 +1703,10 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             cached = self._d2d_vector_paths.get(page)
             if cached is None or cached[3] is None:
                 continue
-            if cached[0] is not None and self._image_refinement_pending(page, cached[0]):
+            scene = cached[0]
+            if scene is not None and (
+                    (scene.viewport is not None and not self._viewport_scene_covers(page, scene))
+                    or self._image_refinement_pending(page, scene)):
                 continue
             transform = self._retained_page_transform(page)
             retained = cached[3]
@@ -1703,6 +1756,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def _viewport_moved(self, *_args):
         if self._updating:
             return
+        if self._d2d_requested and self._d2d_vector_paths:
+            self._gpu_pan_idle_timer.start()
         pending = self._sharp_pending_key
         keep = False
         if pending is not None:
@@ -1849,6 +1904,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def stop_rendering(self, *, keep_zoom_animation=False,
                        keep_vector_refine_worker=False):
         self._cancel_sharp_refine()
+        self._gpu_pan_idle_timer.stop()
         self._page_switch_started = None
         self._prefetch_timer.stop()
         self._gpu_initial_frame_pending = False
@@ -1894,9 +1950,27 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def set_interaction_mode(self, mode):
         self.canvas.set_interaction_mode(mode)
 
+    @contextmanager
+    def _batch_scroll(self):
+        horizontal, vertical = self.horizontalScrollBar(), self.verticalScrollBar()
+        previous = horizontal.value(), vertical.value()
+        updating = self._updating
+        self._updating = True
+        try:
+            yield
+        finally:
+            self._updating = updating
+            if not updating and previous != (horizontal.value(), vertical.value()):
+                self._viewport_moved()
+
+    def _set_pan_position(self, x, y):
+        with self._batch_scroll():
+            self.horizontalScrollBar().setValue(x)
+            self.verticalScrollBar().setValue(y)
+
     def _pan_canvas(self, delta):
-        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
-        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+        self._set_pan_position(self.horizontalScrollBar().value() - delta.x(),
+                               self.verticalScrollBar().value() - delta.y())
 
     def visible_page_rect(self):
         page = self.canvas.active_page_rect()
@@ -1910,9 +1984,9 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def center_on_page_fraction(self, point):
         page = self.canvas.active_page_rect()
         if not page.isEmpty():
-            self.centerOn(page.left() + max(0, min(1, point.x())) * page.width(),
-                          page.top() + max(0, min(1, point.y())) * page.height())
-            self.viewport_changed.emit()
+            with self._batch_scroll():
+                self.centerOn(page.left() + max(0, min(1, point.x())) * page.width(),
+                              page.top() + max(0, min(1, point.y())) * page.height())
 
     def ensure_rect_visible(self, rect):
         transform = self._page_transforms.get(self.canvas._active_page)
@@ -1995,7 +2069,8 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
         if not event.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
-            if (wheel_scroll_delta(event).x() or not delta) and pan_wheel_event(self, event):
+            if (wheel_scroll_delta(event).x() or not delta) and pan_wheel_event(
+                    self, event, set_position=self._set_pan_position):
                 self._flip_accum = 0
                 return
         if not delta:
@@ -2021,7 +2096,7 @@ class ReaderPageView(ZoomLimits, ReaderPrefetchMixin, QGraphicsView):
             event.accept()
         else:
             self._flip_accum = 0
-            if not pan_wheel_event(self, event):
+            if not pan_wheel_event(self, event, set_position=self._set_pan_position):
                 super().wheelEvent(event)
 
     def reset_flip(self):

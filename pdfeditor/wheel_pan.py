@@ -11,7 +11,7 @@ def wheel_scroll_delta(event):
     return event.angleDelta() if pixels.isNull() else pixels
 
 
-def pan_wheel_event(view, event):
+def pan_wheel_event(view, event, *, set_position=None):
     """Handle pixel scrolling and horizontal/diagonal wheel input together.
 
     Leave ordinary vertical mouse wheels to the view's existing page-flip and
@@ -27,8 +27,9 @@ def pan_wheel_event(view, event):
     if not pixel_input and not angles.x():
         return False
     delta = pixels if pixel_input else angles
-    for axis, bar, value in ((0, view.horizontalScrollBar(), delta.x()),
-                             (1, view.verticalScrollBar(), delta.y())):
+    bars = (view.horizontalScrollBar(), view.verticalScrollBar())
+    targets = []
+    for axis, (bar, value) in enumerate(zip(bars, (delta.x(), delta.y()))):
         scale = 1. if pixel_input else min(
             bar.pageStep(), bar.singleStep() * QApplication.wheelScrollLines()) / 120.
         movement = -value * scale
@@ -37,8 +38,13 @@ def pan_wheel_event(view, event):
         offset = movement + remainders[axis]
         whole = math.trunc(offset)
         target = bar.value() + whole
-        bar.setValue(target)
+        targets.append(target)
         remainders[axis] = (offset - whole if bar.minimum() < target < bar.maximum() else 0.)
+    if set_position is not None:
+        set_position(*targets)
+    else:
+        bars[0].setValue(targets[0])
+        bars[1].setValue(targets[1])
     if event.phase() == Qt.ScrollEnd:
         remainders[:] = [0., 0.]
     event.accept()

@@ -8,7 +8,11 @@
 
 ### 성능 개선
 
-- At common zoom levels, show sharp visible tiles during large pans while the GPU prepares the new area. Skip the intermediate whole-page GPU upload.
+- Use less memory during zooming by preparing nearby pages at a lower resolution and releasing temporary GPU tile copies once the page is ready.
+- Update the viewport once per zoom step or diagonal scroll input so the reader prepares only the final position.
+- Keep zoom and scrolling responsive by reusing prepared previews and applying new GPU scenes after input pauses.
+- Avoid preparing another GPU scene when the completed region already covers the screen. Skip sharpening regions left behind after a pan.
+- At higher zoom levels, keep sharp tiles visible after a large pan until the new GPU frame is ready. This prevents the screen from flashing back to a blurry preview.
 - Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions. Gradients with matching geometry can also share a brush.
 - Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
 - Prepare a wider margin around zoomed viewports and refresh it before scrolling exposes a gap. Reuse partially covered tiles and redraw only newly exposed strips, retaining the existing GPU cache memory limit.

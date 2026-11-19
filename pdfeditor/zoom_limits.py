@@ -1,7 +1,7 @@
 """Physical-DPI display limits, separate from bounded raster preparation."""
 MAX_ZOOM_PERCENT = 3200
 MAX_RASTER_SCALE = 64.0  # Native worker/scene codec contract; vectors use display scale.
-MAX_PREFETCH_RASTER_SCALE = 8.0  # Nearby pages are whole-page jobs, not viewport crops.
+MAX_PREFETCH_RASTER_SCALE = 1.0  # Prepare geometry once; refine images when a page is visible.
 MAX_SAVED_ZOOM = 1024.0  # Defensive raw-coordinate bound; the view clamps on restore.
 
 

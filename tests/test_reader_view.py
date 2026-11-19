@@ -213,6 +213,36 @@ class ReaderViewTests(unittest.TestCase):
         self.assertIs(self.view._vector_pages[0], base)
         self.assertEqual(self.view._display_vector_scene(0), detail)
 
+    def test_completed_crop_covering_screen_does_not_immediately_requeue_for_margin(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        self.view._apply_preview_zoom(4.0)
+        self.view.stop_rendering()
+        self.view.horizontalScrollBar().setValue(800)
+        self.view.verticalScrollBar().setValue(800)
+        self.view._render_mode = "gpu"
+        self.view._vector_pages[0] = VectorPage(True, features=("image-downsample",))
+        scale = self.view._vector_raster_scale()
+        region = self.view._gpu_visible_region(0)
+        detail = VectorPage(True, raster_scale=scale, viewport=region)
+        directory = tempfile.mkdtemp()
+        result = Path(directory) / "result.pickle"
+        result.write_bytes(pickle.dumps(detail))
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        self.view._vector_refine_process = process
+        self.view._vector_refine_job = dict(
+            document=self.doc, generation=self.doc.render_generation, page=0,
+            scale=scale, viewport=region, directory=directory, result=str(result))
+        self.finish_worker_result()
+
+        self.assertEqual(self.view._display_vector_scene(0), detail)
+        self.assertFalse(self.view._viewport_scene_covers(0, detail, guard=True))
+        self.assertFalse(self.view._vector_refine_pages)
+        self.assertFalse(self.view._vector_refine_timer.isActive())
+        self.view.horizontalScrollBar().setValue(self.view.horizontalScrollBar().value() + 8)
+        self.assertEqual(self.view._vector_refine_pages, [0])
+
     def test_density_refresh_keeps_page_zoom_and_scene(self):
         from pdfeditor.dpi_refresh import refresh_widget_layout
         self.view.zoom = 1.25
@@ -755,6 +785,7 @@ class ReaderViewTests(unittest.TestCase):
         self.view.centerOn(600, 700)
         cursor = QPoint(260, 240)
         before = self.view.canvas._page_point(self.view.mapToScene(cursor))
+        viewport_changes = QSignalSpy(self.view.viewport_changed)
         with patch.object(self.doc, "render") as full, \
                 patch.object(self.doc, "render_region") as tile:
             self.view.preview_zoom(8, cursor)
@@ -769,6 +800,7 @@ class ReaderViewTests(unittest.TestCase):
         self.assertLessEqual(self.view.viewport().width(), 720)
         self.assertTrue(self.view._refine_timer.isActive())
         self.assertEqual([call[0] for call in zooms], [2, 8])
+        self.assertEqual(len(viewport_changes), 1)
 
     def test_animated_zoom_reports_actual_intermediate_scale_and_exact_target(self):
         from PyQt5.QtCore import QPoint
@@ -859,7 +891,7 @@ class ReaderViewTests(unittest.TestCase):
             self.view._schedule_vector_refine()
             self.assertEqual(self.view._vector_refine_pages, [0])
 
-    def test_3200_percent_prefetch_does_not_prepare_whole_pages_at_64x(self):
+    def test_prefetch_keeps_hidden_pages_at_base_density_even_at_3200_percent(self):
         from pdfeditor.render_memory import RenderMemory, MIB
         self.view._d2d_requested = True
         self.view.zoom = self.view.ZOOM_MAX
@@ -868,7 +900,7 @@ class ReaderViewTests(unittest.TestCase):
                 patch.object(self.view, '_start_vector_refine_worker') as launch:
             self.view._prefetch_next_page()
         launch.assert_called_once_with(1, speculative=True)
-        self.assertEqual(self.view._vector_refine_scale, 8)
+        self.assertEqual(self.view._vector_refine_scale, 1)
 
     def test_tile_lru_is_bounded_across_zoom_and_page_changes(self):
         from pdfeditor import reader_view
@@ -1292,8 +1324,10 @@ class ReaderViewTests(unittest.TestCase):
         self.assertEqual(surface.draw_scene.call_count, 4)
         self.assertEqual(surface.draw_scene_preview.call_count, 2)
         self.view._zoom_animation_timer.start(1000)
-        with patch.object(self.view, "_native_vector_draws", return_value=[None] * 256):
+        self.view._d2d_vector_paths[0] = (scene, range(256), (), retained)
+        with patch.object(self.view, "_native_vector_draws") as upload:
             self.view._draw_vector_page(0, scene)
+            upload.assert_not_called()
         surface.draw_bitmap.assert_called_once()
         self.assertEqual(surface.draw_scene.call_count, 4)
         self.view._zoom_animation_timer.stop()
@@ -1334,6 +1368,17 @@ class ReaderViewTests(unittest.TestCase):
         self.assertFalse(self.view._sharp_refine_timer.isActive())
         self.view._d2d_surface = None
         self.view._d2d_vector_paths.clear()
+
+    def test_sharp_refinement_does_not_render_crop_left_behind_by_a_pan(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        detail = VectorPage(True, raster_scale=4, viewport=(0, 0, 1, 1))
+        self.view._d2d_surface = Mock()
+        self.view._d2d_vector_paths[0] = (detail, range(300), (), Mock())
+        self.view._start_sharp_refine()
+
+        self.view._d2d_surface.request_sharp_scene.assert_not_called()
+        self.assertIsNone(self.view._sharp_pending_key)
 
     def test_scroll_keeps_overlapping_gpu_job_but_cancels_distant_or_rescaled_work(self):
         retained = Mock(closed=False)
@@ -1412,15 +1457,91 @@ class ReaderViewTests(unittest.TestCase):
         retained = Mock(closed=False)
         self.view._d2d_surface = Mock()
         self.view._d2d_vector_paths[0] = (detail, range(300), (), retained)
-        with patch.object(self.view, "_vector_raster_scale", return_value=4), \
-                patch.object(self.view, "_image_refinement_pending", return_value=True), \
-                patch.object(self.view, "_native_vector_draws") as upload, \
-                patch.object(self.view, "_draw_d2d_tiles") as draw_tiles:
-            self.view._draw_vector_page(0, base)
-        upload.assert_not_called()
-        draw_tiles.assert_called_once()
+        for scale in (4, 8):
+            with self.subTest(scale=scale), \
+                    patch.object(self.view, "_vector_raster_scale", return_value=scale), \
+                    patch.object(self.view, "_image_refinement_pending", return_value=True), \
+                    patch.object(self.view, "_native_vector_draws") as upload, \
+                    patch.object(self.view, "_draw_d2d_tiles") as draw_tiles:
+                self.view._draw_vector_page(0, base)
+                upload.assert_not_called()
+                draw_tiles.assert_called_once()
         self.assertIs(self.view._d2d_vector_paths[0][3], retained)
         self.assertIn(0, self.view._gpu_preview_tile_pages)
+
+    def test_complete_cpu_tiles_do_not_flash_partial_gpu_tiles_in_high_zoom(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        scene = VectorPage(True, raster_scale=8, features=("gpu-mask",))
+        retained = Mock(closed=False)
+        surface = Mock()
+        surface.draw_sharp_scene.return_value = False
+        surface.draw_scene_preview.return_value = False
+        self.view._d2d_surface = surface
+        self.view._d2d_vector_paths[0] = (scene, range(300), (), retained)
+        with patch.object(self.view, "_vector_raster_scale", return_value=8), \
+                patch.object(self.view, "_draw_d2d_tiles", return_value=True) as tiles:
+            self.view._draw_vector_page(0, scene)
+        tiles.assert_called_once_with(0, self.view._visible_scene_rect(), check_coverage=True)
+        surface.draw_sharp_partial.assert_not_called()
+        self.assertTrue(self.view._sharp_refine_timer.isActive())
+
+    def test_gpu_takeover_releases_only_the_uploaded_preview_tiles(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        view = self.view
+        view._d2d_surface = Mock()
+        view._vector_pages[0] = VectorPage(True)
+        view._gpu_preview_tile_pages.add(0)
+        key = (0, 4.0, 0, 0)
+        uploaded = Mock()
+        view._d2d_tiles[key] = (1, uploaded)
+        view._tiles[key] = (Mock(), Mock())
+        with patch.object(view, "_draw_vector_page"):
+            view._paint_d2d()
+
+        uploaded.close.assert_called_once()
+        self.assertNotIn(key, view._d2d_tiles)
+        self.assertIn(key, view._tiles)
+
+    def test_gpu_scene_registration_waits_until_zoom_or_pan_ends(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        scene = VectorPage(True)
+        self.view._d2d_surface = Mock()
+        for timer in (self.view._zoom_animation_timer, self.view._gpu_pan_idle_timer):
+            with self.subTest(timer=timer):
+                timer.start(1000)
+                with patch.object(self.view, "_native_vector_draws") as upload:
+                    self.view._draw_vector_page(0, scene)
+                    upload.assert_not_called()
+                timer.stop()
+        self.assertEqual(self.view._d2d_surface.draw_bitmap.call_count, 2)
+
+    def test_completed_gpu_crop_stays_available_until_pan_pauses(self):
+        from pdfeditor.gpu_raster import VectorPage
+
+        region = self.view._gpu_visible_region(0, padded=True)
+        scale = self.view._vector_raster_scale()
+        scene = VectorPage(True, raster_scale=scale, viewport=region)
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        reader = Mock()
+        reader.done.return_value = True
+        reader.take.return_value = (scene, None)
+        job = dict(document=self.doc, generation=self.doc.render_generation,
+                   page=0, scale=scale, viewport=region, result_reader=reader)
+        self.view._vector_refine_process = process
+        self.view._vector_refine_job = job
+        self.view._gpu_pan_idle_timer.start(1000)
+        self.view._poll_vector_refine_job(process, job)
+        reader.take.assert_not_called()
+        self.assertIs(self.view._vector_refine_job, job)
+
+        self.view._gpu_pan_idle_timer.stop()
+        self.view._poll_vector_refine_job(process, job)
+        reader.take.assert_called_once()
+        self.assertIs(self.view._display_vector_scene(0), scene)
 
     def test_poster_renders_sharp_once_after_pending_image_replacement(self):
         from dataclasses import replace

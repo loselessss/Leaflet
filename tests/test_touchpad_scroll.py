@@ -70,6 +70,14 @@ class TouchpadScrollTests(unittest.TestCase):
                 self.wheel(view, pixel=(17, -29), inverted=True)
                 self.assertEqual(self.position(view), (466, 558))
 
+    def test_reader_diagonal_input_notifies_once_at_final_position(self):
+        view = self.view(ReaderPageView)
+        updates = []
+        view.viewport_changed.connect(lambda: updates.append(self.position(view)))
+        self.wheel(view, pixel=(17, -29))
+        view._pan_canvas(QPoint(5, 11))
+        self.assertEqual(updates, [(483, 529), (478, 518)])
+
     def test_small_angle_diagonal_accumulates_both_axes(self):
         for kind in (ReaderPageView, PageView, ArtboardView):
             with self.subTest(view=kind.__name__):

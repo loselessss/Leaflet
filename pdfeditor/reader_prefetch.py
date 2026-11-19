@@ -161,20 +161,22 @@ class ReaderPrefetchMixin:
         if (not self._prefetch_enabled() or document is None or
                 not self.isVisible() or not self._d2d_requested):
             return
+        if self._gpu_pan_idle_timer.isActive() or self._zoom_animation_timer.isActive():
+            self._schedule_page_prefetch()
+            return
         self._trim_prefetch_workers()
         document.reserve_gpu_scene_memory(32 * MIB, self._page_sizes)
         document.trim_gpu_scene_memory(self._page_sizes)
         self._trim_nearby_native_pages()
         if (self._vector_refine_process is not None or self._vector_refine_pages or
-                self._zoom_animation_timer.isActive() or
                 getattr(self, "_gpu_initial_frame_pending", False)):
             self._schedule_page_prefetch()
             return
         budget = document.gpu_scene_memory_budget()
         if budget - document._gpu_vector_cache_bytes < 32 * MIB:
             return
-        # Speculation prepares a whole page. Keep its existing density ceiling;
-        # the visible page can then refine only its bounded high-zoom viewport.
+        # Keep nearby pages at base density. Their images can be refined for
+        # the visible viewport when the user actually turns to them.
         scale = min(self._vector_raster_scale(), MAX_PREFETCH_RASTER_SCALE)
         generation = document.render_generation
         nearby = self._nearby_prefetch_pages()
