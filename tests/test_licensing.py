@@ -117,6 +117,12 @@ class LicensingTests(unittest.TestCase):
                 "info": {"name": name, "version": version}, "urls": []})
             self.assertIn(upstream + "/archive/refs/tags/v" + version, record["url"])
 
+    def test_onnxruntime_1_31_1_uses_the_wheel_source_commit(self):
+        package = {"name": "onnxruntime", "version": "1.31.1"}
+        record = source_record(package, lambda url: {"info": package, "urls": []})
+        self.assertEqual(record["url"],
+                         "https://github.com/intel/onnxruntime/archive/6af1a932e2286d5c58166085d24c68783033edee.tar.gz")
+
     def test_source_archive_and_notices_round_trip_without_overwrite(self):
         source = io.BytesIO()
         with zipfile.ZipFile(source, "w") as archive:

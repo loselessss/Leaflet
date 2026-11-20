@@ -91,6 +91,11 @@ def source_record(package, fetch=read_json):
     elif canonical == "pyqt5-qt5" and version == "5.15.2":
         url = "https://download.qt.io/archive/qt/5.15/5.15.2/single/qt-everywhere-src-5.15.2.tar.xz"
         digest = None
+    elif canonical == "onnxruntime" and version == "1.31.1":
+        # Microsoft's archive is unavailable. Intel retains the signed commit
+        # reported by the PyPI wheel's onnxruntime.get_build_info().
+        url = "https://github.com/intel/onnxruntime/archive/6af1a932e2286d5c58166085d24c68783033edee.tar.gz"
+        digest = None
     elif canonical in {"onnxruntime", "flatbuffers", "rapidocr"} and re.fullmatch(r"\d+\.\d+\.\d+", version):
         repository = {"onnxruntime": "microsoft/onnxruntime",
                       "flatbuffers": "google/flatbuffers", "rapidocr": "RapidAI/RapidOCR"}[canonical]
@@ -109,9 +114,15 @@ def source_record(package, fetch=read_json):
 
 def check_source_access(record):
     request = Request(record["url"], method="HEAD", headers={"User-Agent": "Leaflet-source-release"})
-    with open_with_retry(request) as response:
-        if response.status != 200:
-            raise ValueError("Source archive is unavailable: " + record["name"])
+    try:
+        with open_with_retry(request) as response:
+            if response.status == 200:
+                return
+            detail = "HTTP %s" % response.status
+    except OSError as error:
+        detail = str(error)
+    raise ValueError("Source archive is unavailable for {name}=={version}: {url} ({detail})".format(
+        **record, detail=detail))
 
 
 def dependency_document(version, records):
