@@ -1,20 +1,11 @@
 # Leaflet Release Notes
 
-## Unreleased (1.39.3)
+## 1.39.3 - 2026-11-20
 
-- Fix clipped highlights and rings in PDFs with extended radial gradients.
-- Keep the color of supported CMYK transparency effects consistent while zooming.
-- Reuse a finished GPU view when returning to a recent zoomed area, preventing a color shift from a temporary CPU frame.
-- Keep previously viewed zoomed areas in compressed memory so revisiting them can reuse the prepared drawing data.
-- Use less memory during zooming by preparing nearby pages at a lower resolution and releasing temporary GPU tile copies once the page is ready.
-- Update the viewport once per zoom step or diagonal scroll input so the reader prepares only the final position.
-- Keep zoom and scrolling responsive by reusing prepared previews and applying new GPU scenes after input pauses.
-- Avoid preparing another GPU scene when the completed region already covers the screen. Skip sharpening regions left behind after a pan.
-- Go directly from the preview to the sharp GPU display on supported pages.
+- Zoom and pan more smoothly in complex PDFs. Supported pages switch directly from the preview to a sharp GPU view and can reuse already prepared areas when you move back.
+- Use less memory when zooming into large pages and illustrations with many gradients.
+- Fix clipped circular highlights and reduce color changes while zooming into some PDFs with transparency.
 - Click the left panel title to switch between page thumbnails and a compact page list.
-- Reduce GPU memory use in gradient-heavy PDFs by sharing identical gradient colors and positions.
-- Keep useful GPU refinement running while scrolling and display completed tiles at their new positions to reduce blurry updates in complex documents.
-- Prepare surrounding content ahead of zoomed scrolling to keep the display sharp for longer.
 
 ## 1.39.2 - 2026-11-17
 
